@@ -1,0 +1,61 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id              String   @id @default(auto()) @map("_id") @db.ObjectId
+  username        String   @unique
+  password        String
+  firstName       String
+  lastName        String
+  email           String   @unique
+  roles           String[] 
+  isAdmin         Boolean  @default(false)
+  isWorking       Boolean  @default(true) // מעולה!
+  idNumber        String   @unique
+  phoneNumber     String
+  dateOfBirth     DateTime
+  address         String?  
+  institutionId   String?  @db.ObjectId 
+  institution     Institution? @relation(fields: [institutionId], references: [id])
+  
+  placementsAsMain    Placement[] @relation("MainTeacher")
+  placementsAsSub     Placement[] @relation("SubstituteTeacher")
+}
+
+model Institution {
+  id                String   @id @default(auto()) @map("_id") @db.ObjectId
+  name              String
+  address           String
+  institutionNumber String   @unique
+  users             User[]
+  placements        Placement[]
+}
+
+model Placement {
+  id                String   @id @default(auto()) @map("_id") @db.ObjectId
+  date              DateTime
+  status            String   // SUBSTITUTE, EXCHANGE, CLOSED
+  
+  institutionId     String   @db.ObjectId
+  institution       Institution @relation(fields: [institutionId], references: [id])
+  
+  mainTeacherId     String   @db.ObjectId
+  mainTeacher       User     @relation("MainTeacher", fields: [mainTeacherId], references: [id])
+  
+  substituteId      String?  @db.ObjectId
+  substitute        User?    @relation("SubstituteTeacher", fields: [substituteId], references: [id])
+  
+  notes             String?
+  createdAt         DateTime @default(now())
+}
+
+datasource db {
+  provider = "mongodb"
+}
