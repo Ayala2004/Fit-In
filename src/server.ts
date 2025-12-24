@@ -54,6 +54,40 @@ app.get('/users', async (req, res) => {
     res.json(decryptedUsers);
   res.json(users);
 });
+app.post('/login', async (req, res) => {
+  try {
+    const { username, password } = req.body;
+
+    // 1. חיפוש המשתמש לפי שם משתמש
+    const user = await prisma.user.findUnique({
+      where: { username }
+    });
+
+    if (!user) {
+      return res.status(401).json({ error: "Invalid username or password" });
+    }
+
+    // 2. השוואת הסיסמה שהוזנה עם ה-Hash בבסיס הנתונים
+    const isPasswordValid = await bcrypt.compare(password, user.password);
+
+    if (!isPasswordValid) {
+      return res.status(401).json({ error: "Invalid username or password" });
+    }
+
+    // 3. הצלחה - מחזירים את פרטי המשתמש (ללא הסיסמה)
+    const { password: _, ...userWithoutPassword } = user;
+    
+    // כאן בעתיד נוסיף Token (JWT), כרגע נחזיר אישור פשוט
+    res.status(200).json({ 
+      message: "Login successful", 
+      user: userWithoutPassword 
+    });
+
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 
 const PORT = process.env.PORT || 5000;
 
