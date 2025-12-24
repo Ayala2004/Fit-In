@@ -3,6 +3,7 @@ import cors from 'cors';
 import "dotenv/config";
 import authRoutes from './routes/authRoutes';
 import userRoutes from './routes/userRoutes';
+import institutionRoutes from './routes/institutionRoutes';
 const app = express();
 
 app.use(cors());
@@ -10,7 +11,9 @@ app.use(express.json());
 
 app.use('/auth', authRoutes);
 app.use('/users', userRoutes);
-app.get('/ping', (req, res) => {
+app.use('/institutions', institutionRoutes);
+
+app.get('/ping', (_, res) => {
   res.send('pong');
 });
 

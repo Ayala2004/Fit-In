@@ -19,3 +19,39 @@ export const getAllUsers = async (req: Request, res: Response) => {
     res.status(500).json({ error: error.message });
   }
 };
+// (כולל פענוח תעודת זהות)IDקבלת משתמש לפי  
+export const getUserById = async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const user = await prisma.user.findUnique({ where: { id } });
+
+    if (!user) return res.status(404).json({ error: "User not found" });
+
+    const { password: _, ...userWithoutPassword } = user;
+    res.json({
+      ...userWithoutPassword,
+      idNumber: user.idNumber ? decrypt(user.idNumber) : null
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+//  קבלת כל המוסדות בהן עבדה הגננת לפי איי די
+export const getUserPlacements = async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params; // ה-ID של המשתמש מהכתובת
+    const placements = await prisma.placement.findMany({
+      where: {
+        OR: [
+          { mainTeacherId: id },
+          { substituteId: id }
+        ]
+      },
+      include: { institution: true } 
+    });
+    res.json(placements);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+};
