@@ -6,6 +6,8 @@ datasource db {
   provider = "mongodb"
   url      = env("DATABASE_URL")
 }
+
+
 enum Role {
 USER        // ברירת המחדל כלומר לא נבחר תפקיד
 SUPERVISOR  // מפקחת
@@ -15,6 +17,14 @@ SUBSTITUTE  // גננת מחליפה
 ROTATION    // גננת רוטציה
 }
 
+enum Day {
+  SUNDAY
+  MONDAY
+  TUESDAY
+  WEDNESDAY
+  THURSDAY
+  FRIDAY
+}
 model User {
   id          String   @id @default(auto()) @map("_id") @db.ObjectId
   username    String   @unique
@@ -29,6 +39,7 @@ model User {
   phoneNumber String
   dateOfBirth DateTime
   address     String?
+  workDays    Day[]
 
   // קשרים למוסדות
   managedInstitutions    Institution[] @relation("InstitutionManager")
@@ -70,6 +81,7 @@ model Placement {
   status        String   // OPEN, CLOSED, CANCELLED
   institutionId String   @db.ObjectId
   institution   Institution @relation(fields: [institutionId], references: [id])
+  priority      String   @default("NORMAL") // "NORMAL" או "URGENT"
 
   mainTeacherId String   @db.ObjectId
   mainTeacher   User     @relation("MainTeacher", fields: [mainTeacherId], references: [id])
@@ -82,11 +94,12 @@ model Placement {
 }
 
 model Notification {
-  id        String   @id @default(auto()) @map("_id") @db.ObjectId
-  userId    String   @db.ObjectId
-  user      User     @relation(fields: [userId], references: [id])
-  message   String
-  type      String   // e.g., "ABSENCE_REPORTED", "SUBSTITUTE_ASSIGNED"
-  isRead    Boolean  @default(false)
-  createdAt DateTime @default(now())
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId      String   @db.ObjectId
+  user        User     @relation(fields: [userId], references: [id])
+  title       String   // למשל: "קריאה דחופה לגן אורן"
+  message     String   // למשל: "דרושה מחליפה למחר עקב מחלה"
+  type        String   // "URGENT_CALL" | "STATUS_UPDATE" | "SYSTEM"
+  status      String   @default("PENDING") // PENDING, SENT, FAILED
+  createdAt   DateTime @default(now())
 }

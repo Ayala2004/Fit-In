@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getAllUsers, getUserById, getUserPlacements } from '../controllers/userController';
+import { getAllUsers, getUserById, getUserNotifications, getUserPlacements } from '../controllers/userController';
 
 const router = Router();
 
@@ -11,5 +11,7 @@ router.get('/:id', getUserById);
 
 // GET /users/:id/placements - קבלת היסטוריית שיבוצים
 router.get('/:id/placements', getUserPlacements);
+
+router.get('/:id/notifications', getUserNotifications);
 
 export default router;

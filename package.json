@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "server": "nodemon --exec npx tsx src/server.ts",
+    "copy": "node node_copy_files_to_txt.cjs",
     "build": "next build",
     "start": "next start",
     "lint": "eslint"

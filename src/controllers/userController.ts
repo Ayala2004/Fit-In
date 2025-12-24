@@ -55,3 +55,45 @@ export const getUserPlacements = async (req: Request, res: Response) => {
     res.status(500).json({ error: error.message });
   }
 };
+
+export const getUserStats = async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { start, end } = req.query;
+
+    const whereClause: any = {
+      OR: [{ mainTeacherId: id }, { substituteId: id }]
+    };
+
+    if (start && end) {
+      whereClause.date = {
+        gte: new Date(start as string),
+        lte: new Date(end as string)
+      };
+    }
+
+    const placements = await prisma.placement.findMany({
+      where: whereClause,
+      include: { institution: true },
+      orderBy: { date: 'asc' }
+    });
+
+    res.json(placements);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+export const getUserNotifications = async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const notifications = await prisma.notification.findMany({
+      where: { userId: id },
+      orderBy: { createdAt: 'desc' },
+      take: 20 // 20 האחרונות
+    });
+    res.json(notifications);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+};

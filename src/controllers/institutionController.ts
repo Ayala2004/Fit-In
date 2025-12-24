@@ -7,7 +7,14 @@ const prisma = new PrismaClient();
 export const createInstitution = async (req: Request, res: Response) => {
   try {
     // 1. קבלת הנתונים מה-Body (שימי לב לשמות החדשים)
-    const { name, address, institutionNumber, supervisorId, instructorId,mainManagerId } = req.body;
+    const {
+      name,
+      address,
+      institutionNumber,
+      supervisorId,
+      instructorId,
+      mainManagerId,
+    } = req.body;
 
     // 2. בדיקת שדות חובה
     if (!name || !address || !institutionNumber) {
@@ -22,10 +29,9 @@ export const createInstitution = async (req: Request, res: Response) => {
         name,
         address,
         institutionNumber,
-        // קישור למפקחת אם נשלח ID
         supervisorId: supervisorId || null,
-        // קישור למדריכה אם נשלח ID
         instructorId: instructorId || null,
+        mainManagerId: mainManagerId || null,
       },
     });
 
@@ -33,8 +39,8 @@ export const createInstitution = async (req: Request, res: Response) => {
   } catch (error: any) {
     // 4. טיפול בשגיאת ערך ייחודי (מספר מוסד קיים)
     if (error.code === "P2002") {
-      return res.status(400).json({ 
-        error: "Institution number already exists" 
+      return res.status(400).json({
+        error: "Institution number already exists",
       });
     }
     res.status(400).json({ error: error.message });
