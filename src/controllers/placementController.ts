@@ -1,5 +1,6 @@
-import { Request, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
+import { Request, Response } from "express";
+import { PrismaClient } from "@prisma/client";
+import { ObjectId } from "mongodb";
 
 const prisma = new PrismaClient();
 
@@ -15,8 +16,8 @@ export const createPlacement = async (req: Request, res: Response) => {
         institutionId,
         mainTeacherId,
         notes,
-        status: "OPEN" // סטטוס התחלתי - מחפשים מחליפה
-      }
+        status: "OPEN", // סטטוס התחלתי - מחפשים מחליפה
+      },
     });
 
     res.status(201).json(newPlacement);
@@ -33,9 +34,9 @@ export const getOpenPlacements = async (req: Request, res: Response) => {
       include: {
         institution: true,
         mainTeacher: {
-          select: { firstName: true, lastName: true } // רק שמות, בלי מידע רגיש
-        }
-      }
+          select: { firstName: true, lastName: true }, // רק שמות, בלי מידע רגיש
+        },
+      },
     });
     res.json(placements);
   } catch (error: any) {
@@ -43,26 +44,31 @@ export const getOpenPlacements = async (req: Request, res: Response) => {
   }
 };
 
-//  אישור שיבוץ על ידי מורה מחליפה
+//  אישור שיבוץ על ידי גננת מחליפה
 // URL: /placements/:id/assign
 // Body: { substituteId: "..." }
 export const assignSubstitute = async (req: Request, res: Response) => {
   try {
-    const { id } = req.params; // ה-ID של השיבוץ
+    const { id } = req.params;
+
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).json({ error: "Invalid placement ID" });
+    }
+
     const { substituteId } = req.body;
 
     const updatedPlacement = await prisma.placement.update({
       where: { id },
       data: {
         substituteId,
-        status: "CLOSED" // ברגע שיש מחליפה, השיבוץ נסגר
+        status: "CLOSED", // ברגע שיש מחליפה, השיבוץ נסגר
       },
       include: {
         institution: true,
         substitute: {
-          select: { firstName: true, lastName: true, phoneNumber: true }
-        }
-      }
+          select: { firstName: true, lastName: true, phoneNumber: true },
+        },
+      },
     });
 
     res.json({ message: "Placement assigned successfully", updatedPlacement });

@@ -1,32 +1,41 @@
-import { Request, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
+import { Request, Response } from "express";
+import { PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient();
 
 // יצירת מוסד חדש
 export const createInstitution = async (req: Request, res: Response) => {
   try {
-    const { name, address, institutionNumber, manager } = req.body;
+    // 1. קבלת הנתונים מה-Body (שימי לב לשמות החדשים)
+    const { name, address, institutionNumber, supervisorId, instructorId,mainManagerId } = req.body;
 
-    // בדיקה בסיסית ששדות החובה קיימים
+    // 2. בדיקת שדות חובה
     if (!name || !address || !institutionNumber) {
-      return res.status(400).json({ error: "Missing required fields: name, address, or institutionNumber" });
+      return res.status(400).json({
+        error: "Missing required fields: name, address, or institutionNumber",
+      });
     }
 
+    // 3. יצירת המוסד ב-Prisma
     const newInstitution = await prisma.institution.create({
-      data: { 
-        name, 
-        address, 
-        institutionNumber, 
-        manager: manager || null // מבטיח שאם manager ריק הוא יישמר כ-null בצורה מפורשת
-      }
+      data: {
+        name,
+        address,
+        institutionNumber,
+        // קישור למפקחת אם נשלח ID
+        supervisorId: supervisorId || null,
+        // קישור למדריכה אם נשלח ID
+        instructorId: instructorId || null,
+      },
     });
 
     res.status(201).json(newInstitution);
   } catch (error: any) {
-    // טיפול במקרה של מספר מוסד כפול (Unique constraint)
-    if (error.code === 'P2002') {
-      return res.status(400).json({ error: "Institution number already exists" });
+    // 4. טיפול בשגיאת ערך ייחודי (מספר מוסד קיים)
+    if (error.code === "P2002") {
+      return res.status(400).json({ 
+        error: "Institution number already exists" 
+      });
     }
     res.status(400).json({ error: error.message });
   }
@@ -36,7 +45,7 @@ export const createInstitution = async (req: Request, res: Response) => {
 export const getAllInstitutions = async (req: Request, res: Response) => {
   try {
     const institutions = await prisma.institution.findMany({
-      include: { users: true } // אופציונלי: יראה לנו את כל הגננות הקבועות של המוסד
+      include: { users: true }, // אופציונלי: יראה לנו את כל הגננות הקבועות של המוסד
     });
     res.json(institutions);
   } catch (error: any) {
