@@ -17,6 +17,12 @@ SUBSTITUTE  // גננת מחליפה
 ROTATION    // גננת רוטציה
 }
 
+enum PlacementStatus {
+  OPEN       // גננת אם דיווחה על היעדרות, מחפשים מחליפה
+  ASSIGNED   // נמצאה מחליפה והשיבוץ סגור
+  CANCELLED  // הגננת חזרה בה או שהגן נסגר באותו יום
+}
+
 enum Day {
   SUNDAY
   MONDAY
@@ -78,7 +84,7 @@ model Institution {
 model Placement {
   id            String   @id @default(auto()) @map("_id") @db.ObjectId
   date          DateTime
-  status        String   // OPEN, CLOSED, CANCELLED
+  status        PlacementStatus @default(OPEN)
   institutionId String   @db.ObjectId
   institution   Institution @relation(fields: [institutionId], references: [id])
   priority      String   @default("NORMAL") // "NORMAL" או "URGENT"
