@@ -47,6 +47,16 @@ model User {
   address     String?
   workDays    Day[]
 
+  // קשרים לבוסים
+  supervisorId    String?  @db.ObjectId
+  instructorId    String?  @db.ObjectId
+
+  supervisor      User?    @relation("UserSupervisor", fields: [supervisorId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  instructor      User?    @relation("UserInstructor", fields: [instructorId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  
+  subordinatesSup User[]   @relation("UserSupervisor")
+  subordinatesIns User[]   @relation("UserInstructor")
+
   // קשרים למוסדות
   managedInstitutions    Institution[] @relation("InstitutionManager")
   instructedInstitutions Institution[] @relation("InstitutionInstructor")
