@@ -4,7 +4,58 @@ import {
   db_notifyMultipleUsers,
 } from "./notificationService";
 import { Day } from "@prisma/client";
+import { startOfDay, endOfDay, addDays } from 'date-fns';
 
+export async function db_getSupervisorDashboard(supervisorId: string) {
+  const today = startOfDay(new Date());
+  const endOfWeek = endOfDay(addDays(today, 5)); // 6 ימים קדימה (כולל היום)
+
+  // 1. שליפת נתונים ל-Snapshot השבועי
+  const weeklyPlacements = await prisma.placement.findMany({
+    where: {
+      institution: { supervisorId: supervisorId },
+      date: { gte: today, lte: endOfWeek },
+    },
+    select: {
+      date: true,
+      status: true,
+    },
+  });
+
+  // 2. קריאות דחופות (סטטוס OPEN ביומיים הקרובים)
+  const urgentAlerts = await prisma.placement.findMany({
+    where: {
+      institution: { supervisorId: supervisorId },
+      status: "OPEN",
+      date: { gte: today, lte: endOfDay(addDays(today, 1)) },
+    },
+    include: {
+      institution: { select: { name: true } },
+      mainTeacher: { select: { firstName: true, lastName: true } },
+    },
+    orderBy: { date: 'asc' },
+  });
+
+  // 3. פעולות אחרונות (5 השיבוצים האחרונים שעודכנו)
+  const recentActivity = await prisma.placement.findMany({
+    where: {
+      institution: { supervisorId: supervisorId },
+    },
+    take: 5,
+    orderBy: { createdAt: 'desc' },
+    include: {
+      institution: { select: { name: true } },
+      substitute: { select: { firstName: true, lastName: true } },
+      mainTeacher: { select: { firstName: true, lastName: true } },
+    }
+  });
+
+  return {
+    weeklyPlacements,
+    urgentAlerts,
+    recentActivity,
+  };
+}
 /**
  * אימות תקינות שיבוץ: בודק שהמחליפה פנויה והתאריך חוקי
  */
