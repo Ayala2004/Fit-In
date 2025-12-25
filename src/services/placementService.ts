@@ -216,7 +216,33 @@ if (placement.status === "CANCELLED") {
 
   return await db_assignSubstitute(placementId, substituteId);
 }
+/**
+ * שיבוץ עצמי על ידי גננת מחליפה או רוטציה
+ */
+export async function db_selfAssign(placementId: string, substituteId: string) {
+  const placement = await prisma.placement.findUnique({
+    where: { id: placementId },
+    select: { date: true, status: true },
+  });
 
+  if (!placement || placement.status !== "OPEN") {
+    throw new Error("השיבוץ אינו זמין יותר או כבר אויש");
+  }
+
+  // בדיקת תקינות (האם היא פנויה בתאריך זה?)
+  await validatePlacement(substituteId, placement.date);
+
+  // בדיקת הרשאות - לוודא שהמשתמשת היא אכן מחליפה או רוטציה
+  const user = await prisma.user.findUnique({ where: { id: substituteId } });
+  const canSelfAssign = user?.roles.some((r) => ["SUBSTITUTE", "ROTATION"].includes(r));
+  
+  if (!canSelfAssign) {
+    throw new Error("רק גננת מחליפה או רוטציה יכולה להשתבץ עצמית");
+  }
+
+  // שימוש בפונקציה הקיימת שמעדכנת ושולחת את כל ההתראות שסידרנו
+  return await db_assignSubstitute(placementId, substituteId);
+}
 /**
  * עדכון סטטוס של שיבוץ קיים (למשל ביטול גן ששובץ)
  */

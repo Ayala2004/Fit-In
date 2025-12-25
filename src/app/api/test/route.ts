@@ -7,6 +7,7 @@ import {
   db_assignSubstitute,
   db_updatePlacementStatus,
   db_getCalendarData,
+  db_selfAssign,
 } from "@/services/placementService";
 import { prisma } from "@/lib/prisma";
 import { Role } from "@prisma/client";
@@ -74,6 +75,10 @@ export async function POST(request: Request) {
 
       case "assign":
         result = await db_assignSubstitute(data.placementId, data.substituteId);
+        break;
+
+      case "selfAssign":
+        result = await db_selfAssign(data.placementId, data.substituteId);
         break;
 
       case "getCalendarData":
