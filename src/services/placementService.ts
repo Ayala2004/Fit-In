@@ -285,10 +285,7 @@ export async function db_getCalendarData(month: number, year: number) {
 /**
  * אישור שיבוץ ושליחת התראה למפקחת
  */
-export async function db_assignSubstitute(
-  placementId: string,
-  substituteId: string
-) {
+export async function db_assignSubstitute(placementId: string, substituteId: string) {
   const updatedPlacement = await prisma.placement.update({
     where: { id: placementId },
     data: {
@@ -298,19 +295,34 @@ export async function db_assignSubstitute(
     include: {
       institution: true,
       substitute: { select: { firstName: true, lastName: true } },
+      mainTeacher: { select: { id: true, firstName: true, lastName: true } }, // הוספנו את המורה שנעדרת
     },
   });
 
+  const subName = `${updatedPlacement.substitute?.firstName} ${updatedPlacement.substitute?.lastName}`;
+  const message = `הגננת ${subName} שובצה בהצלחה לגן ${updatedPlacement.institution.name}.`;
+
+  // 1. התראה למפקחת
   await db_createNotification({
     userId: updatedPlacement.institution.supervisorId,
     title: `שיבוץ נסגר: ${updatedPlacement.institution.name}`,
-    message: `הגננת ${updatedPlacement.substitute?.firstName} ${updatedPlacement.substitute?.lastName} שובצה בהצלחה.`,
+    message,
     type: "STATUS_UPDATE",
   });
+
+  // 2. התראה למדריכה
   await db_createNotification({
     userId: updatedPlacement.institution.instructorId,
     title: `שיבוץ נסגר: ${updatedPlacement.institution.name}`,
-    message: `הגננת ${updatedPlacement.substitute?.firstName} ${updatedPlacement.substitute?.lastName} שובצה בהצלחה.`,
+    message,
+    type: "STATUS_UPDATE",
+  });
+
+  // 3. תיקון: התראה לגננת האם (היא חייבת לדעת שיש לה מחליפה!)
+  await db_createNotification({
+    userId: updatedPlacement.mainTeacherId,
+    title: `נמצאה לך מחליפה!`,
+    message: `חדשות טובות, ${subName} תמלא את מקומך בתאריך ${updatedPlacement.date.toLocaleDateString("he-IL")}.`,
     type: "STATUS_UPDATE",
   });
 

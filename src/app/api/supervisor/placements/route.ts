@@ -1,7 +1,7 @@
-import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
-import { getSession } from "@/lib/auth";
-
+import { NextResponse } from 'next/server';
+import { prisma } from '@/lib/prisma';
+import { getSession } from '@/lib/auth';
+import { startOfDay, endOfDay } from 'date-fns'; 
 export async function GET() {
   try {
     const session = await getSession();
@@ -9,8 +9,8 @@ export async function GET() {
       return NextResponse.json({ message: "לא מורשה" }, { status: 401 });
     }
 
-    // שאילתה שמביאה את כל המדריכות של המפקחת הזו
-    // ובתוך כל מדריכה - את הגננות שהיא מדריכה (דרך שדה instructorId)
+    const today = new Date();
+
     const instructors = await prisma.user.findMany({
       where: {
         supervisorId: session.id,
@@ -18,9 +18,17 @@ export async function GET() {
       },
       include: {
         subordinatesIns: {
-          // אלו הגננות שהמדריכה הזו אחראית עליהן
           include: {
             mainManagedInstitutions: true,
+            // מביאים את השיבוצים של הגננת להיום בלבד
+            placementsAsMain: {
+              where: {
+                date: {
+                  gte: startOfDay(today),
+                  lte: endOfDay(today),
+                },
+              },
+            },
           },
         },
       },
