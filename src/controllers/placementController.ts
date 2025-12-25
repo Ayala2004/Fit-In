@@ -61,7 +61,7 @@ export const assignSubstitute = async (req: Request, res: Response) => {
       where: { id },
       data: {
         substituteId,
-        status: "CLOSED", // ברגע שיש מחליפה, השיבוץ נסגר
+        status: "ASSIGNED", // ברגע שיש מחליפה, השיבוץ נסגר
       },
       include: {
         institution: true,
