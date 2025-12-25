@@ -17,9 +17,10 @@ export async function GET() {
         roles: { has: "INSTRUCTOR" },
       },
       include: {
-        subordinatesIns: {          // אלו הגננות שהמדריכה הזו אחראית עליהן
+        subordinatesIns: {
+          // אלו הגננות שהמדריכה הזו אחראית עליהן
           include: {
-            institution: true, // הגן שבו הגננת עובדת
+            mainManagedInstitutions: true,
           },
         },
       },
