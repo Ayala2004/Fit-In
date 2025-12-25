@@ -21,7 +21,7 @@ export default function PlacementModal({
   const [substitutes, setSubstitutes] = useState<any[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [loading, setLoading] = useState(true);
-  const [isAssigning, setIsAssigning] = useState(false); // סטייט למניעת כפילות לחיצות
+  const [isAssigning, setIsAssigning] = useState(false);
 
   useEffect(() => {
     if (isOpen && placement?.date) {
@@ -44,31 +44,29 @@ export default function PlacementModal({
   }, [isOpen, placement]);
 
   const handleAssign = async (substituteId: string) => {
-    setIsAssigning(true); // מתחילים טעינה של הכפתור
+    setIsAssigning(true);
     try {
-      const response = await fetch('/api/supervisor/placements', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+      const response = await fetch("/api/supervisor/placements", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           placementId: placement.id,
-          substituteId: substituteId,
-          status: 'ASSIGNED'
+          substituteId,
+          status: "ASSIGNED",
         }),
       });
 
       if (response.ok) {
-        // קריאה לפונקציה שמרעננת את הנתונים בדף הראשי
-        if (onSuccess) onSuccess();
-        // סגירת המודאל
+        onSuccess?.();
         onClose();
       } else {
-        alert('שגיאה בעדכון השיבוץ');
+        alert("שגיאה בעדכון השיבוץ");
       }
     } catch (error) {
       console.error("Error updating placement:", error);
-      alert('שגיאת תקשורת');
+      alert("שגיאת תקשורת");
     } finally {
-      setIsAssigning(false); // מסיימים טעינה
+      setIsAssigning(false);
     }
   };
 
@@ -86,7 +84,7 @@ export default function PlacementModal({
       dir="rtl"
     >
       <div className="bg-white w-full max-w-lg rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh]">
-        {/* כותרת המודאל */}
+        {/* Header */}
         <div className="p-6 bg-slate-900 text-white flex justify-between items-center">
           <div>
             <h3 className="text-xl font-bold italic tracking-tight">
@@ -105,14 +103,14 @@ export default function PlacementModal({
           </button>
         </div>
 
-        {/* שורת חיפוש */}
+        {/* Search */}
         <div className="p-4 border-b bg-slate-50">
           <div className="relative">
             <Search className="absolute right-3 top-3 text-slate-400 w-5 h-5" />
             <input
               type="text"
               placeholder="חפשי לפי שם או טלפון..."
-              className="w-full pr-10 pl-4 py-3 bg-white border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+              className="w-full pr-10 pl-4 py-3 bg-white border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               autoFocus
@@ -120,7 +118,7 @@ export default function PlacementModal({
           </div>
         </div>
 
-        {/* רשימת המחליפות */}
+        {/* List */}
         <div className="flex-1 overflow-y-auto p-4 space-y-2 bg-white">
           {loading ? (
             <div className="flex flex-col items-center justify-center p-10 space-y-3">
@@ -130,41 +128,56 @@ export default function PlacementModal({
               </p>
             </div>
           ) : filteredSubstitutes.length === 0 ? (
-            <div className="text-center py-12">
-              <p className="text-slate-400 font-medium">
-                לא נמצאו מחליפות פנויות ליום זה
+            <div className="text-center py-12 px-6 bg-slate-50 rounded-2xl border-2 border-dashed border-slate-200">
+              <div className="bg-slate-200 w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-4">
+                <UserCheck className="text-slate-400 w-6 h-6" />
+              </div>
+              <p className="text-slate-900 font-bold text-lg mb-1">
+                אין מחליפות פנויות
               </p>
+              <p className="text-slate-500 text-sm">
+                {`לא נמצאו מחליפות ליום ${format(
+                  new Date(placement.date),
+                  "EEEE",
+                  { locale: he }
+                )}`}
+              </p>
+
+              <button
+                onClick={() => setSearchQuery("")}
+                className="mt-4 text-blue-600 text-sm font-bold hover:underline"
+              >
+                נסי לנקות את החיפוש
+              </button>
             </div>
           ) : (
             filteredSubstitutes.map((sub) => (
               <div
                 key={sub.id}
-                className="flex items-center justify-between p-4 border border-slate-50 rounded-2xl hover:bg-blue-50 transition-all group border-b-slate-100"
+                className="flex items-center justify-between p-4 rounded-2xl hover:bg-blue-50 transition"
               >
                 <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 bg-blue-600 text-white rounded-full flex items-center justify-center font-bold shadow-sm">
+                  <div className="w-10 h-10 bg-blue-600 text-white rounded-full flex items-center justify-center font-bold">
                     {sub.firstName[0]}
                   </div>
                   <div>
-                    <p className="font-bold text-slate-900 leading-none mb-1">
+                    <p className="font-bold">
                       {sub.firstName} {sub.lastName}
                     </p>
-                    <p className="text-xs text-slate-500 font-medium">
-                      {sub.phoneNumber}
-                    </p>
+                    <p className="text-xs text-slate-500">{sub.phoneNumber}</p>
                   </div>
                 </div>
                 <button
                   disabled={isAssigning}
                   onClick={() => handleAssign(sub.id)}
-                  className="flex items-center gap-1 px-4 py-2 bg-emerald-50 text-emerald-600 rounded-xl font-bold text-xs hover:bg-emerald-600 hover:text-white transition-all disabled:opacity-50 shadow-sm min-w-[100px] justify-center"
+                  className="flex items-center gap-1 px-4 py-2 bg-emerald-50 text-emerald-600 rounded-xl font-bold text-xs hover:bg-emerald-600 hover:text-white disabled:opacity-50"
                 >
                   {isAssigning ? (
                     <Loader2 className="w-4 h-4 animate-spin" />
                   ) : (
                     <>
-                      <UserCheck className="w-4 h-4" />
-                      שבצי עכשיו
+                      {" "}
+                      <UserCheck className="w-4 h-4" /> שבצי עכשיו{" "}
                     </>
                   )}
                 </button>
