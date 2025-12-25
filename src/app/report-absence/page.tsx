@@ -1,8 +1,7 @@
 "use client"; // חייב להיות כאן כי אנחנו משתמשים ב-Hook
 
-import { useActionState } from "react"; // בגרסאות ישנות יותר זה useFormState
-import { reportAbsenceAction } from "../actions/placementActions";
-
+import { useActionState } from 'react';
+import { reportAbsenceAction } from './actions';
 export default function ReportAbsencePage() {
   // state יכיל את מה שהפונקציה בשרת מחזירה (success, message)
   // formAction הוא מה שנשים בתוך ה-form

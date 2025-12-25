@@ -63,18 +63,23 @@
       81919f033ea1cd77e688a530242753170802fc
     08
       0bfab580da2ef1e9f3c925cd40b48dce9a985a
+    0d
+      033ed25b2a30992318be2af1b01c5f7cb1a3aa
     11
       810f365dd17b258da475adf5b168ce4a4d870c
     13
       3a880a3cd99d6ab5ab32ac58f946ed9e6143b0
     16
       7eee3a4cbdbc7084b522b4c38c2f0ce64ee2cd
+    17
+      5ec2d3a6eefde9c1d38b70fcf29b7086aff636
     1a
       b86164234ecbd5f9755aa5ca1fc740f3e4bc2b
     1e
       7a031d9e03f40a55fb255361f7c2454b86cca1
     1f
       1c7a7eb0dff9a69f2c22ddd5620feeb8b35ba7
+      fe67690399f385d917bf7821b6427d8c06007a
     20
       576b96ab342df68e6720592a882fccd58ac425
       e6a045f0b67e195c6433bdddf563943bd0743f
@@ -86,6 +91,7 @@
       5f8fdf14fcfe6cccaa832133037157521b1890
     2b
       108234cd80038514daf668d2ffe32de9bf825f
+      bf1c3c386950015fa47c21393ad7c9f174c658
       fc93ea328a807869d89f5cbf105e565dbc4fd3
     2c
       5113d15f0a1a991aab2f9927ecbcc749745f05
@@ -130,6 +136,7 @@
       caf09e12bb951693b3c68431921a4bd65fe3df
       f85bce9eeb594199a5b274848afa91d9d58cf1
     4e
+      a9b6613ad142a8269c4626a81889f6e12a3574
       d0506b846723574aa5e73f637692b5e82d193c
     51
       74b28c565c285e3e312ec5178be64fbeca8398
@@ -139,8 +146,11 @@
       7f17b0d7c7fb662c16d4357dd74830caf2dccb
     5a
       76067f4f6d2b23fa2ceed35e3782be8cf89a68
+    5c
+      e7aa495111de7dc9ebe98e2f3284f270e97d27
     5d
       2eba512e434df914e0503df2ab2bef0f4a3a63
+      d4fd78db408db26ea051091b591cab0bb01aed
     5e
       f6a520780202a1d6addd833d800ccb1ecac0bb
     60
@@ -152,6 +162,8 @@
       ec9f79a8d40a1bfcda0e91bc8cb1996fed5916
     64
       1f8b746d4beaff159c28facc46f142e59b6c98
+    65
+      450d56636b8b46303fa52024a50638876a15ca
     67
       d6be74cf8818491739af836a00c67e6f52a02c
     6b
@@ -174,6 +186,8 @@
     7a
       a4aa21f503023aafe8066cd8f32baac7a7b888
       f6b05142529f0b91f0bf5e2788b3296dbfce97
+    7b
+      b8ac93d4e6e9584c44ccbea99f6374233f4d86
     7f
       3f9e6118eda1ad7c6ad6ab1ba92299ff1c087c
     80
@@ -186,8 +200,12 @@
       956f2cd018ca0a4d4e4d0bcf2e275439800bd2
     88
       46b8a11ae4ee0fcf04d0240f1b9ba423a454a3
+    8a
+      38a19b179b89c271024e1fc2d4acac38636de3
     8c
       5f9b18f8ac4a0b5867baa415ca15815ee98dd1
+    8e
+      97610cb3cb854fb77586424c181ba3b919ecbc
     90
       0b873a59fdec2c9a23b63a6a142f9a0e81ed8f
       c1438527be7a760898dbb7325928202ffbd141
@@ -197,6 +215,8 @@
       3567dbc86a153f37d2fb734c50962a46b9e772
     97
       524692a0c83f3ee29869d2709169030378535c
+    98
+      59d4a3b99d7b947c46cd5fb113e959220322ec
     9a
       864c37912d876c6f5ba8efed4d37151c625c1a
     9b
@@ -214,21 +234,30 @@
       dc41ecee5ec435200fe7cba2bde4107f823774
     a3
       56c3077dbd7bc3f965c092d11110e6134e5300
+    a4
+      bb4612b9bc3332811658fe3faeacc058261b5d
     a5
       c5781d0d1ac3a393c796d1eeb16215e2be15f7
     a7
       02276e4eb56dba9cc5a89e18401934b6198151
       d072564d43e5c29ba936905a140a5c1f3df0c6
+    a8
+      b9fec372a1913bb0cc1bed12c173a4c1dfab31
     aa
       ad6f9e6e9b2262b043340091540f96d909e849
     ab
       dc1c6ec45f9472c9cd796dc811c76b82962f8b
     af
       1658a8e825afc081b7d891cbdc8f34c89a6aa2
+    b0
+      cf504b7c9ba9f9442240b97ca56c73c3c4ef89
     b2
       10c0ad83f1da44f69eb78c573ea4b822dcf821
       b2a44f6ebc70c450043c05a002e7a93ba5d651
       f6455cf114456594e73603db301159cd469cd0
+    b5
+      0d2208a28148554aeab560f5a98051168506e5
+      b15a96fb4d9122056c6c282f3ba05c85e7d971
     b6
       26c6ba7170d7a370ea10c6e54dd694cb98fb07
     b7
@@ -239,6 +268,8 @@
       65402a97399f92261afe591a669e35626643ee
     ba
       b4efd6841cd2083dfcdccf7abf58f31ea730f9
+    bd
+      a7cbad5f0f200fd3d7155274917db3775d64f2
     be
       337ca3d0629f75de7611b01e50c7f9f21b829e
       705b8378b0e66dcdaf729b85c5022c5da93821
@@ -267,6 +298,7 @@
     cf
       9c65d3e0676a0169374d827f7abb97497789ef
     d0
+      3dd66b0421ab520be2a43b53b999e0f768fdd9
       513115b30f8e809600a886d492dec33f4f41dd
       9e9309ce21f3b3d4db4b6c8b0e8ebac1deff30
     d1
@@ -282,6 +314,8 @@
       34935efae7ab5a55cb896eccbe59cea9255e04
     d7
       d2be5c82a20227d257f0ddfbef99c8e9a7cd1b
+    d8
+      8478a4e7624c84cd080bad3627141263f96a14
     d9
       90acfd87871e6e9d0fc49940a585e8dddad0b0
       a8d0598b6fa2d5f57ab4dae4e43e096899bda0
@@ -291,12 +325,17 @@
     dd
       9ac96e15527e1e88050be8dc1b31a913d7980b
       e4faef2155fe4b427d62f37a3b2d396c50c95a
+    df
+      98d46658508eff213140da82a4abee51a10834
     e1
       9e06c729aefc3b07be1b37837868217fdecad3
     e2
       15bc4ccf138bbc38ad58ad57e92135484b3c0f
+      476383b7971fce77e2bd28bdba5c539e6fec3d
     e4
       0956778928bb6da9a1492b9cd6570b5e230b1d
+    e6
+      9de29bb2d1d6434b8b29ae775ad8c2e48c5391
     e7
       921ce5a21d915e594bd54a454595598a71cf40
     e8
@@ -315,10 +354,13 @@
       57b069ba5e02ab2aa4e42998f4da99068dff55
       85d5ad8f4e04ce836533da2165ba32a05413c4
       90d121b1b468623d4680487d17a15999f54841
+    f5
+      ee25bc130c7fa66337c6dd0cba03d2a25cecb5
     f6
       7cd3070a6d0a535ebb35e1331cccf2f269b9fb
     f7
       2da8c7b482563ac8b7f3df471726bc2c71d17c
+      3be8b6b06f9580e4eada6be221abb85f83335f
       b1517f80f16c6e5fb45dd0f1563aaeb5183d08
       fa87eb875260ed98651bc419c8139b5119e554
     f8
@@ -367,9 +409,25 @@
 .gitignore
 .next
   dev
+    build
+      chunks
+        1188c_a8b8714e._.js
+        1188c_a8b8714e._.js.map
+        [root-of-the-server]__330baf8e._.js
+        [root-of-the-server]__330baf8e._.js.map
+        [root-of-the-server]__95808210._.js
+        [root-of-the-server]__95808210._.js.map
+        [turbopack-node]_transforms_postcss_ts_f88cd931._.js
+        [turbopack-node]_transforms_postcss_ts_f88cd931._.js.map
+        [turbopack]_runtime.js
+        [turbopack]_runtime.js.map
+      package.json
+      postcss.js
+      postcss.js.map
     build-manifest.json
     cache
       .rscinfo
+      next-devtools-config.json
       turbopack
         d1bd5b58
           00000001.sst
@@ -952,6 +1010,39 @@
           00000578.meta
           00000579.meta
           00000580.meta
+          00000581.sst
+          00000582.sst
+          00000583.sst
+          00000584.sst
+          00000585.sst
+          00000586.meta
+          00000587.meta
+          00000588.meta
+          00000589.meta
+          00000590.meta
+          00000591.sst
+          00000592.sst
+          00000593.sst
+          00000594.sst
+          00000595.sst
+          00000596.sst
+          00000597.sst
+          00000598.sst
+          00000599.meta
+          00000600.meta
+          00000601.meta
+          00000602.meta
+          00000603.meta
+          00000604.sst
+          00000605.sst
+          00000606.sst
+          00000607.sst
+          00000608.sst
+          00000609.meta
+          00000610.meta
+          00000611.meta
+          00000612.meta
+          00000613.meta
           CURRENT
           LOG
     fallback-build-manifest.json
@@ -975,10 +1066,57 @@
             route.js
             route.js.map
             route_client-reference-manifest.js
+        _not-found
+          page
+            app-paths-manifest.json
+            build-manifest.json
+            next-font-manifest.json
+            react-loadable-manifest.json
+            server-reference-manifest.json
+          page.js
+          page.js.map
+          page_client-reference-manifest.js
       app-paths-manifest.json
       chunks
         Desktop_FitIn_fit-in__next-internal_server_app_api_test_route_actions_59ab8bc7.js
         Desktop_FitIn_fit-in__next-internal_server_app_api_test_route_actions_59ab8bc7.js.map
+        ssr
+          1188c_99f4cea4._.js
+          1188c_99f4cea4._.js.map
+          1188c_9fe9b090._.js
+          1188c_9fe9b090._.js.map
+          1188c_cdfb78a9._.js
+          1188c_cdfb78a9._.js.map
+          1188c_next_398cc759._.js
+          1188c_next_398cc759._.js.map
+          1188c_next_dist_0395e34c._.js
+          1188c_next_dist_0395e34c._.js.map
+          1188c_next_dist_45020e74._.js
+          1188c_next_dist_45020e74._.js.map
+          1188c_next_dist_client_components_6e1a811c._.js
+          1188c_next_dist_client_components_6e1a811c._.js.map
+          1188c_next_dist_client_components_builtin_forbidden_1c1c5a65.js
+          1188c_next_dist_client_components_builtin_forbidden_1c1c5a65.js.map
+          Desktop_FitIn_fit-in_src_app_1bcffc04._.js
+          Desktop_FitIn_fit-in_src_app_1bcffc04._.js.map
+          Desktop_FitIn_fit-in__next-internal_server_app__not-found_page_actions_d1f57a9c.js
+          Desktop_FitIn_fit-in__next-internal_server_app__not-found_page_actions_d1f57a9c.js.map
+          [externals]_next_dist_1aaf5479._.js
+          [externals]_next_dist_1aaf5479._.js.map
+          [externals]_next_dist_shared_lib_no-fallback-error_external_59b92b38.js
+          [externals]_next_dist_shared_lib_no-fallback-error_external_59b92b38.js.map
+          [externals]__e6a4d965._.js
+          [externals]__e6a4d965._.js.map
+          [externals]__e8a2741f._.js
+          [externals]__e8a2741f._.js.map
+          [root-of-the-server]__203c0c73._.js
+          [root-of-the-server]__203c0c73._.js.map
+          [root-of-the-server]__22339ca8._.js
+          [root-of-the-server]__22339ca8._.js.map
+          [root-of-the-server]__f345d511._.js
+          [root-of-the-server]__f345d511._.js.map
+          [turbopack]_runtime.js
+          [turbopack]_runtime.js.map
         [root-of-the-server]__18b9bf1b._.js
         [root-of-the-server]__18b9bf1b._.js.map
         [root-of-the-server]__1b42a50a._.js
@@ -991,22 +1129,134 @@
         [root-of-the-server]__fa424093._.js.map
         [turbopack]_runtime.js
         [turbopack]_runtime.js.map
+      edge
+        chunks
+          1188c_d824f845._.js
+          1188c_d824f845._.js.map
+          1188c_next_dist_esm_build_templates_edge-wrapper_631a21eb.js.map
+          6863f_next_dist_esm_build_templates_edge-wrapper_631a21eb.js
+          [root-of-the-server]__0592083f._.js
+          [root-of-the-server]__0592083f._.js.map
       interception-route-rewrite-manifest.js
+      middleware
+        middleware-manifest.json
       middleware-build-manifest.js
       middleware-manifest.json
       next-font-manifest.js
       next-font-manifest.json
+      pages
+        _app
+          build-manifest.json
+          client-build-manifest.json
+          next-font-manifest.json
+          pages-manifest.json
+          react-loadable-manifest.json
+        _app.js
+        _app.js.map
+        _document
+          next-font-manifest.json
+          pages-manifest.json
+          react-loadable-manifest.json
+        _document.js
+        _document.js.map
+        _error
+          build-manifest.json
+          client-build-manifest.json
+          next-font-manifest.json
+          pages-manifest.json
+          react-loadable-manifest.json
+        _error.js
+        _error.js.map
       pages-manifest.json
       server-reference-manifest.js
       server-reference-manifest.json
     static
       chunks
+        1188c_@swc_helpers_cjs_c66c859a._.js
+        1188c_@swc_helpers_cjs_c66c859a._.js.map
+        1188c_f1343add._.js
+        1188c_f1343add._.js.map
+        1188c_next_app_81beeeb3.js
+        1188c_next_app_81beeeb3.js.map
+        1188c_next_dist_1247a1eb._.js
+        1188c_next_dist_1247a1eb._.js.map
+        1188c_next_dist_3ff2216a._.js
+        1188c_next_dist_3ff2216a._.js.map
+        1188c_next_dist_40a26ece._.js
+        1188c_next_dist_40a26ece._.js.map
         1188c_next_dist_build_polyfills_polyfill-nomodule.js
         1188c_next_dist_build_polyfills_polyfill-nomodule.js.map
+        1188c_next_dist_client_ecaa67ee._.js
+        1188c_next_dist_client_ecaa67ee._.js.map
+        1188c_next_dist_client_fe3c7fb4._.js
+        1188c_next_dist_client_fe3c7fb4._.js.map
+        1188c_next_dist_compiled_42393f2e._.js
+        1188c_next_dist_compiled_42393f2e._.js.map
+        1188c_next_dist_compiled_b9f3ad70._.js
+        1188c_next_dist_compiled_b9f3ad70._.js.map
+        1188c_next_dist_compiled_next-devtools_index_e88321f4.js
+        1188c_next_dist_compiled_next-devtools_index_e88321f4.js.map
+        1188c_next_dist_compiled_react-dom_5fd5459b._.js
+        1188c_next_dist_compiled_react-dom_5fd5459b._.js.map
+        1188c_next_dist_compiled_react-server-dom-turbopack_e28617fb._.js
+        1188c_next_dist_compiled_react-server-dom-turbopack_e28617fb._.js.map
+        1188c_next_dist_d6deced5._.js
+        1188c_next_dist_d6deced5._.js.map
+        1188c_next_dist_shared_lib_09f208c6._.js
+        1188c_next_dist_shared_lib_09f208c6._.js.map
+        1188c_next_dist_shared_lib_f054f1b2._.js
+        1188c_next_dist_shared_lib_f054f1b2._.js.map
+        1188c_next_error_7e2ee421.js
+        1188c_next_error_7e2ee421.js.map
+        1188c_react-dom_19f853e9._.js
+        1188c_react-dom_19f853e9._.js.map
+        Desktop_FitIn_fit-in_a0ff3932._.js
+        Desktop_FitIn_fit-in_c4e3303d._.js.map
+        Desktop_FitIn_fit-in_pages__app_2da965e7._.js
+        Desktop_FitIn_fit-in_pages__app_5141acec._.js.map
+        Desktop_FitIn_fit-in_pages__error_15dce16b._.js.map
+        Desktop_FitIn_fit-in_pages__error_2da965e7._.js
+        Desktop_FitIn_fit-in_src_app_favicon_ico_mjs_a62c293c._.js
+        Desktop_FitIn_fit-in_src_app_globals_css_bad6b30c._.single.css
+        Desktop_FitIn_fit-in_src_app_globals_css_bad6b30c._.single.css.map
+        Desktop_FitIn_fit-in_src_app_layout_tsx_a8459761._.js
+        pages
+          _app.js
+          _error.js
+        turbopack-Desktop_FitIn_fit-in_c4e3303d._.js
+        turbopack-Desktop_FitIn_fit-in_pages__app_5141acec._.js
+        turbopack-Desktop_FitIn_fit-in_pages__error_15dce16b._.js
+        [next]_entry_page-loader_ts_cf5645e6._.js
+        [next]_entry_page-loader_ts_cf5645e6._.js.map
+        [next]_entry_page-loader_ts_e3f5b6fd._.js
+        [next]_entry_page-loader_ts_e3f5b6fd._.js.map
+        [next]_internal_font_google_geist_a71539c9_module_css_bad6b30c._.single.css
+        [next]_internal_font_google_geist_a71539c9_module_css_bad6b30c._.single.css.map
+        [next]_internal_font_google_geist_mono_8d43a2aa_module_css_bad6b30c._.single.css
+        [next]_internal_font_google_geist_mono_8d43a2aa_module_css_bad6b30c._.single.css.map
+        [root-of-the-server]__d66ba0f3._.js
+        [root-of-the-server]__d66ba0f3._.js.map
+        [root-of-the-server]__e4249600._.css
+        [root-of-the-server]__e4249600._.css.map
+        [root-of-the-server]__fe70a774._.js
+        [root-of-the-server]__fe70a774._.js.map
+        [turbopack]_browser_dev_hmr-client_hmr-client_ts_2698cfc5._.js
+        [turbopack]_browser_dev_hmr-client_hmr-client_ts_c8c997ce._.js
+        [turbopack]_browser_dev_hmr-client_hmr-client_ts_c8c997ce._.js.map
+        [turbopack]_browser_dev_hmr-client_hmr-client_ts_e2eb7400._.js
+        [turbopack]_browser_dev_hmr-client_hmr-client_ts_e2eb7400._.js.map
       development
         _buildManifest.js
         _clientMiddlewareManifest.json
         _ssgManifest.js
+      media
+        4fa387ec64143e14-s.c1fdd6c2.woff2
+        7178b3e590c64307-s.b97b3418.woff2
+        797e433ab948586e-s.p.dbea232f.woff2
+        8a480f0b521d4e75-s.8e0177b5.woff2
+        bbc41e54d2fcbd21-s.799d8ef8.woff2
+        caa3a2e1cccd8315-s.p.853070df.woff2
+        favicon.0b3bf435.ico
     trace
     types
       cache-life.d.ts
@@ -17020,6 +17270,137 @@ node_modules
       jiti.mjs
       types.d.ts
     LICENSE
+    package.json
+    README.md
+  jose
+    dist
+      types
+        index.d.ts
+        jwe
+          compact
+            decrypt.d.ts
+            encrypt.d.ts
+          flattened
+            decrypt.d.ts
+            encrypt.d.ts
+          general
+            decrypt.d.ts
+            encrypt.d.ts
+        jwk
+          embedded.d.ts
+          thumbprint.d.ts
+        jwks
+          local.d.ts
+          remote.d.ts
+        jws
+          compact
+            sign.d.ts
+            verify.d.ts
+          flattened
+            sign.d.ts
+            verify.d.ts
+          general
+            sign.d.ts
+            verify.d.ts
+        jwt
+          decrypt.d.ts
+          encrypt.d.ts
+          sign.d.ts
+          unsecured.d.ts
+          verify.d.ts
+        key
+          export.d.ts
+          generate_key_pair.d.ts
+          generate_secret.d.ts
+          import.d.ts
+        types.d.ts
+        util
+          base64url.d.ts
+          decode_jwt.d.ts
+          decode_protected_header.d.ts
+          errors.d.ts
+      webapi
+        index.js
+        jwe
+          compact
+            decrypt.js
+            encrypt.js
+          flattened
+            decrypt.js
+            encrypt.js
+          general
+            decrypt.js
+            encrypt.js
+        jwk
+          embedded.js
+          thumbprint.js
+        jwks
+          local.js
+          remote.js
+        jws
+          compact
+            sign.js
+            verify.js
+          flattened
+            sign.js
+            verify.js
+          general
+            sign.js
+            verify.js
+        jwt
+          decrypt.js
+          encrypt.js
+          sign.js
+          unsecured.js
+          verify.js
+        key
+          export.js
+          generate_key_pair.js
+          generate_secret.js
+          import.js
+        lib
+          aesgcmkw.js
+          aeskw.js
+          asn1.js
+          base64.js
+          buffer_utils.js
+          cek.js
+          check_cek_length.js
+          check_iv_length.js
+          check_key_length.js
+          check_key_type.js
+          crypto_key.js
+          decrypt.js
+          decrypt_key_management.js
+          digest.js
+          ecdhes.js
+          encrypt.js
+          encrypt_key_management.js
+          get_sign_verify_key.js
+          invalid_key_input.js
+          is_disjoint.js
+          is_jwk.js
+          is_key_like.js
+          is_object.js
+          iv.js
+          jwk_to_key.js
+          jwt_claims_set.js
+          key_to_jwk.js
+          normalize_key.js
+          pbes2kw.js
+          private_symbols.js
+          rsaes.js
+          sign.js
+          subtle_dsa.js
+          validate_algorithms.js
+          validate_crit.js
+          verify.js
+        util
+          base64url.js
+          decode_jwt.js
+          decode_protected_header.js
+          errors.js
+    LICENSE.md
     package.json
     README.md
   js-tokens
@@ -33807,10 +34188,10 @@ src
   app
     api
       auth
-        login
-          login.module.css
-          page.tsx
-          route.ts
+      login
+        login.module.css
+        page.tsx
+        route.ts
       placements
         route.ts
       test
@@ -33823,12 +34204,15 @@ src
       page.tsx
     supervisor
       placements
+        page.tsx
     supervisor-placements
       module.css
       page.tsx
   lib
     api.ts
+    auth.ts
     prisma.ts
+  middleware.ts
   services
     authService.ts
     institutionService.ts
@@ -33837,4 +34221,5 @@ src
     userService.ts
   utils
     crypto.ts
+structure.txt
 tsconfig.json
