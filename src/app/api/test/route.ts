@@ -6,6 +6,7 @@ import {
   db_createPlacement,
   db_assignSubstitute,
   db_updatePlacementStatus,
+  db_getCalendarData,
 } from "@/services/placementService";
 import { prisma } from "@/lib/prisma";
 import { Role } from "@prisma/client";
@@ -73,6 +74,10 @@ export async function POST(request: Request) {
 
       case "assign":
         result = await db_assignSubstitute(data.placementId, data.substituteId);
+        break;
+
+      case "getCalendarData":
+        result = await db_getCalendarData(data.month, data.year);
         break;
 
       default:
