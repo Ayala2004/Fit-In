@@ -4,8 +4,9 @@ import { useEffect, useState } from "react";
 import PlacementModal from "@/components/PlacementModal";
 import InstructorPlacementsModal from "@/components/InstructorPlacementsModal";
 import { highlightText } from "@/lib/utils/formatters";
-import AddUserModal from "@/components/AddUserModal.tsx";
 import AddInstitutionModal from "@/components/AddInstitutionModal";
+import { isRegistrationOpen } from "@/utils/dateHelpers";
+import AddUserModal from "@/components/AddUserModal.tsx";
 
 export default function SupervisorPlacements() {
   const [data, setData] = useState<any[]>([]);
@@ -23,6 +24,7 @@ export default function SupervisorPlacements() {
   // מודאל 3: הוספת גננת אם חדשה
   const [isAddTeacherOpen, setIsAddTeacherOpen] = useState(false);
 
+  // מודאל 4: הוספת מוסד
   const [isAddInstitutionOpen, setIsAddInstitutionOpen] = useState(false);
 
   const loadData = () => {
@@ -32,7 +34,8 @@ export default function SupervisorPlacements() {
       .then((json) => {
         setData(json);
         setLoading(false);
-      });
+      })
+      .catch(() => setLoading(false));
   };
 
   useEffect(() => {
@@ -49,8 +52,17 @@ export default function SupervisorPlacements() {
     setIsAssignModalOpen(true);
   };
 
+
+
   if (loading)
-    return <div className="p-10 text-center font-bold">טוען נתונים...</div>;
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="text-center">
+          <div className="inline-block animate-spin rounded-full h-16 w-16 border-4 border-slate-700 border-t-transparent mb-4"></div>
+          <p className="text-xl font-semibold text-gray-700">טוען נתונים...</p>
+        </div>
+      </div>
+    );
 
   const filteredData = data.filter((instructor) => {
     const instructorName =
@@ -66,71 +78,132 @@ export default function SupervisorPlacements() {
   });
 
   return (
-    <div className="p-8 bg-gray-50 min-h-screen font-sans text-black" dir="rtl">
-      {/* כותרת וחיפוש */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between mb-6 gap-4">
-        <h1 className="text-3xl font-bold text-blue-900 italic">
-          ניהול שיבוצים והדרכה
-        </h1>
-        <div className="relative max-w-sm w-full">
-          <input
-            type="text"
-            placeholder="חיפוש מדריכה או גננת..."
-            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none shadow-sm"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-          />
+    <div className="min-h-screen bg-gray-50 font-sans" dir="rtl">
+      {/* Header Section */}
+      <div className="bg-white border-b border-gray-200 shadow-sm">
+        <div className="max-w-7xl mx-auto px-6 py-8">
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
+            <div>
+              <h1 className="text-4xl font-bold text-slate-800 mb-2">
+                ניהול שיבוצים והדרכה
+              </h1>
+              <p className="text-gray-600">מערכת ניהול מדריכות וגננות</p>
+            </div>
+          </div>
         </div>
       </div>
 
-      {/* כותרת רשימת מדריכות + כפתור הוספה */}
-      <div className="flex justify-between items-center mb-6">
-        <h2 className="text-xl font-bold text-slate-700">רשימת מדריכות</h2>
-        <button
-          onClick={() => setIsAddTeacherOpen(true)}
-          className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2 transition-colors shadow-md"
-        >
-          <span className="text-xl">+</span>
-          הוספת גננת אם חדשה
-        </button>
-      </div>
-
-      {/* גריד המדריכות */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {filteredData.map((instructor: any) => (
-          <div
-            key={instructor.id}
-            onClick={() => openInstructorModal(instructor)}
-            className="bg-white rounded-xl shadow-md border border-gray-200 hover:shadow-xl hover:border-blue-400 transition-all cursor-pointer overflow-hidden group"
+      {/* Main Content */}
+      <div className="max-w-7xl mx-auto px-6 py-8">
+        {/* Action Buttons */}
+        <div className="flex flex-wrap gap-4 mb-8">
+          <button
+            onClick={() => setIsAddTeacherOpen(true)}
+            className="bg-slate-700 hover:bg-slate-800 text-white px-6 py-3 rounded-lg font-semibold flex items-center gap-2 transition-all shadow-md hover:shadow-lg"
           >
-            <div className="bg-blue-600 p-5 text-white flex justify-between items-center group-hover:bg-blue-700 transition-colors">
-              <div>
-                <h2 className="text-xl font-bold">
-                  {highlightText(
-                    `${instructor.firstName} ${instructor.lastName}`,
-                    searchTerm
-                  )}
-                </h2>
-                <p className="text-xs opacity-80 mt-1">
-                  {instructor.subordinatesIns?.filter((g: any) =>
-                    g.roles.includes("MANAGER")
-                  ).length || 0}{" "}
-                  גננות אם שתחתיה
-                </p>
-              </div>
-              <div className="bg-white/20 px-3 py-1.5 rounded-lg group-hover:bg-white/30 transition-colors">
-                <span className="text-xs font-bold">צפייה ←</span>
-              </div>
-            </div>
-            <div className="p-4 bg-slate-50 text-slate-500 text-xs flex justify-between items-center">
-              <span>ניהול גנים ושיבוצים</span>
-              <span className="text-blue-600 font-bold">לחצי לפירוט</span>
-            </div>
+            <span className="text-xl">+</span>
+            הוספת גננת אם חדשה
+          </button>
+
+          <button
+            onClick={() => setIsAddInstitutionOpen(true)}
+            className="bg-slate-600 hover:bg-slate-700 text-white px-6 py-3 rounded-lg font-semibold flex items-center gap-2 transition-all shadow-md hover:shadow-lg"
+          >
+            <span className="text-xl">+</span>
+            הוספת גן חדש
+          </button>
+        </div>
+
+        {/* Section Title */}
+        <div className="mb-6">
+          <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-3">
+            <span className="w-1 h-8 bg-slate-700 rounded"></span>
+            רשימת מדריכות
+            <span className="text-sm font-normal text-gray-500 mr-2">
+              ({filteredData.length} מדריכות)
+            </span>
+          </h2>
+        </div>
+
+        <div className="flex flex-col sm:flex-row gap-3 mb-8">
+          <div className="relative">
+            <input
+              type="text"
+              placeholder="חיפוש מדריכה או גננת..."
+              className="w-full sm:w-80 px-5 text-gray-700 py-3 pr-12 border border-gray-300 rounded-lg focus:ring-2 focus:ring-slate-600 focus:border-slate-600 outline-none shadow-sm transition-all bg-white"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+            />
+            <span className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400">
+              🔍
+            </span>
           </div>
-        ))}
+        </div>
+
+        {/* Instructors Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {filteredData.map((instructor: any) => {
+            const teacherCount =
+              instructor.subordinatesIns?.filter((g: any) =>
+                g.roles.includes("MANAGER")
+              ).length || 0;
+
+            return (
+              <div
+                key={instructor.id}
+                onClick={() => openInstructorModal(instructor)}
+                className="group bg-white rounded-lg shadow-md border border-gray-200 hover:border-slate-400 hover:shadow-xl transition-all duration-300 cursor-pointer overflow-hidden"
+              >
+                <div className="bg-slate-700 p-6 text-white">
+                  <div className="flex justify-between items-start mb-4">
+                    <h2 className="text-2xl font-bold leading-tight">
+                      {highlightText(
+                        `${instructor.firstName} ${instructor.lastName}`,
+                        searchTerm
+                      )}
+                    </h2>
+                    <div className="bg-slate-600 px-3 py-1.5 rounded group-hover:bg-slate-500 transition-colors">
+                      <span className="text-xs font-semibold">לחצי לצפייה</span>
+                    </div>
+                  </div>
+
+                  <div className="items-center gap-2 bg-slate-600 px-4 py-2 rounded inline-flex">
+                    <span className="text-2xl font-bold">{teacherCount}</span>
+                    <span className="text-sm">גננות אם</span>
+                  </div>
+                </div>
+
+                <div className="p-5 bg-gray-50 border-t border-gray-200">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-gray-700">
+                      <span className="text-xl">👥</span>
+                      <span className="text-sm font-medium">
+                        ניהול גנים ושיבוצים
+                      </span>
+                    </div>
+                    <div className="text-slate-700 font-semibold text-sm group-hover:translate-x-1 transition-transform">
+                      פרטים ←
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Empty State */}
+        {filteredData.length === 0 && (
+          <div className="text-center py-16">
+            <div className="text-6xl mb-4">🔍</div>
+            <h3 className="text-2xl font-bold text-gray-700 mb-2">
+              לא נמצאו תוצאות
+            </h3>
+            <p className="text-gray-500">נסה לשנות את מילות החיפוש</p>
+          </div>
+        )}
       </div>
 
-      {/* מודאל: רשימת גננות אם */}
+      {/* Modals */}
       <InstructorPlacementsModal
         isOpen={isInstructorModalOpen}
         onClose={() => setIsInstructorModalOpen(false)}
@@ -139,7 +212,6 @@ export default function SupervisorPlacements() {
         onAssignClick={(placement) => openAssignModal(placement)}
       />
 
-      {/* מודאל: שיבוץ מחליפה */}
       {selectedPlacement && (
         <PlacementModal
           isOpen={isAssignModalOpen}
@@ -152,29 +224,19 @@ export default function SupervisorPlacements() {
         />
       )}
 
-      {/* מודאל: הוספת משתמש */}
       <AddUserModal
         isOpen={isAddTeacherOpen}
         onClose={() => setIsAddTeacherOpen(false)}
         onSuccess={() => {
           loadData();
-          alert("הגננת נוספה בהצלחה!");
         }}
       />
-      <button
-        onClick={() => setIsAddInstitutionOpen(true)}
-        className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2 transition-colors shadow-md"
-      >
-        + הוספת גן חדש
-      </button>
 
-      {/* המודאל */}
       <AddInstitutionModal
         isOpen={isAddInstitutionOpen}
         onClose={() => setIsAddInstitutionOpen(false)}
         onSuccess={() => {
           loadData();
-          alert("הגן הוקם בהצלחה!");
         }}
       />
     </div>

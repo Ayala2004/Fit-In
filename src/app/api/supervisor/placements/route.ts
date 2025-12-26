@@ -15,7 +15,6 @@ export async function GET() {
     const startOfToday = new Date(today.setHours(0, 0, 0, 0));
     const endOfToday = new Date(today.setHours(23, 59, 59, 999));
 
-    // השאילתה הזו קריטית לחיפוש שלך - היא מחזירה מדריכות -> גננות -> שיבוצים
     const instructors = await prisma.user.findMany({
       where: {
         supervisorId: session.id,
@@ -24,7 +23,7 @@ export async function GET() {
       include: {
         subordinatesIns: {
           include: {
-            mainManagedInstitutions: true, // המוסדות שהגננת מנהלת
+            mainManagedInstitutions: true,
             placementsAsMain: {
               where: {
                 date: {
@@ -33,8 +32,8 @@ export async function GET() {
                 },
               },
               include: {
-                institution: true, // חשוב כדי להציג את שם הגן בטבלה
-                substitute: true,  // חשוב כדי לראות מי המחליפה שכבר שובצה
+                institution: true,
+                substitute: true,
               }
             },
           },
@@ -49,17 +48,56 @@ export async function GET() {
   }
 }
 
-// --- PATCH: עדכון שיבוץ ושליחת התראות (מה שעשינו קודם) ---
+// --- PATCH: עדכון שיבוץ ושליחת התראות ---
 export async function PATCH(request: Request) {
   try {
     const session = await getSession();
-    if (!session || !session.roles.includes("SUPERVISOR")) {
+    // הרשאה למפקחת או מדריכה
+    if (!session || (!session.roles.includes("SUPERVISOR") && !session.roles.includes("INSTRUCTOR"))) {
       return NextResponse.json({ message: "לא מורשה" }, { status: 401 });
     }
 
     const { placementId, substituteId, status } = await request.json();
 
-    if (!placementId || !substituteId) {
+    // לוגיקה לסגירת גן (ללא מחליפה)
+    if (status === "CANCELLED") {
+      const updatedPlacement = await prisma.placement.update({
+        where: { id: placementId },
+        data: { 
+          status: "CANCELLED",
+          substituteId: null // מוודאים שאין מחליפה אם הגן נסגר
+        }
+      });
+      return NextResponse.json(updatedPlacement);
+    }
+
+    // ✔ הרשאה גם למדריכה וגם למפקחת
+    if (!session || (!session.roles.includes("SUPERVISOR") && !session.roles.includes("INSTRUCTOR"))) {
+      return NextResponse.json({ message: "לא מורשה" }, { status: 401 });
+    }
+
+    if (!placementId) {
+      return NextResponse.json({ message: "חסרים נתונים" }, { status: 400 });
+    }
+
+    // ✔ טיפול בביטול שיבוץ / סגירת גן
+    if (status === "CANCELLED") {
+      const cancelledPlacement = await prisma.placement.update({
+        where: { id: placementId },
+        data: {
+          status: "CANCELLED",
+          substituteId: null,
+        },
+        include: {
+          mainTeacher: true,
+          institution: true,
+        },
+      });
+
+      return NextResponse.json(cancelledPlacement);
+    }
+
+    if (!substituteId) {
       return NextResponse.json({ message: "חסרים נתונים" }, { status: 400 });
     }
 
@@ -76,7 +114,6 @@ export async function PATCH(request: Request) {
       }
     });
 
-    // לוגיקת ההתראות (כמו שסידרנו קודם)
     if (updatedPlacement.substitute && updatedPlacement.mainTeacher) {
       const dateStr = new Date(updatedPlacement.date).toLocaleDateString('he-IL');
       const gardenName = updatedPlacement.institution.name;

@@ -53,16 +53,6 @@ export default function InstructorPlacementsModal({ isOpen, onClose, instructor,
                       </button>
                     )}
                   </div>
-
-                  <div className="flex flex-col items-end gap-2">
-                    {!todaysPlacement ? (
-                      <span className="text-xs bg-slate-200 text-slate-600 px-3 py-1 rounded-full font-medium">בגן</span>
-                    ) : todaysPlacement.status === "OPEN" ? (
-                      <span className="text-xs bg-red-100 text-red-600 px-3 py-1 rounded-full font-bold animate-pulse shadow-sm">חסרה</span>
-                    ) : (
-                      <span className="text-xs bg-green-100 text-green-600 px-3 py-1 rounded-full font-bold shadow-sm">מאויש</span>
-                    )}
-                  </div>
                 </div>
               );
             })
