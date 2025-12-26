@@ -4,7 +4,7 @@ import bcrypt from 'bcrypt';
 
 const prisma = new PrismaClient();
 
-// 1. קבלת כל המשתמשים עם פענוח ת"ז
+//  קבלת כל המשתמשים עם פענוח ת"ז
 export async function db_getAllUsers() {
   const users = await prisma.user.findMany();
   return users.map(user => ({
@@ -14,7 +14,7 @@ export async function db_getAllUsers() {
   }));
 }
 
-// 2. קבלת משתמש לפי ID
+//  קבלת משתמש לפי ID
 export async function db_getUserById(id: string) {
   const user = await prisma.user.findUnique({ where: { id } });
   if (!user) return null;
@@ -26,7 +26,7 @@ export async function db_getUserById(id: string) {
   };
 }
 
-// 3. קבלת סטטיסטיקות/שיבוצים למשתמש לפי טווח תאריכים
+//. קבלת סטטיסטיקות/שיבוצים למשתמש לפי טווח תאריכים
 // זה יענה על הצורך של ה-ADMIN לראות מתי גננת החליפה ובאילו גנים
 export async function db_getUserStats(userId: string, startDate?: string, endDate?: string) {
   const whereClause: any = {
@@ -47,11 +47,21 @@ export async function db_getUserStats(userId: string, startDate?: string, endDat
   });
 }
 
-// 4. קבלת התראות למשתמש
+//  קבלת התראות למשתמש
 export async function db_getUserNotifications(userId: string) {
   return await prisma.notification.findMany({
     where: { userId },
     orderBy: { createdAt: 'desc' },
     take: 20
+  });
+}
+
+export async function db_getSubstitutes() {
+  return await prisma.user.findMany({
+    where: {
+      roles: { hasSome: ["SUBSTITUTE", "ROTATION"] },
+      isWorking: true
+    },
+    select: { id: true, firstName: true, lastName: true }
   });
 }

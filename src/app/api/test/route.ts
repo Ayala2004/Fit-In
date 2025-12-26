@@ -82,7 +82,11 @@ export async function POST(request: Request) {
         break;
 
       case "getCalendarData":
-        result = await db_getCalendarData(data.month, data.year);
+        result = await db_getCalendarData(
+          data.month,
+          data.year,
+          data.supervisorId
+        );
         break;
 
       default:

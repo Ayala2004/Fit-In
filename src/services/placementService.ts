@@ -19,7 +19,8 @@ export async function db_getSupervisorDashboard(supervisorId: string) {
     let addedDays = 0;
     while (addedDays < daysToCount) {
       currentDate = addDays(currentDate, 1);
-      if (currentDate.getDay() !== 6) { // 6 = יום שבת
+      if (currentDate.getDay() !== 6) {
+        // 6 = יום שבת
         addedDays++;
       }
     }
@@ -48,7 +49,7 @@ export async function db_getSupervisorDashboard(supervisorId: string) {
     where: {
       institution: { supervisorId: supervisorId },
       status: "OPEN",
-      date: { gte: today, lte: urgentDeadline },
+      date: { gte: today, lte: urgentDeadline,  },
     },
     include: {
       institution: { select: { name: true } },
@@ -90,6 +91,9 @@ export async function db_getSupervisorDashboard(supervisorId: string) {
  * אימות תקינות שיבוץ
  */
 export async function validatePlacement(substituteId: string, date: Date) {
+  if (date.getDay() === 6) {
+    throw new Error("אין פעילות גנים ביום שבת - לא ניתן לשבץ");
+  }
   const existingPlacement = await prisma.placement.findFirst({
     where: {
       substituteId,
@@ -111,7 +115,15 @@ export async function validatePlacement(substituteId: string, date: Date) {
 }
 
 const getDayEnum = (date: Date): Day => {
-  const days = ["SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"];
+  const days = [
+    "SUNDAY",
+    "MONDAY",
+    "TUESDAY",
+    "WEDNESDAY",
+    "THURSDAY",
+    "FRIDAY",
+    "SATURDAY",
+  ];
   return days[date.getDay()] as Day;
 };
 
@@ -128,7 +140,9 @@ export async function db_createPlacement(data: {
 }) {
   const targetDate = startOfDay(new Date(data.date));
   const today = startOfDay(new Date());
-
+  if (targetDate.getDay() === 6) {
+    throw new Error("לא ניתן לדווח על היעדרות ביום שבת");
+  }
   const isManager = (data.creatorRoles ?? []).some((role) =>
     ["SUPERVISOR", "INSTRUCTOR"].includes(role)
   );
@@ -147,7 +161,7 @@ export async function db_createPlacement(data: {
       throw new Error("בדיווח רטרואקטיבי יש לבחור סטטוס ASSIGNED או CANCELLED");
     }
   } else {
-    finalStatus = isManager ? (data.status || "OPEN") : "OPEN";
+    finalStatus = isManager ? data.status || "OPEN" : "OPEN";
   }
 
   const existingReport = await prisma.placement.findFirst({
@@ -157,9 +171,11 @@ export async function db_createPlacement(data: {
       status: { not: "CANCELLED" },
     },
   });
-  if (existingReport) throw new Error("כבר קיים דיווח פעיל לגן זה בתאריך שנבחר");
+  if (existingReport)
+    throw new Error("כבר קיים דיווח פעיל לגן זה בתאריך שנבחר");
 
-  const diffInDays = (targetDate.getTime() - today.getTime()) / (1000 * 3600 * 24);
+  const diffInDays =
+    (targetDate.getTime() - today.getTime()) / (1000 * 3600 * 24);
   const priority = !isRetroactive && diffInDays <= 2 ? "URGENT" : "NORMAL";
 
   const newPlacement = await prisma.placement.create({
@@ -180,12 +196,15 @@ export async function db_createPlacement(data: {
   if (!isRetroactive && finalStatus === "OPEN") {
     const { institution, mainTeacher } = newPlacement;
     const teacherName = `${mainTeacher.firstName} ${mainTeacher.lastName}`;
-    const notificationType = priority === "URGENT" ? "URGENT_CALL" : "STATUS_UPDATE";
+    const notificationType =
+      priority === "URGENT" ? "URGENT_CALL" : "STATUS_UPDATE";
 
     await db_createNotification({
       userId: institution.supervisorId,
       title: `דיווח היעדרות: ${institution.name}`,
-      message: `גננת האם ${teacherName} דיווחה על היעדרות ל-${targetDate.toLocaleDateString("he-IL")}`,
+      message: `גננת האם ${teacherName} דיווחה על היעדרות ל-${targetDate.toLocaleDateString(
+        "he-IL"
+      )}`,
       type: notificationType,
     });
 
@@ -204,7 +223,9 @@ export async function db_createPlacement(data: {
       await db_notifyMultipleUsers(
         teacherIds,
         priority === "URGENT" ? "קריאה דחופה לשיבוץ!" : "הזדמנות לשיבוץ חדש",
-        `דרושה מחליפה לגן ${institution.name} בתאריך ${targetDate.toLocaleDateString("he-IL")}`,
+        `דרושה מחליפה לגן ${
+          institution.name
+        } בתאריך ${targetDate.toLocaleDateString("he-IL")}`,
         notificationType
       );
     }
@@ -216,8 +237,14 @@ export async function db_createPlacement(data: {
 /**
  * שיבוץ ידני
  */
-export async function db_manualAssign(placementId: string, substituteId: string, managerId: string) {
-  const placement = await prisma.placement.findUnique({ where: { id: placementId } });
+export async function db_manualAssign(
+  placementId: string,
+  substituteId: string,
+  managerId: string
+) {
+  const placement = await prisma.placement.findUnique({
+    where: { id: placementId },
+  });
   if (!placement) throw new Error("השיבוץ לא נמצא");
   if (placement.status === "CANCELLED") throw new Error("הגן הוגדר כסגור");
 
@@ -273,24 +300,48 @@ export async function db_updatePlacementStatus(params: {
 /**
  * לוח שנה
  */
-export async function db_getCalendarData(month: number, year: number) {
+/**
+ * שליפת נתונים מורחבת ללוח השנה
+ */
+export async function db_getCalendarData(month: number, year: number, supervisorId: string) {
   const startDate = new Date(year, month - 1, 1);
   const endDate = new Date(year, month, 0);
 
   return await prisma.placement.findMany({
-    where: { date: { gte: startDate, lte: endDate } },
+    where: {
+      date: { gte: startDate, lte: endDate },
+      institution: { supervisorId: supervisorId } // סינון לפי המפקחת הרלוונטית
+    },
     include: {
       institution: { select: { name: true } },
-      mainTeacher: { select: { firstName: true, lastName: true } },
-      substitute: { select: { firstName: true, lastName: true } },
+      mainTeacher: { select: { id: true, firstName: true, lastName: true } },
+      substitute: { select: { id: true, firstName: true, lastName: true } },
     },
+    orderBy: { date: 'asc' }
   });
 }
 
 /**
+ * עדכון מהיר של שדה בשיבוץ (עריכה ישירה מהלוח)
+ */
+export async function db_quickUpdatePlacement(id: string, data: { mainTeacherId?: string, substituteId?: string, status?: any }) {
+  return await prisma.placement.update({
+    where: { id },
+    data,
+    include: {
+      institution: true,
+      substitute: true,
+      mainTeacher: true
+    }
+  });
+}
+/**
  * אישור שיבוץ
  */
-export async function db_assignSubstitute(placementId: string, substituteId: string) {
+export async function db_assignSubstitute(
+  placementId: string,
+  substituteId: string
+) {
   const updatedPlacement = await prisma.placement.update({
     where: { id: placementId },
     data: { substituteId, status: "ASSIGNED" },
@@ -301,12 +352,18 @@ export async function db_assignSubstitute(placementId: string, substituteId: str
     },
   });
 
-  const targets = [updatedPlacement.institution.supervisorId, updatedPlacement.institution.instructorId, updatedPlacement.mainTeacherId];
+  const targets = [
+    updatedPlacement.institution.supervisorId,
+    updatedPlacement.institution.instructorId,
+    updatedPlacement.mainTeacherId,
+  ];
   for (const userId of targets) {
     await db_createNotification({
       userId,
       title: `שיבוץ נסגר: ${updatedPlacement.institution.name}`,
-      message: `נמצאה מחליפה לתאריך ${updatedPlacement.date.toLocaleDateString("he-IL")}`,
+      message: `נמצאה מחליפה לתאריך ${updatedPlacement.date.toLocaleDateString(
+        "he-IL"
+      )}`,
       type: "STATUS_UPDATE",
     });
   }

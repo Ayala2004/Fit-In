@@ -55,9 +55,29 @@ export default function SupervisorDashboardPage() {
       </div>
     );
 
+    
+const buildSixDisplayDays = (start: Date) => {
+  const days: Date[] = [];
+  let d = new Date(start);
+
+  while (days.length < 6) {
+    if (d.getDay() !== 6) {
+      days.push(new Date(d));
+    }
+    d = addDays(d, 1);
+  }
+
+  return days;
+};
+
+const displayDaysWithoutSaturday = buildSixDisplayDays(new Date());
+
   const displayDays = Array.from({ length: 6 }).map((_, i) =>
     addDays(new Date(), i)
   );
+
+
+
 
   return (
     <div
@@ -72,33 +92,36 @@ export default function SupervisorDashboardPage() {
 
       {/* וידג'טים שבועיים */}
       <section className="mb-12">
-        <div className="grid grid-cols-2 lg:grid-cols-6 gap-4 text-black">
-          {displayDays.map((date) => {
-            const stats = dashboardData.weeklyPlacements.filter((p: any) =>
-              isSameDay(new Date(p.date), date)
-            );
-            const open = stats.filter((p: any) => p.status === "OPEN").length;
-            return (
-              <div
-                key={date.toString()}
-                className="p-4 rounded-xl border bg-white border-slate-100 shadow-sm"
-              >
-                <p className="text-slate-400 text-xs">
-                  {format(date, "EEEE", { locale: he })}
-                </p>
-                <p className="font-bold">{format(date, "dd/MM")}</p>
-                <div
-                  className={`mt-2 text-xs font-bold ${
-                    open > 0 ? "text-red-600" : "text-emerald-600"
-                  }`}
-                >
-                  {open > 0 ? `${open} חסרות` : "מאויש מלא"}
-                </div>
-              </div>
-            );
-          })}
+  <div className="grid grid-cols-2 lg:grid-cols-6 gap-4 text-black">
+    {displayDaysWithoutSaturday.map((date) => {
+      const statsForDay = dashboardData.weeklyPlacements.filter((p: any) =>
+        isSameDay(new Date(p.date), date)
+      );
+
+      const open = statsForDay.filter((p: any) => p.status === "OPEN").length;
+
+      return (
+        <div
+          key={date.toString()}
+          className="p-4 rounded-xl border bg-white border-slate-100 shadow-sm"
+        >
+          <p className="text-slate-400 text-xs">
+            {format(date, "EEEE", { locale: he })}
+          </p>
+          <p className="font-bold">{format(date, "dd/MM")}</p>
+          <div
+            className={`mt-2 text-xs font-bold ${
+              open > 0 ? "text-red-600" : "text-emerald-600"
+            }`}
+          >
+            {open > 0 ? `${open} חסרות` : "מאויש מלא"}
+          </div>
         </div>
-      </section>
+      );
+    })}
+  </div>
+</section>
+
 
       {dashboardData.pendingUpdates &&
         dashboardData.pendingUpdates.length > 0 && (
