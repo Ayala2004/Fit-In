@@ -7,6 +7,7 @@ import { highlightText } from "@/lib/utils/formatters";
 import AddInstitutionModal from "@/components/AddInstitutionModal";
 import { isRegistrationOpen } from "@/utils/dateHelpers";
 import AddUserModal from "@/components/AddUserModal.tsx";
+import { Search, UserPlus, Building2, Users, ChevronLeft, Loader2 } from "lucide-react";
 
 export default function SupervisorPlacements() {
   const [data, setData] = useState<any[]>([]);
@@ -52,18 +53,7 @@ export default function SupervisorPlacements() {
     setIsAssignModalOpen(true);
   };
 
-
-
-  if (loading)
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        <div className="text-center">
-          <div className="inline-block animate-spin rounded-full h-16 w-16 border-4 border-slate-700 border-t-transparent mb-4"></div>
-          <p className="text-xl font-semibold text-gray-700">טוען נתונים...</p>
-        </div>
-      </div>
-    );
-
+  // חישוב filteredData
   const filteredData = data.filter((instructor) => {
     const instructorName =
       `${instructor.firstName} ${instructor.lastName}`.toLowerCase();
@@ -77,17 +67,67 @@ export default function SupervisorPlacements() {
     );
   });
 
+  // פתיחה אוטומטית של מודאל אם יש חיפוש שמתאים לגננת
+  useEffect(() => {
+    if (searchTerm.trim() && filteredData.length > 0) {
+      const instructorWithMatch = filteredData.find((instructor) => {
+        const hasMatchingGanenet = instructor.subordinatesIns?.some((g: any) =>
+          `${g.firstName} ${g.lastName}`
+            .toLowerCase()
+            .includes(searchTerm.toLowerCase())
+        );
+        const instructorNameMatch = `${instructor.firstName} ${instructor.lastName}`
+          .toLowerCase()
+          .includes(searchTerm.toLowerCase());
+        
+        // פתח רק אם יש התאמה לגננת (לא למדריכה עצמה)
+        return hasMatchingGanenet && !instructorNameMatch;
+      });
+
+      if (instructorWithMatch && activeInstructor?.id !== instructorWithMatch.id) {
+        openInstructorModal(instructorWithMatch);
+      }
+    }
+  }, [searchTerm, data]);
+
+  if (loading)
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="text-center">
+          <Loader2 className="animate-spin text-gray-400 mx-auto mb-4" size={48} />
+          <p className="text-lg font-medium text-gray-600">טוען נתונים...</p>
+        </div>
+      </div>
+    );
+
   return (
-    <div className="min-h-screen bg-gray-50 font-sans" dir="rtl">
-      {/* Header Section */}
-      <div className="bg-white border-b border-gray-200 shadow-sm">
-        <div className="max-w-7xl mx-auto px-6 py-8">
-          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
+    <div className="min-h-screen bg-gray-50" dir="rtl">
+      {/* Header */}
+      <div className="bg-white border-b border-gray-200">
+        <div className="max-w-7xl mx-auto px-6 py-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
-              <h1 className="text-4xl font-bold text-slate-800 mb-2">
-                ניהול שיבוצים והדרכה
-              </h1>
-              <p className="text-gray-600">מערכת ניהול מדריכות וגננות</p>
+              <h1 className="text-2xl font-semibold text-gray-900">ניהול שיבוצים והדרכה</h1>
+              <p className="text-sm text-gray-500 mt-1">מערכת ניהול מדריכות וגננות</p>
+            </div>
+            
+            {/* כפתורי פעולה */}
+            <div className="flex flex-wrap gap-3">
+              <button
+                onClick={() => setIsAddTeacherOpen(true)}
+                className="flex items-center gap-2 bg-gray-900 hover:bg-gray-800 text-white px-4 py-2.5 rounded-lg font-medium transition-all text-sm"
+              >
+                <UserPlus size={18} />
+                הוספת גננת
+              </button>
+
+              <button
+                onClick={() => setIsAddInstitutionOpen(true)}
+                className="flex items-center gap-2 bg-gray-700 hover:bg-gray-600 text-white px-4 py-2.5 rounded-lg font-medium transition-all text-sm"
+              >
+                <Building2 size={18} />
+                הוספת גן
+              </button>
             </div>
           </div>
         </div>
@@ -95,53 +135,29 @@ export default function SupervisorPlacements() {
 
       {/* Main Content */}
       <div className="max-w-7xl mx-auto px-6 py-8">
-        {/* Action Buttons */}
-        <div className="flex flex-wrap gap-4 mb-8">
-          <button
-            onClick={() => setIsAddTeacherOpen(true)}
-            className="bg-slate-700 hover:bg-slate-800 text-white px-6 py-3 rounded-lg font-semibold flex items-center gap-2 transition-all shadow-md hover:shadow-lg"
-          >
-            <span className="text-xl">+</span>
-            הוספת גננת אם חדשה
-          </button>
+        
+        {/* חיפוש וכותרת */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+          <div>
+            <h2 className="text-lg font-semibold text-gray-900">רשימת מדריכות</h2>
+            <p className="text-sm text-gray-500 mt-0.5">{filteredData.length} מדריכות במערכת</p>
+          </div>
 
-          <button
-            onClick={() => setIsAddInstitutionOpen(true)}
-            className="bg-slate-600 hover:bg-slate-700 text-white px-6 py-3 rounded-lg font-semibold flex items-center gap-2 transition-all shadow-md hover:shadow-lg"
-          >
-            <span className="text-xl">+</span>
-            הוספת גן חדש
-          </button>
-        </div>
-
-        {/* Section Title */}
-        <div className="mb-6">
-          <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-3">
-            <span className="w-1 h-8 bg-slate-700 rounded"></span>
-            רשימת מדריכות
-            <span className="text-sm font-normal text-gray-500 mr-2">
-              ({filteredData.length} מדריכות)
-            </span>
-          </h2>
-        </div>
-
-        <div className="flex flex-col sm:flex-row gap-3 mb-8">
+          {/* שדה חיפוש */}
           <div className="relative">
             <input
               type="text"
               placeholder="חיפוש מדריכה או גננת..."
-              className="w-full sm:w-80 px-5 text-gray-700 py-3 pr-12 border border-gray-300 rounded-lg focus:ring-2 focus:ring-slate-600 focus:border-slate-600 outline-none shadow-sm transition-all placeholder-black bg-white"
+              className="w-full sm:w-80 px-4 py-2.5 pr-11 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent placeholder:text-gray-400 text-sm"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
             />
-            <span className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400">
-              🔍
-            </span>
+            <Search size={18} className="absolute right-3.5 top-1/2 -translate-y-1/2 text-gray-400" />
           </div>
         </div>
 
         {/* Instructors Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
           {filteredData.map((instructor: any) => {
             const teacherCount =
               instructor.subordinatesIns?.filter((g: any) =>
@@ -152,38 +168,41 @@ export default function SupervisorPlacements() {
               <div
                 key={instructor.id}
                 onClick={() => openInstructorModal(instructor)}
-                className="group bg-white rounded-lg shadow-md border border-gray-200 hover:border-slate-400 hover:shadow-xl transition-all duration-300 cursor-pointer overflow-hidden"
+                className="group bg-white rounded-lg border border-gray-200 hover:border-gray-400 hover:shadow-lg transition-all duration-200 cursor-pointer overflow-hidden"
               >
-                <div className="bg-slate-700 p-6 text-white">
-                  <div className="flex justify-between items-start mb-4">
-                    <h2 className="text-2xl font-bold leading-tight">
-                      {highlightText(
-                        `${instructor.firstName} ${instructor.lastName}`,
-                        searchTerm
-                      )}
-                    </h2>
-                    <div className="bg-slate-600 px-3 py-1.5 rounded group-hover:bg-slate-500 transition-colors">
-                      <span className="text-xs font-semibold">לחצי לצפייה</span>
+                {/* כותרת הכרטיס */}
+                <div className="p-5 border-b border-gray-100">
+                  <div className="flex items-start justify-between mb-3">
+                    <div className="flex-1">
+                      <h3 className="text-lg font-semibold text-gray-900 mb-1">
+                        {highlightText(
+                          `${instructor.firstName} ${instructor.lastName}`,
+                          searchTerm
+                        )}
+                      </h3>
+                      <div className="flex items-center gap-1.5 text-sm text-gray-500">
+                        <Users size={14} />
+                        <span>מדריכה</span>
+                      </div>
+                    </div>
+                    
+                    <div className="w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center group-hover:bg-gray-200 transition-colors flex-shrink-0">
+                      <Users size={20} className="text-gray-600" />
                     </div>
                   </div>
 
-                  <div className="items-center gap-2 bg-slate-600 px-4 py-2 rounded inline-flex">
-                    <span className="text-2xl font-bold">{teacherCount}</span>
-                    <span className="text-sm">גננות אם</span>
+                  {/* מספר גננות */}
+                  <div className="inline-flex items-center gap-2 bg-gray-100 px-3 py-1.5 rounded-lg">
+                    <span className="text-lg font-bold text-gray-900">{teacherCount}</span>
+                    <span className="text-xs text-gray-600 font-medium">גננות אם</span>
                   </div>
                 </div>
 
-                <div className="p-5 bg-gray-50 border-t border-gray-200">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2 text-gray-700">
-                      <span className="text-xl">👥</span>
-                      <span className="text-sm font-medium">
-                        ניהול גנים ושיבוצים
-                      </span>
-                    </div>
-                    <div className="text-slate-700 font-semibold text-sm group-hover:translate-x-1 transition-transform">
-                      פרטים ←
-                    </div>
+                {/* תחתית הכרטיס */}
+                <div className="p-4 bg-gray-50">
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-gray-600">לחצי לצפייה בפרטים</span>
+                    <ChevronLeft size={16} className="text-gray-400 group-hover:translate-x-[-2px] transition-transform" />
                   </div>
                 </div>
               </div>
@@ -193,12 +212,14 @@ export default function SupervisorPlacements() {
 
         {/* Empty State */}
         {filteredData.length === 0 && (
-          <div className="text-center py-16">
-            <div className="text-6xl mb-4">🔍</div>
-            <h3 className="text-2xl font-bold text-gray-700 mb-2">
+          <div className="text-center py-20">
+            <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <Search size={32} className="text-gray-400" />
+            </div>
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">
               לא נמצאו תוצאות
             </h3>
-            <p className="text-gray-500">נסה לשנות את מילות החיפוש</p>
+            <p className="text-sm text-gray-500">נסי לשנות את מילות החיפוש</p>
           </div>
         )}
       </div>

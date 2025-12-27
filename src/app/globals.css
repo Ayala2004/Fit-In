@@ -1,59 +1,66 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+@theme {
+  /* Brand Colors */
+  --color-brand-dark: #0f172a; /* Slate 900 */
+  --color-brand-main: #2563eb; /* Indigo/Blue 600 */
+  --color-brand-surface: #f8fafc; /* Slate 50 */
+
+  /* Status Colors */
+  --color-status-open: #f59e0b; /* Amber 500 */
+  --color-status-closed: #ef4444; /* Red 500 */
+  --color-status-assigned: #10b981; /* Emerald 500 */
+
+  /* Shadows & Radius */
+  --shadow-card: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
+  --shadow-modal: 0 20px 25px -5px rgb(0 0 0 / 0.1),
+    0 8px 10px -6px rgb(0 0 0 / 0.1);
+  --radius-xl: 1rem;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
+@layer components {
+  .btn-primary {
+  @apply px-5 py-2.5 bg-white border border-gray-100 text-gray-900 font-bold 
+           rounded-lg hover:bg-gray-50 transition-all;
+  }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+  .btn-secondary {
+    @apply px-5 py-2.5 bg-white border border-slate-200 text-slate-700 font-bold 
+           rounded-lg hover:bg-slate-50 transition-all active:scale-95;
+  }
+
+  .btn-danger {
+    @apply px-5 py-2.5 bg-white border border-red-100 text-red-600 font-bold 
+           rounded-lg hover:bg-red-50 transition-all;
+  }
+
+  /* --- Inputs --- */
+  .input-standard {
+    @apply w-full px-4 py-2.5 bg-white border border-slate-200 rounded-lg 
+           focus:ring-2 focus:ring-brand-main/20 focus:border-brand-main outline-none 
+           transition-all text-slate-900 placeholder:text-slate-400;
+  }
+
+  /* --- Layout Elements --- */
+  .card-base {
+    @apply bg-white border border-slate-100 rounded-xl shadow-card overflow-hidden;
+  }
+
+  .modal-overlay {
+    @apply fixed inset-0 z-[100] bg-brand-dark/60 backdrop-blur-sm flex items-center justify-center p-4;
+  }
+
+  .modal-container {
+    @apply bg-white w-full max-w-lg rounded-xl shadow-modal overflow-hidden flex flex-col transition-all duration-200;
+  }
+
+  .section-title {
+    @apply text-xl font-extrabold text-brand-dark flex items-center gap-2;
   }
 }
 
+/* RTL Helpers */
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  @apply bg-brand-surface text-slate-900;
+  font-family: system-ui, -apple-system, sans-serif;
 }
-
-:root {
-  --bg-primary: #ffffff;
-  --text-primary: #1a1a1a;
-  --card-bg: #f9f9f9;
-  --border-color: #e5e7eb;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg-primary: #121212;
-    --text-primary: #ffffff;
-    --card-bg: #1e1e1e;
-    --border-color: #333333;
-  }
-}
-
-.custom-scrollbar::-webkit-scrollbar {
-  width: 5px;
-}
-.custom-scrollbar::-webkit-scrollbar-track {
-  background: #f1f1f1;
-}
-.custom-scrollbar::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
-  border-radius: 10px;
-}
-
-.placeholder-black::placeholder {
-  color: #000000;
-  opacity: 1;
-}
-

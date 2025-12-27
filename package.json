@@ -6,6 +6,7 @@
     "dev": "next dev",
     "server": "nodemon --exec npx tsx src/server.ts",
     "copy": "node node_copy_files_to_txt.cjs",
+    "src": "node copy_src.cjs",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
@@ -24,7 +25,8 @@
     "mongodb": "^7.0.0",
     "next": "16.1.1",
     "react": "19.2.3",
-    "react-dom": "19.2.3"
+    "react-dom": "19.2.3",
+    "tailwind-animate": "^0.2.10"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

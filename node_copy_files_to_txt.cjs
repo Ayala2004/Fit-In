@@ -7,17 +7,25 @@ const outputFile = 'project_files.txt';
 const ignorePatterns = [
   'node_modules',
   'package-lock.json',
+  'yarn.lock',
+  'pnpm-lock.yaml',
   '.git',
+  '.next',
   'dist',
   'build',
+  'out',
   '.env',
   'coverage',
   '.vscode',
   '.idea',
-  // You might also want to ignore the script itself and its output
+  '.DS_Store',
   'node_copy_files_to_txt.js', 
   'project_files.txt',
+  'generateStructure.cjs',
+  '*.log',
+  '*.tmp'
 ];
+
 
 // Function to check if a path should be ignored
 function shouldIgnore(filePath) {

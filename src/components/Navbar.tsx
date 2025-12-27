@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { LayoutDashboard, Calendar, LogOut } from 'lucide-react';
+import { LayoutDashboard, Calendar, LogOut, PieChartIcon } from 'lucide-react';
 
 export default function Navbar() {
   const router = useRouter();
@@ -53,6 +53,17 @@ export default function Navbar() {
               >
                 <Calendar size={18} />
                 <span>לוח שנה</span>
+              </Link>
+              <Link 
+                href="/supervisor/placements" 
+                className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all ${
+                  isActive('/supervisor/placements') 
+                  ? 'bg-blue-50 text-blue-600' 
+                  : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700'
+                }`}
+              >
+                <PieChartIcon size={18} />
+                <span>נתונים</span>
               </Link>
             </div>
           </div>

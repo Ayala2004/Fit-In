@@ -1,0 +1,75 @@
+app
+  api
+    auth
+      login
+        route.ts
+      logout
+        route.ts
+      me
+        route.ts
+    calendar
+      route.ts
+    dashboard
+      route.ts
+    supervisor
+      dashboard
+        route.ts
+      institutions
+        route.ts
+      instructors
+        route.ts
+      managers
+        route.ts
+      placements
+        route.ts
+      register
+        route.ts
+      substitutes
+        route.ts
+    test
+      route.ts
+  favicon.ico
+  globals.css
+  layout.tsx
+  login
+    login.module.css
+    page.tsx
+  page.tsx
+  report-absence
+    actions.ts
+    page.tsx
+  supervisor
+    calendar
+      page.tsx
+    dashboard
+      route.ts
+    layout.tsx
+    page.tsx
+    placements
+      page.tsx
+  supervisor-placements
+    module.css
+    page.tsx
+components
+  AddInstitutionModal.tsx
+  AddUserModal.tsx.tsx
+  CalendarView.tsx
+  InstructorPlacementsModal.tsx
+  Navbar.tsx
+  PlacementModal.tsx
+lib
+  api.ts
+  auth.ts
+  prisma.ts
+  utils
+    formatters.tsx
+middleware.ts
+services
+  authService.ts
+  institutionService.ts
+  notificationService.ts
+  placementService.ts
+  userService.ts
+utils
+  crypto.ts
+  dateHelpers.ts

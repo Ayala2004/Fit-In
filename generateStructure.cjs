@@ -1,27 +1,31 @@
-// generateStructure.cjs
-const fs = require("fs");
-const path = require("path");
+const fs = require('fs');
+const path = require('path');
 
-// נתיב מלא לתיקייה שבה נשמר הקובץ
-const outputFile = "C:\\Users\\Ayala\\Desktop\\FitIn\\fit-in\\structure.txt";
-const rootDir = "C:\\Users\\Ayala\\Desktop\\FitIn\\fit-in"; // התיקייה שאת רוצה לסרוק
+// נתיב המקור
+const sourceDir = 'C:\\Users\\Ayala\\Desktop\\FitIn\\fit-in\\src';
+// נתיב הקובץ שיווצר
+const outputFile = 'C:\\Users\\Ayala\\Desktop\\FitIn\\fit-in\\folderStructure.txt';
 
-function scanDir(dir, indent) {
-  indent = indent || "";
-  let result = "";
+/**
+ * פונקציה רקורסיבית שמחזירה מבנה תיקיות כטקסט
+ */
+function getFolderStructure(dir, prefix = '') {
+  let output = '';
   const items = fs.readdirSync(dir, { withFileTypes: true });
-
-  items.forEach(item => {
-    result += `${indent}${item.name}\n`;
+  for (const item of items) {
+    output += `${prefix}${item.name}\n`;
     if (item.isDirectory()) {
-      result += scanDir(path.join(dir, item.name), indent + "  ");
+      output += getFolderStructure(path.join(dir, item.name), prefix + '  ');
     }
-  });
-
-  return result;
+  }
+  return output;
 }
 
-const structure = scanDir(rootDir);
-
-fs.writeFileSync(outputFile, structure);
-console.log(`מבנה הספרייה נכתב ל-${outputFile}`);
+// יוצרים את הקובץ
+try {
+  const structure = getFolderStructure(sourceDir);
+  fs.writeFileSync(outputFile, structure, 'utf8');
+  console.log('מבנה התיקיות נשמר בהצלחה ב:', outputFile);
+} catch (err) {
+  console.error('שגיאה ביצירת הקובץ:', err);
+}

@@ -3,15 +3,16 @@
 import { useEffect, useState } from "react";
 import { format, addDays, isSameDay } from "date-fns";
 import { he } from "date-fns/locale";
-import { AlertCircle, Clock } from "lucide-react";
+import { AlertCircle, Calendar, ChevronLeft, Clock, MapPin, User } from "lucide-react";
 import PlacementModal from "@/components/PlacementModal";
+import RecentActivityModal from "@/components/RecentActivityModal";
 
 export default function SupervisorDashboardPage() {
   const [dashboardData, setDashboardData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedPlacement, setSelectedPlacement] = useState<any>(null);
-
+  const [isActivityModalOpen, setIsActivityModalOpen] = useState(false);
   const loadData = async () => {
     try {
       const res = await fetch("/api/supervisor/dashboard");
@@ -55,251 +56,195 @@ export default function SupervisorDashboardPage() {
       </div>
     );
 
-    
-const buildSixDisplayDays = (start: Date) => {
-  const days: Date[] = [];
-  let d = new Date(start);
+  const buildSixDisplayDays = (start: Date) => {
+    const days: Date[] = [];
+    let d = new Date(start);
 
-  while (days.length < 6) {
-    if (d.getDay() !== 6) {
-      days.push(new Date(d));
+    while (days.length < 6) {
+      if (d.getDay() !== 6) {
+        days.push(new Date(d));
+      }
+      d = addDays(d, 1);
     }
-    d = addDays(d, 1);
-  }
 
-  return days;
-};
+    return days;
+  };
 
-const displayDaysWithoutSaturday = buildSixDisplayDays(new Date());
+  const displayDaysWithoutSaturday = buildSixDisplayDays(new Date());
 
   const displayDays = Array.from({ length: 6 }).map((_, i) =>
     addDays(new Date(), i)
   );
 
-
-
-
   return (
-    <div
-      className="p-4 md:p-8 bg-[#F8FAFC] min-h-screen text-slate-800"
-      dir="rtl"
-    >
-      <header className="mb-10">
-        <h1 className="text-3xl font-extrabold text-black">
-          לוח בקרה למפקחת 👋
-        </h1>
+    <div className="p-4 md:p-8 bg-[#F8FAFC] min-h-screen font-sans text-slate-900" dir="rtl">
+      {/* Header */}
+      <header className="max-w-7xl mx-auto mb-8 flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-black text-slate-900 tracking-tight mb-1">
+            שלום, מפקחת 👋
+          </h1>
+          <p className="text-slate-500 font-medium text-sm italic">
+            הנה תמונת המצב של הגנים שתחת חסותך להיום.
+          </p>
+        </div>
+        <div className="bg-white px-4 py-2 rounded-2xl shadow-sm border border-slate-200 flex items-center gap-3">
+          <Calendar className="text-indigo-600" size={20} />
+          <span className="font-bold text-slate-700">
+            {format(new Date(), "EEEE, d בMMMM", { locale: he })}
+          </span>
+        </div>
       </header>
 
-      {/* וידג'טים שבועיים */}
-      <section className="mb-12">
-  <div className="grid grid-cols-2 lg:grid-cols-6 gap-4 text-black">
-    {displayDaysWithoutSaturday.map((date) => {
-      const statsForDay = dashboardData.weeklyPlacements.filter((p: any) =>
-        isSameDay(new Date(p.date), date)
-      );
-
-      const open = statsForDay.filter((p: any) => p.status === "OPEN").length;
-
-      return (
-        <div
-          key={date.toString()}
-          className="p-4 rounded-xl border bg-white border-slate-100 shadow-sm"
-        >
-          <p className="text-slate-400 text-xs">
-            {format(date, "EEEE", { locale: he })}
-          </p>
-          <p className="font-bold">{format(date, "dd/MM")}</p>
-          <div
-            className={`mt-2 text-xs font-bold ${
-              open > 0 ? "text-red-600" : "text-emerald-600"
-            }`}
-          >
-            {open > 0 ? `${open} חסרות` : "מאויש מלא"}
+      <main className="max-w-7xl mx-auto">
+        
+        {/* Weekly Snapshot Card */}
+        <section className="mb-10 bg-white p-6 rounded-[2rem] shadow-sm border border-slate-200">
+          <div className="flex items-center gap-2 mb-6">
+            <div className="w-2 h-6 bg-indigo-600 rounded-full"></div>
+            <h2 className="text-lg font-bold text-slate-800 tracking-wide">מבט שבועי</h2>
           </div>
-        </div>
-      );
-    })}
-  </div>
-</section>
-
-
-      {dashboardData.pendingUpdates &&
-        dashboardData.pendingUpdates.length > 0 && (
-          <section className="mb-8 animate-pulse-slow">
-            <div className="bg-amber-50 border-2 border-amber-200 rounded-2xl p-6 shadow-sm">
-              <div className="flex items-center gap-3 mb-4 text-amber-800">
-                <div className="bg-amber-500 text-white p-2 rounded-lg">
-                  <AlertCircle size={24} />
-                </div>
-                <div>
-                  <h2 className="text-xl font-bold">
-                    ישנם {dashboardData.pendingUpdates.length} שיבוצים מהעבר
-                    שממתינים לעדכון
-                  </h2>
-                  <p className="text-sm">
-                    אנא עדכני האם הגנים אוישו או נסגרו כדי לשמור על סדר המערכת.
+          <div className="grid grid-cols-2 lg:grid-cols-6 gap-3">
+            {displayDaysWithoutSaturday.map((date) => {
+              const isToday = isSameDay(date, new Date());
+              return (
+                <div 
+                  key={date.toString()} 
+                  className={`relative overflow-hidden p-4 rounded-2xl border transition-all duration-300 ${
+                    isToday 
+                    ? "bg-indigo-600 border-indigo-600 shadow-lg shadow-indigo-100 scale-[1.02]" 
+                    : "bg-slate-50 border-slate-100 hover:border-slate-300"
+                  }`}
+                >
+                  <p className={`text-[11px] font-black uppercase tracking-wider mb-1 ${isToday ? "text-indigo-100" : "text-slate-400"}`}>
+                    {format(date, "EEEE", { locale: he })}
                   </p>
+                  <p className={`text-xl font-black ${isToday ? "text-white" : "text-slate-700"}`}>
+                    {format(date, "dd/MM")}
+                  </p>
+                  {isToday && <div className="absolute top-[-10px] left-[-10px] w-8 h-8 bg-white/10 rounded-full blur-xl"></div>}
                 </div>
-              </div>
+              );
+            })}
+          </div>
+        </section>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {dashboardData.pendingUpdates.map((item: any) => (
-                  <div
-                    key={item.id}
-                    className="bg-white border border-amber-100 p-4 rounded-xl flex items-center justify-between"
-                  >
-                    <div>
-                      <p className="font-bold text-slate-800">
-                        {item.institution.name}
-                      </p>
-                      <p className="text-xs text-slate-500">
-                        {item.mainTeacher.firstName} {item.mainTeacher.lastName}
-                      </p>
-                      <p className="text-xs font-bold text-amber-600 mt-1">
-                        תאריך: {format(new Date(item.date), "dd/MM/yyyy")}
-                      </p>
-                    </div>
-                    <div className="flex gap-2">
-                      <button
-                        onClick={() => {
-                          setSelectedPlacement(item);
-                          setIsModalOpen(true);
-                        }}
-                        className="text-xs bg-slate-800 text-white px-3 py-2 rounded-lg font-bold hover:bg-slate-700 transition-all"
-                      >
-                        עדכון שיבוץ
-                      </button>
-                      <button
-                        onClick={() => handleCloseGarden(item.id)}
-                        className="text-xs border border-amber-300 text-amber-700 px-3 py-2 rounded-lg font-bold hover:bg-amber-100 transition-all"
-                      >
-                        הגן נסגר
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </section>
-        )}
-      {dashboardData.pendingUpdates &&
-        dashboardData.pendingUpdates.length > 0 && (
-          <div className="mb-8 bg-orange-50 border-r-4 border-orange-500 p-6 rounded-xl shadow-sm">
-            <div className="flex items-center gap-3 mb-4">
-              <AlertCircle className="text-orange-600" size={28} />
-              <h2 className="text-xl font-bold text-orange-900">
-                יש לעדכן נתונים מהעבר ({dashboardData.pendingUpdates.length})
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          
+          {/* Main Column: Urgent Alerts */}
+          <div className="lg:col-span-2 space-y-6">
+            <div className="flex items-center justify-between px-2">
+              <h2 className="text-xl font-black text-slate-800 flex items-center gap-3">
+                <div className="p-2 bg-red-100 rounded-lg text-red-600">
+                   <AlertCircle size={22} />
+                </div>
+                קריאות דחופות
+                <span className="bg-red-500 text-white text-[12px] px-2 py-0.5 rounded-full font-bold">
+                  {dashboardData.urgentAlerts.length}
+                </span>
               </h2>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {dashboardData.pendingUpdates.map((alert: any) => (
+
+            <div className="grid gap-4">
+              {dashboardData.urgentAlerts.map((alert: any) => (
                 <div
                   key={alert.id}
-                  className="bg-white p-4 rounded-lg border border-orange-100 flex justify-between items-center shadow-sm"
+                  className="group bg-white rounded-3xl p-5 border border-slate-200 shadow-sm hover:shadow-md hover:border-indigo-200 transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-6"
                 >
-                  <div>
-                    <p className="font-bold">{alert.institution.name}</p>
-                    <p className="text-xs text-slate-500">
-                      {alert.mainTeacher.firstName} {alert.mainTeacher.lastName}
-                    </p>
-                    <p className="text-xs text-orange-600 font-bold">
-                      {format(new Date(alert.date), "dd/MM")}
-                    </p>
+                  <div className="flex items-center gap-5">
+                    <div className="w-14 h-14 bg-slate-50 rounded-2xl flex items-center justify-center text-slate-400 group-hover:bg-indigo-50 group-hover:text-indigo-600 transition-colors">
+                       <MapPin size={28} />
+                    </div>
+                    <div>
+                      <h3 className="font-black text-lg text-slate-800 leading-tight mb-1">
+                        {alert.institution.name}
+                      </h3>
+                      <div className="flex items-center gap-2 text-slate-500">
+                        <User size={14} />
+                        <span className="text-sm font-medium italic">
+                          גננת: {alert.mainTeacher.firstName} {alert.mainTeacher.lastName}
+                        </span>
+                      </div>
+                    </div>
                   </div>
-                  <div className="flex gap-1">
+
+                  <div className="flex gap-3 shrink-0">
                     <button
                       onClick={() => {
                         setSelectedPlacement(alert);
                         setIsModalOpen(true);
                       }}
-                      className="bg-slate-800 text-white text-[10px] px-2 py-1.5 rounded hover:bg-slate-700 font-bold"
+                      className="flex-1 sm:flex-none px-6 py-3 bg-indigo-600 text-white font-bold rounded-2xl hover:bg-indigo-700 shadow-lg shadow-indigo-100 active:scale-95 transition-all text-sm"
                     >
-                      עדכון
+                      שבצי מחליפה
                     </button>
                     <button
                       onClick={() => handleCloseGarden(alert.id)}
-                      className="border border-red-200 text-red-600 text-[10px] px-2 py-1.5 rounded hover:bg-red-50 font-bold"
+                      className="flex-1 sm:flex-none px-6 py-3 bg-white text-red-600 font-bold rounded-2xl border border-red-100 hover:bg-red-50 active:scale-95 transition-all text-sm"
                     >
-                      סגירה
+                      סגירת הגן
                     </button>
                   </div>
                 </div>
               ))}
+
+              {dashboardData.urgentAlerts.length === 0 && (
+                <div className="bg-white rounded-3xl p-12 text-center border border-dashed border-slate-300">
+                   <p className="text-slate-400 font-medium">אין קריאות דחופות כרגע. עבודה טובה! ✨</p>
+                </div>
+              )}
             </div>
           </div>
-        )}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        <div className="lg:col-span-2 space-y-4">
-          <h2 className="text-xl font-bold flex items-center gap-2 text-red-600 italic">
-            🚨 קריאות דחופות
-          </h2>
-          {dashboardData.urgentAlerts.map((alert: any) => (
-            <div
-              key={alert.id}
-              className="bg-white p-5 rounded-2xl border border-slate-100 flex items-center justify-between shadow-sm text-black"
-            >
-              <div>
-                <p className="font-bold text-lg">{alert.institution.name}</p>
-                <p className="text-sm text-slate-500">
-                  {alert.mainTeacher.firstName} {alert.mainTeacher.lastName}
-                </p>
-                <p className="text-xs text-blue-600 font-bold mt-1">
-                  {format(new Date(alert.date), "dd/MM/yyyy")}
-                </p>
+
+          {/* Side Column: Recent Activity */}
+          <div className="space-y-6">
+            <h2 className="text-xl font-black text-slate-800 flex items-center gap-3 px-2">
+               <div className="p-2 bg-slate-100 rounded-lg text-slate-600">
+                  <Clock size={22} />
+               </div>
+               עדכונים אחרונים
+            </h2>
+            
+            <div className="bg-white rounded-[2rem] border border-slate-200 shadow-sm overflow-hidden flex flex-col">
+              <div className="p-6 space-y-5 flex-1">
+                {dashboardData.recentActivity.slice(0, 5).map((act: any, idx: number) => (
+                  <div
+                    key={act.id}
+                    className={`relative pr-6 py-1 group ${
+                      idx !== 4 ? "before:content-[''] before:absolute before:right-0 before:top-8 before:w-0.5 before:h-8 before:bg-slate-100" : ""
+                    }`}
+                  >
+                    <div className="absolute right-[-4px] top-2 w-2.5 h-2.5 rounded-full bg-slate-300 group-hover:bg-indigo-500 transition-colors border-2 border-white shadow-sm ring-4 ring-white"></div>
+                    <p className="text-[13.5px] font-bold text-slate-700 leading-relaxed mb-1">
+                      {act.status === "CANCELLED"
+                        ? `הגן ${act.institution.name} נסגר `
+                        : act.substitute
+                        ? `שובצה ${act.substitute.firstName} לגן ${act.institution.name}`
+                        : `דווחה היעדרות בגן ${act.institution.name}`}
+                    </p>
+                  </div>
+                ))}
+
+                {dashboardData.recentActivity.length === 0 && (
+                  <div className="text-center py-10">
+                    <p className="text-sm text-slate-400 font-medium italic">אין עדכונים חדשים</p>
+                  </div>
+                )}
               </div>
 
-              <div className="flex gap-2">
-                <button
-                  onClick={() => {
-                    setSelectedPlacement(alert);
-                    setIsModalOpen(true);
-                  }}
-                  className="bg-slate-900 text-white px-5 py-2 rounded-xl text-sm font-bold hover:bg-emerald-600 transition-all shadow-md"
-                >
-                  שבצי מחליפה
-                </button>
-                <button
-                  onClick={() => handleCloseGarden(alert.id)}
-                  className="bg-white text-red-600 border border-red-200 px-5 py-2 rounded-xl text-sm font-bold hover:bg-red-50 transition-all shadow-sm"
-                >
-                  סגירת הגן
-                </button>
-              </div>
+              <button
+                onClick={() => setIsActivityModalOpen(true)}
+                className="w-full py-4 bg-slate-50 border-t border-slate-100 text-sm font-black text-indigo-600 hover:bg-indigo-50 transition-colors flex items-center justify-center gap-2"
+              >
+                צפה בהיסטוריה המלאה
+                <ChevronLeft size={16} />
+              </button>
             </div>
-          ))}
-
-          {dashboardData.urgentAlerts.length === 0 && (
-            <div className="bg-emerald-50 text-emerald-700 p-6 rounded-2xl text-center font-bold border border-emerald-100">
-              אין קריאות דחופות
-            </div>
-          )}
+          </div>
         </div>
+      </main>
 
-        {/* עדכונים */}
-        <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm text-black">
-          <h2 className="font-bold mb-4 flex items-center gap-2">
-            <Clock className="w-4 h-4" /> עדכונים אחרונים
-          </h2>
-          {dashboardData.recentActivity.map((act: any) => (
-            <div
-              key={act.id}
-              className="text-sm border-r-2 border-blue-100 pr-3 mb-4"
-            >
-              <p className="font-medium text-slate-700">
-                {act.status === "CANCELLED"
-                  ? `הגן ${act.institution.name} נסגר להיום`
-                  : act.substitute
-                  ? `שובצה ${act.substitute.firstName} לגן ${act.institution.name}`
-                  : `דווחה היעדרות ב${act.institution.name}`}
-              </p>
-              <p className="text-[10px] text-slate-400">
-                {format(new Date(act.updatedAt || act.date), "HH:mm")}
-              </p>
-            </div>
-          ))}
-        </div>
-      </div>
-
+      {/* Modals */}
       {selectedPlacement && (
         <PlacementModal
           isOpen={isModalOpen}
@@ -308,6 +253,12 @@ const displayDaysWithoutSaturday = buildSixDisplayDays(new Date());
           onSuccess={loadData}
         />
       )}
+
+      <RecentActivityModal
+        isOpen={isActivityModalOpen}
+        onClose={() => setIsActivityModalOpen(false)}
+        activities={dashboardData.recentActivity}
+      />
     </div>
   );
 }
