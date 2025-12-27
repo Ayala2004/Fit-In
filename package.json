@@ -4,13 +4,10 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "server": "nodemon --exec npx tsx src/server.ts",
-    "copy": "node node_copy_files_to_txt.cjs",
-    "src": "node copy_src.cjs",
+    "copy": "node dump-src-to-txt.cjs",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint",
-    "structure": "node generateStructure.cjs"
+    "lint": "eslint"
   },
   "dependencies": {
     "@prisma/client": "^6.19.1",

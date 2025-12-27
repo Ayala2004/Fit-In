@@ -69,6 +69,7 @@ export async function POST(req: NextRequest) {
       date: body.date,
       institutionId: body.institutionId,
       mainTeacherId: body.mainTeacherId,
+      substituteId: body.substituteId,
       notes: body.notes,
       creatorRoles: body.creatorRoles,
       status: body.status, // אופציונלי

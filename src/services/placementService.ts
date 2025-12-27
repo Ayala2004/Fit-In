@@ -49,7 +49,7 @@ export async function db_getSupervisorDashboard(supervisorId: string) {
     where: {
       institution: { supervisorId: supervisorId },
       status: "OPEN",
-      date: { gte: today, lte: urgentDeadline,  },
+      date: { gte: today, lte: urgentDeadline },
     },
     include: {
       institution: { select: { name: true } },
@@ -134,6 +134,7 @@ export async function db_createPlacement(data: {
   date: Date;
   institutionId: string;
   mainTeacherId: string;
+  substituteId?: string | null; 
   notes?: string;
   creatorRoles: string[];
   status?: "OPEN" | "ASSIGNED" | "CANCELLED";
@@ -183,6 +184,7 @@ export async function db_createPlacement(data: {
       date: targetDate,
       institutionId: data.institutionId,
       mainTeacherId: data.mainTeacherId,
+      substituteId: data.substituteId, 
       notes: data.notes,
       status: finalStatus,
       priority: priority,
@@ -190,6 +192,7 @@ export async function db_createPlacement(data: {
     include: {
       institution: true,
       mainTeacher: { select: { firstName: true, lastName: true } },
+      substitute: { select: { firstName: true, lastName: true } }, // כדאי להוסיף include גם למחליפה כאן
     },
   });
 
@@ -303,36 +306,43 @@ export async function db_updatePlacementStatus(params: {
 /**
  * שליפת נתונים מורחבת ללוח השנה
  */
-export async function db_getCalendarData(month: number, year: number, supervisorId: string) {
+export async function db_getCalendarData(
+  month: number,
+  year: number,
+  supervisorId: string
+) {
   const startDate = new Date(year, month - 1, 1);
   const endDate = new Date(year, month, 0);
 
   return await prisma.placement.findMany({
     where: {
       date: { gte: startDate, lte: endDate },
-      institution: { supervisorId: supervisorId } // סינון לפי המפקחת הרלוונטית
+      institution: { supervisorId: supervisorId }, // סינון לפי המפקחת הרלוונטית
     },
     include: {
       institution: { select: { name: true } },
       mainTeacher: { select: { id: true, firstName: true, lastName: true } },
       substitute: { select: { id: true, firstName: true, lastName: true } },
     },
-    orderBy: { date: 'asc' }
+    orderBy: { date: "asc" },
   });
 }
 
 /**
  * עדכון מהיר של שדה בשיבוץ (עריכה ישירה מהלוח)
  */
-export async function db_quickUpdatePlacement(id: string, data: { mainTeacherId?: string, substituteId?: string, status?: any }) {
+export async function db_quickUpdatePlacement(
+  id: string,
+  data: { mainTeacherId?: string; substituteId?: string; status?: any }
+) {
   return await prisma.placement.update({
     where: { id },
     data,
     include: {
       institution: true,
       substitute: true,
-      mainTeacher: true
-    }
+      mainTeacher: true,
+    },
   });
 }
 /**

@@ -1,35 +1,64 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { getSession } from '@/lib/auth';
+import { format } from 'date-fns';
 
-export async function GET() {
+export async function GET(req: Request) {
   try {
     const session = await getSession();
     if (!session) return NextResponse.json({ message: "לא מורשה" }, { status: 401 });
 
-    // 1. נשלוף את כל ה-IDs של גננות שכבר מנהלות גן
-    const institutions = await prisma.institution.findMany({
-      select: { mainManagerId: true }
-    });
-    const assignedManagerIds = institutions.map(inst => inst.mainManagerId);
+    const { searchParams } = new URL(req.url);
+    const dateStr = searchParams.get('date');
+    if (!dateStr) return NextResponse.json({ message: "חובה לציין תאריך" }, { status: 400 });
 
-    // 2. נשלוף גננות אם ששייכות למפקחת ולא נמצאות ברשימה הנ"ל
+    const selectedDate = new Date(dateStr);
+    const dayOfWeek = format(selectedDate, 'EEEE').toUpperCase(); // למשל "MONDAY"
+
+    // 1. נמצא את כל השיבוצים הקיימים באותו יום
+    const existingPlacements = await prisma.placement.findMany({
+      where: {
+        date: {
+          gte: new Date(selectedDate.setHours(0,0,0,0)),
+          lte: new Date(selectedDate.setHours(23,59,59,999))
+        },
+        status: { not: "CANCELLED" }
+      },
+      select: { mainTeacherId: true, substituteId: true }
+    });
+
+    const busyMainTeachers = existingPlacements.map(p => p.mainTeacherId);
+    const busySubstitutes = existingPlacements.map(p => p.substituteId).filter(Boolean);
+
+    // 2. שליפת גננות אם (Managers) שיש להן גן ואין להן דיווח היום
     const availableManagers = await prisma.user.findMany({
       where: {
-        roles: { has: "MANAGER" },
         supervisorId: session.id,
-        id: { notIn: assignedManagerIds } // סינון גננות שכבר תפוסות
+        roles: { has: "MANAGER" },
+        mainManagedInstitutions: { some: {} },
+        id: { notIn: busyMainTeachers }
       },
       select: {
-        id: true,
-        firstName: true,
-        lastName: true,
-        instructorId: true,
+        id: true, firstName: true, lastName: true,
+        mainManagedInstitutions: { select: { id: true, name: true } }
       }
     });
 
-    return NextResponse.json(availableManagers);
+    // 3. שליפת מחליפות (Substitutes) שהיום הוא יום עבודה שלהן ואינן משובצות
+    const availableSubstitutes = await prisma.user.findMany({
+      where: {
+        roles: { has: "SUBSTITUTE" },
+        workDays: { has: dayOfWeek as any }, // מוודא שזה יום עבודה שלהן
+        id: { notIn: busySubstitutes as string[] }
+      },
+      select: { id: true, firstName: true, lastName: true }
+    });
+
+    return NextResponse.json({
+      managers: availableManagers,
+      substitutes: availableSubstitutes
+    });
   } catch (error) {
-    return NextResponse.json({ message: "שגיאה" }, { status: 500 });
+    return NextResponse.json({ message: "שגיאה בסינון נתונים" }, { status: 500 });
   }
 }

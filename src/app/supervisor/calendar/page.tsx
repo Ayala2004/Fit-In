@@ -20,6 +20,7 @@ import {
   User,
   Plus, // ייבוא האייקון החדש
 } from "lucide-react";
+import AddPlacementModal from "@/components/AddPlacementModal";
 
 export default function SupervisorCalendar() {
   const [currentDate, setCurrentDate] = useState(new Date());
@@ -29,13 +30,8 @@ export default function SupervisorCalendar() {
   const [allSubstitutes, setAllSubstitutes] = useState([]);
   const [editingPlacement, setEditingPlacement] = useState<any>(null);
   const [searchQuery, setSearchQuery] = useState("");
-
-  // פונקציה להוספת דיווח חדש
-  const handleAddPlacement = (date: Date) => {
-    console.log("Adding placement for:", date);
-    // כאן תוכלי לפתוח מודאל ליצירת דיווח חדש
-    // למשל: setIsAddingModalOpen(true); setTargetDate(date);
-  };
+  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [selectedDate, setSelectedDate] = useState<Date | null>(null);
 
   const filteredSubstitutes = allSubstitutes.filter((sub: any) => {
     const fullName = `${sub.firstName} ${sub.lastName}`.toLowerCase();
@@ -112,7 +108,8 @@ export default function SupervisorCalendar() {
     if (!editingPlacement) return;
 
     try {
-      const type = val === "CANCEL" || val === "OPEN" ? "updateStatus" : "assign";
+      const type =
+        val === "CANCEL" || val === "OPEN" ? "updateStatus" : "assign";
       const bodyData =
         type === "assign"
           ? { placementId: editingPlacement.id, substituteId: val }
@@ -205,6 +202,8 @@ export default function SupervisorCalendar() {
 
           <div className="grid grid-cols-7">
             {days.map((day, index) => {
+              {
+              }
               if (!day) {
                 return (
                   <div
@@ -215,6 +214,7 @@ export default function SupervisorCalendar() {
               }
 
               const isSaturday = day.getDay() === 6;
+
               const dayPlacements = Array.isArray(placements)
                 ? placements.filter((p: any) =>
                     isSameDay(new Date(p.date), day)
@@ -254,7 +254,8 @@ export default function SupervisorCalendar() {
                             onClick={() => setEditingPlacement(p)}
                           >
                             <div className="text-[16px] font-bold text-slate-700 leading-tight">
-                              {p.mainTeacher?.firstName} {p.mainTeacher?.lastName}
+                              {p.mainTeacher?.firstName}{" "}
+                              {p.mainTeacher?.lastName}
                             </div>
                             <div
                               className={`text-[15px] mt-1 flex items-center gap-1 ${
@@ -274,11 +275,14 @@ export default function SupervisorCalendar() {
                                     : "bg-emerald-500 "
                                 }`}
                               />
+                              {/* לוגיקה משופרת להצגת טקסט הסטטוס/שם */}
                               {p.status === "OPEN"
-                                ? "ממתין"
+                                ? "ממתין למחליפה"
                                 : p.status === "CANCELLED"
                                 ? "הגן נסגר"
-                                : `${p.substitute.firstName} ${p.substitute.lastName}`}
+                                : p.substitute
+                                ? `${p.substitute.firstName} ${p.substitute.lastName}`
+                                : "שגיאה בנתוני מחליפה"}
                             </div>
 
                             <button
@@ -292,17 +296,17 @@ export default function SupervisorCalendar() {
                             </button>
                           </div>
                         ))}
+                        <button
+                          onClick={() => {
+                            setSelectedDate(day);
+                            setIsAddModalOpen(true);
+                          }}
+                          className="mt-auto flex items-center justify-center gap-1 text-[11px] font-bold text-blue-600 hover:bg-blue-50 p-1 rounded-lg transition-colors border border-dashed border-blue-200"
+                        >
+                          <Plus size={12} />
+                          הוספת דיווח
+                        </button>
                       </div>
-
-                      {/* כפתור הוספת דיווח חדש */}
-                      <button
-                        onClick={() => handleAddPlacement(day)}
-                        className="mt-auto w-full py-2 flex items-center justify-center gap-1 border-2 border-dashed border-slate-100 rounded-xl text-slate-400 hover:text-blue-600 hover:border-blue-200 hover:bg-white transition-all group"
-                        title="הוספת דיווח חדש לתאריך זה"
-                      >
-                        <Plus size={16} className="group-hover:scale-110 transition-transform" />
-                        <span className="text-xs font-bold">הוספת דיווח</span>
-                      </button>
                     </div>
                   )}
                 </div>
@@ -312,7 +316,7 @@ export default function SupervisorCalendar() {
         </div>
       </div>
 
-      {/* מודאל עריכה - (קוד המודאל נשאר זהה) */}
+      {/* מודאל עריכה */}
       {editingPlacement && (
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-lg shadow-xl w-full max-w-md overflow-hidden">
@@ -420,6 +424,15 @@ export default function SupervisorCalendar() {
             </div>
           </div>
         </div>
+      )}
+      {isAddModalOpen && selectedDate && (
+        <AddPlacementModal
+          isOpen={isAddModalOpen}
+          date={selectedDate}
+          onClose={() => setIsAddModalOpen(false)}
+          refreshData={fetchData}
+          user={user}
+        />
       )}
     </div>
   );
