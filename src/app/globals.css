@@ -51,3 +51,9 @@ body {
   background: #cbd5e1;
   border-radius: 10px;
 }
+
+.placeholder-black::placeholder {
+  color: #000000;
+  opacity: 1;
+}
+

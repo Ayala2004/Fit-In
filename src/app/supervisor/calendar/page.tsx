@@ -256,28 +256,32 @@ export default function SupervisorCalendar() {
                           className="group relative p-2 rounded-xl border border-slate-100 bg-white shadow-sm hover:border-blue-300 hover:shadow-md transition-all cursor-pointer"
                           onClick={() => setEditingPlacement(p)}
                         >
-                          <div className="text-[10px] font-bold text-slate-700 leading-tight">
+                          <div className="text-[16px] font-bold text-slate-700 leading-tight">
                             {p.mainTeacher?.firstName} {p.mainTeacher?.lastName}
                           </div>
                           <div
-                            className={`text-[9px] mt-1 flex items-center gap-1 ${
+                            className={`text-[15px] mt-1 flex items-center gap-1 ${
                               p.status === "OPEN"
-                                ? "text-orange-500 font-bold"
+                                ? "text-yellow-500 font-bold"
+                                : p.status === "CANCELLED"
+                                ? "text-red-500 font-bold"
                                 : "text-emerald-500 font-medium"
                             }`}
                           >
                             <div
                               className={`w-1 h-1 rounded-full ${
                                 p.status === "OPEN"
-                                  ? "bg-orange-500"
-                                  : "bg-emerald-500"
+                                  ? "bg-yellow-500 "
+                                  : p.status === "CANCELLED"
+                                  ? "bg-red-500 "
+                                  : "bg-emerald-500 "
                               }`}
                             />
                             {p.status === "OPEN"
                               ? "ממתין"
                               : p.status === "CANCELLED"
-                              ? "סגור"
-                              : p.substitute?.firstName}
+                              ? "הגן נסגר"
+                              : `${p.substitute.firstName} ${p.substitute.lastName}`}
                           </div>
 
                           <button
@@ -373,7 +377,7 @@ export default function SupervisorCalendar() {
                       placeholder="חיפוש גננת מחליפה..."
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
-                      className="w-full p-3 pr-10 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent text-sm"
+                      className="w-full p-3 pr-10 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent text-sm placeholder-black"
                     />
                     <User
                       size={18}
@@ -389,7 +393,7 @@ export default function SupervisorCalendar() {
                           onClick={() => handleQuickUpdate(sub.id)}
                           className="w-full p-3 hover:bg-gray-50 transition-colors border-b border-gray-100 last:border-b-0 text-right flex items-center gap-3 group"
                         >
-                          <div className="w-10 h-10 rounded-full bg-gray-100 group-hover:bg-gray-200 flex items-center justify-center transition-colors flex-shrink-0">
+                          <div className="w-10 h-10 rounded-full bg-gray-100 group-hover:bg-gray-200 flex items-center justify-center transition-colors shrink-0">
                             <User size={18} className="text-gray-600" />
                           </div>
                           <div className="flex-1">

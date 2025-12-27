@@ -110,7 +110,7 @@ export default function PlacementModal({
             <input
               type="text"
               placeholder="חפשי לפי שם או טלפון..."
-              className="w-full pr-10 pl-4 py-3 bg-white border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+              className="w-full pr-10 pl-4 py-3 placeholder-black bg-white border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               autoFocus

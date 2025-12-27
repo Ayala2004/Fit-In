@@ -130,7 +130,7 @@ export default function SupervisorPlacements() {
             <input
               type="text"
               placeholder="חיפוש מדריכה או גננת..."
-              className="w-full sm:w-80 px-5 text-gray-700 py-3 pr-12 border border-gray-300 rounded-lg focus:ring-2 focus:ring-slate-600 focus:border-slate-600 outline-none shadow-sm transition-all bg-white"
+              className="w-full sm:w-80 px-5 text-gray-700 py-3 pr-12 border border-gray-300 rounded-lg focus:ring-2 focus:ring-slate-600 focus:border-slate-600 outline-none shadow-sm transition-all placeholder-black bg-white"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
             />

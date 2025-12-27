@@ -64,9 +64,9 @@ export default function AddInstitutionModal({ isOpen, onClose, onSuccess }: any)
         </div>
 
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
-          <input name="name" required placeholder="שם הגן" className="w-full border p-2 rounded focus:ring-2 focus:ring-emerald-500 outline-none" />
-          <input name="address" required placeholder="כתובת" className="w-full border p-2 rounded focus:ring-2 focus:ring-emerald-500 outline-none" />
-          <input name="institutionNumber" required placeholder="מספר מוסד" className="w-full border p-2 rounded focus:ring-2 focus:ring-emerald-500 outline-none" />
+          <input name="name" required placeholder="שם הגן" className="w-full border p-2 rounded focus:ring-2 focus:ring-emerald-500 placeholder-black outline-none" />
+          <input name="address" required placeholder="כתובת" className="w-full border p-2 rounded focus:ring-2 focus:ring-emerald-500 placeholder-black outline-none" />
+          <input name="institutionNumber" required placeholder="מספר מוסד" className="w-full border p-2 rounded focus:ring-2  placeholder-black-emerald-500 outline-none" />
 
           <div className="space-y-2 border-t pt-4">
             <label className="text-sm font-bold text-emerald-800">בחרי גננת אם פנויה:</label>
@@ -77,7 +77,7 @@ export default function AddInstitutionModal({ isOpen, onClose, onSuccess }: any)
               <input 
                 type="text" 
                 placeholder="חפשי גננת..." 
-                className="w-full border p-2 pr-8 rounded text-sm bg-gray-50 outline-none focus:border-emerald-500"
+                className="w-full border p-2 pr-8 rounded text-sm placeholder-black bg-gray-50 outline-none focus:border-emerald-500"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
               />
