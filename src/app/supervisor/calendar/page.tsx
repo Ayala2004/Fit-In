@@ -18,6 +18,7 @@ import {
   Loader2,
   AlertCircle,
   User,
+  Plus, // ייבוא האייקון החדש
 } from "lucide-react";
 
 export default function SupervisorCalendar() {
@@ -29,23 +30,27 @@ export default function SupervisorCalendar() {
   const [editingPlacement, setEditingPlacement] = useState<any>(null);
   const [searchQuery, setSearchQuery] = useState("");
 
-  // סינון המחליפות לפי חיפוש
+  // פונקציה להוספת דיווח חדש
+  const handleAddPlacement = (date: Date) => {
+    console.log("Adding placement for:", date);
+    // כאן תוכלי לפתוח מודאל ליצירת דיווח חדש
+    // למשל: setIsAddingModalOpen(true); setTargetDate(date);
+  };
+
   const filteredSubstitutes = allSubstitutes.filter((sub: any) => {
     const fullName = `${sub.firstName} ${sub.lastName}`.toLowerCase();
     return fullName.includes(searchQuery.toLowerCase());
   });
-  // 1. טעינת נתונים ראשונית (משתמש ומחליפות)
+
   useEffect(() => {
     const initPage = async () => {
       try {
-        // טעינת פרטי המשתמש המחובר מה-API החדש שיצרנו
         const userRes = await fetch("/api/auth/me");
         if (userRes.ok) {
           const userData = await userRes.json();
           setUser(userData);
         }
 
-        // טעינת מחליפות דרך ה-GET הקיים ב-test route
         const subsRes = await fetch("/api/test?role=SUBSTITUTE");
         if (subsRes.ok) {
           const subsData = await subsRes.json();
@@ -58,7 +63,6 @@ export default function SupervisorCalendar() {
     initPage();
   }, []);
 
-  // 2. שליפת נתוני השיבוצים - שימוש ב-POST כפי שמוגדר ב-test route
   const fetchData = useCallback(async () => {
     if (!user?.id) return;
 
@@ -78,7 +82,6 @@ export default function SupervisorCalendar() {
       });
 
       const data = await res.json();
-      // בדיקה אם הנתונים הם מערך לפני שמירה ב-state
       setPlacements(data);
     } catch (err) {
       console.error("Fetch error:", err);
@@ -92,7 +95,6 @@ export default function SupervisorCalendar() {
     fetchData();
   }, [fetchData]);
 
-  // פונקציית מחיקה (צריך לוודא שיש לך DELETE ב-api/calendar או להשתמש ב-test POST)
   const handleDelete = async (id: string) => {
     if (!confirm("למחוק את הדיווח לצמיתות?")) return;
     try {
@@ -106,14 +108,11 @@ export default function SupervisorCalendar() {
     }
   };
 
-  // פונקציית עדכון מהמודאל
   const handleQuickUpdate = async (val: string) => {
     if (!editingPlacement) return;
 
     try {
-      // שימוש ב-assign או updateStatus בהתאם לבחירה
-      const type =
-        val === "CANCEL" || val === "OPEN" ? "updateStatus" : "assign";
+      const type = val === "CANCEL" || val === "OPEN" ? "updateStatus" : "assign";
       const bodyData =
         type === "assign"
           ? { placementId: editingPlacement.id, substituteId: val }
@@ -138,7 +137,6 @@ export default function SupervisorCalendar() {
     }
   };
 
-  // חישוב ימי הלוח
   const firstDayOfMonth = startOfMonth(currentDate);
   const startWeekDay = firstDayOfMonth.getDay();
   const realDays = eachDayOfInterval({
@@ -159,7 +157,6 @@ export default function SupervisorCalendar() {
   return (
     <div className="p-8 bg-slate-50 min-h-screen font-sans" dir="rtl">
       <div className="max-w-7xl mx-auto">
-        {/* כותרת וניווט חודשים */}
         <div className="flex justify-between items-center mb-8 bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
           <div className="flex items-center gap-4">
             <div className="bg-blue-600 p-3 rounded-xl text-white shadow-lg shadow-blue-200">
@@ -192,7 +189,6 @@ export default function SupervisorCalendar() {
           </div>
         </div>
 
-        {/* הלוח */}
         <div className="bg-white rounded-4xl shadow-xl border border-slate-200 overflow-hidden">
           <div className="grid grid-cols-7 bg-slate-50/50 border-b border-slate-200">
             {["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת"].map(
@@ -228,8 +224,8 @@ export default function SupervisorCalendar() {
               return (
                 <div
                   key={day.toString()}
-                  className={`min-h-37 border-l border-b border-slate-100 p-3 transition-all ${
-                    isSaturday ? "bg-slate-50/50" : "hover:bg-blue-50/20"
+                  className={`min-h-37 border-l border-b border-slate-100 p-3 flex flex-col transition-all ${
+                    isSaturday ? "bg-slate-50/50" : "hover:bg-blue-50/10"
                   }`}
                 >
                   <div className="flex justify-between items-start mb-2">
@@ -249,52 +245,64 @@ export default function SupervisorCalendar() {
                       יום מנוחה
                     </div>
                   ) : (
-                    <div className="mt-2 space-y-2">
-                      {dayPlacements.map((p: any) => (
-                        <div
-                          key={p.id}
-                          className="group relative p-2 rounded-xl border border-slate-100 bg-white shadow-sm hover:border-blue-300 hover:shadow-md transition-all cursor-pointer"
-                          onClick={() => setEditingPlacement(p)}
-                        >
-                          <div className="text-[16px] font-bold text-slate-700 leading-tight">
-                            {p.mainTeacher?.firstName} {p.mainTeacher?.lastName}
-                          </div>
+                    <div className="flex-1 flex flex-col">
+                      <div className="space-y-2 mb-2">
+                        {dayPlacements.map((p: any) => (
                           <div
-                            className={`text-[15px] mt-1 flex items-center gap-1 ${
-                              p.status === "OPEN"
-                                ? "text-yellow-500 font-bold"
-                                : p.status === "CANCELLED"
-                                ? "text-red-500 font-bold"
-                                : "text-emerald-500 font-medium"
-                            }`}
+                            key={p.id}
+                            className="group relative p-2 rounded-xl border border-slate-100 bg-white shadow-sm hover:border-blue-300 hover:shadow-md transition-all cursor-pointer"
+                            onClick={() => setEditingPlacement(p)}
                           >
+                            <div className="text-[16px] font-bold text-slate-700 leading-tight">
+                              {p.mainTeacher?.firstName} {p.mainTeacher?.lastName}
+                            </div>
                             <div
-                              className={`w-1 h-1 rounded-full ${
+                              className={`text-[15px] mt-1 flex items-center gap-1 ${
                                 p.status === "OPEN"
-                                  ? "bg-yellow-500 "
+                                  ? "text-yellow-500 font-bold"
                                   : p.status === "CANCELLED"
-                                  ? "bg-red-500 "
-                                  : "bg-emerald-500 "
+                                  ? "text-red-500 font-bold"
+                                  : "text-emerald-500 font-medium"
                               }`}
-                            />
-                            {p.status === "OPEN"
-                              ? "ממתין"
-                              : p.status === "CANCELLED"
-                              ? "הגן נסגר"
-                              : `${p.substitute.firstName} ${p.substitute.lastName}`}
-                          </div>
+                            >
+                              <div
+                                className={`w-1.5 h-1.5 rounded-full ${
+                                  p.status === "OPEN"
+                                    ? "bg-yellow-500 "
+                                    : p.status === "CANCELLED"
+                                    ? "bg-red-500 "
+                                    : "bg-emerald-500 "
+                                }`}
+                              />
+                              {p.status === "OPEN"
+                                ? "ממתין"
+                                : p.status === "CANCELLED"
+                                ? "הגן נסגר"
+                                : `${p.substitute.firstName} ${p.substitute.lastName}`}
+                            </div>
 
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleDelete(p.id);
-                            }}
-                            className="absolute -top-1 -left-1 opacity-0 group-hover:opacity-100 bg-red-500 text-white p-1 rounded-full shadow-lg transition-opacity hover:bg-red-600"
-                          >
-                            <X size={8} />
-                          </button>
-                        </div>
-                      ))}
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDelete(p.id);
+                              }}
+                              className="absolute -top-1 -left-1 opacity-0 group-hover:opacity-100 bg-red-500 text-white p-1 rounded-full shadow-lg transition-opacity hover:bg-red-600"
+                            >
+                              <X size={8} />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* כפתור הוספת דיווח חדש */}
+                      <button
+                        onClick={() => handleAddPlacement(day)}
+                        className="mt-auto w-full py-2 flex items-center justify-center gap-1 border-2 border-dashed border-slate-100 rounded-xl text-slate-400 hover:text-blue-600 hover:border-blue-200 hover:bg-white transition-all group"
+                        title="הוספת דיווח חדש לתאריך זה"
+                      >
+                        <Plus size={16} className="group-hover:scale-110 transition-transform" />
+                        <span className="text-xs font-bold">הוספת דיווח</span>
+                      </button>
                     </div>
                   )}
                 </div>
@@ -304,7 +312,7 @@ export default function SupervisorCalendar() {
         </div>
       </div>
 
-      {/* מודאל עריכה */}
+      {/* מודאל עריכה - (קוד המודאל נשאר זהה) */}
       {editingPlacement && (
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-lg shadow-xl w-full max-w-md overflow-hidden">
@@ -330,7 +338,6 @@ export default function SupervisorCalendar() {
                   בחירת מחליפה או פעולה
                 </label>
 
-                {/* כפתורי פעולה מהירה */}
                 <div className="grid grid-cols-2 gap-3 mb-4">
                   <button
                     onClick={() => handleQuickUpdate("CANCEL")}
@@ -362,14 +369,13 @@ export default function SupervisorCalendar() {
                           מחיקת שיבוץ
                         </div>
                         <div className="text-xs text-gray-500">
-                          פתחי את האפשרות לשיבוץ מחדש
+                          שחרור לשיבוץ
                         </div>
                       </div>
                     </div>
                   </button>
                 </div>
 
-                {/* חיפוש וברירת מחליפה */}
                 <div className="space-y-3">
                   <div className="relative">
                     <input
@@ -377,7 +383,7 @@ export default function SupervisorCalendar() {
                       placeholder="חיפוש גננת מחליפה..."
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
-                      className="w-full p-3 pr-10 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent text-sm placeholder-black"
+                      className="w-full p-3 pr-10 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent text-sm"
                     />
                     <User
                       size={18}

@@ -1,8 +1,8 @@
-import { NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
-import { getSession } from '@/lib/auth';
-import { db_createNotification } from '@/services/notificationService';
-
+import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { getSession } from "@/lib/auth";
+import { db_createNotification } from "@/services/notificationService";
+import { db_createPlacement } from "@/services/placementService";
 // --- GET: מחזיר את המדריכות והשיבוצים (לצורך הטבלה והחיפוש) ---
 export async function GET() {
   try {
@@ -34,7 +34,7 @@ export async function GET() {
               include: {
                 institution: true,
                 substitute: true,
-              }
+              },
             },
           },
         },
@@ -48,12 +48,52 @@ export async function GET() {
   }
 }
 
+export async function POST(req: NextRequest) {
+  try {
+    const body = await req.json();
+
+    // אם אין body או אין נתונים חשובים
+    if (
+      !body.date ||
+      !body.institutionId ||
+      !body.mainTeacherId ||
+      !body.creatorRoles
+    ) {
+      return NextResponse.json(
+        { message: "חסרים פרמטרים נדרשים" },
+        { status: 400 }
+      );
+    }
+
+    const newPlacement = await db_createPlacement({
+      date: body.date,
+      institutionId: body.institutionId,
+      mainTeacherId: body.mainTeacherId,
+      notes: body.notes,
+      creatorRoles: body.creatorRoles,
+      status: body.status, // אופציונלי
+    });
+
+    return NextResponse.json(newPlacement, { status: 201 });
+  } catch (err: any) {
+    console.error(err);
+    return NextResponse.json(
+      { message: err.message || "שגיאה ביצירת דיווח" },
+      { status: 500 }
+    );
+  }
+}
+
 // --- PATCH: עדכון שיבוץ ושליחת התראות ---
 export async function PATCH(request: Request) {
   try {
     const session = await getSession();
     // הרשאה למפקחת או מדריכה
-    if (!session || (!session.roles.includes("SUPERVISOR") && !session.roles.includes("INSTRUCTOR"))) {
+    if (
+      !session ||
+      (!session.roles.includes("SUPERVISOR") &&
+        !session.roles.includes("INSTRUCTOR"))
+    ) {
       return NextResponse.json({ message: "לא מורשה" }, { status: 401 });
     }
 
@@ -63,16 +103,20 @@ export async function PATCH(request: Request) {
     if (status === "CANCELLED") {
       const updatedPlacement = await prisma.placement.update({
         where: { id: placementId },
-        data: { 
+        data: {
           status: "CANCELLED",
-          substituteId: null // מוודאים שאין מחליפה אם הגן נסגר
-        }
+          substituteId: null, // מוודאים שאין מחליפה אם הגן נסגר
+        },
       });
       return NextResponse.json(updatedPlacement);
     }
 
     // ✔ הרשאה גם למדריכה וגם למפקחת
-    if (!session || (!session.roles.includes("SUPERVISOR") && !session.roles.includes("INSTRUCTOR"))) {
+    if (
+      !session ||
+      (!session.roles.includes("SUPERVISOR") &&
+        !session.roles.includes("INSTRUCTOR"))
+    ) {
       return NextResponse.json({ message: "לא מורשה" }, { status: 401 });
     }
 
@@ -111,11 +155,13 @@ export async function PATCH(request: Request) {
         mainTeacher: true,
         substitute: true,
         institution: true,
-      }
+      },
     });
 
     if (updatedPlacement.substitute && updatedPlacement.mainTeacher) {
-      const dateStr = new Date(updatedPlacement.date).toLocaleDateString('he-IL');
+      const dateStr = new Date(updatedPlacement.date).toLocaleDateString(
+        "he-IL"
+      );
       const gardenName = updatedPlacement.institution.name;
       const subName = `${updatedPlacement.substitute.firstName} ${updatedPlacement.substitute.lastName}`;
       const mainName = `${updatedPlacement.mainTeacher.firstName} ${updatedPlacement.mainTeacher.lastName}`;
@@ -124,14 +170,14 @@ export async function PATCH(request: Request) {
         userId: substituteId,
         title: "שיבוץ חדש עבורך",
         message: `שובצת לגן ${gardenName} בתאריך ${dateStr} במקום ${mainName}.`,
-        type: "STATUS_UPDATE"
+        type: "STATUS_UPDATE",
       });
 
       await db_createNotification({
         userId: updatedPlacement.mainTeacherId,
         title: "נמצאה מחליפה",
         message: `מעדכנים ש${subName} שובצה להחליף אותך בגן ${gardenName} בתאריך ${dateStr}.`,
-        type: "STATUS_UPDATE"
+        type: "STATUS_UPDATE",
       });
 
       if (updatedPlacement.mainTeacher.instructorId) {
@@ -139,7 +185,7 @@ export async function PATCH(request: Request) {
           userId: updatedPlacement.mainTeacher.instructorId,
           title: "עדכון שיבוץ בגן",
           message: `נמצאה מחליפה (${subName}) לגן ${gardenName} עבור הגננת ${mainName} בתאריך ${dateStr}.`,
-          type: "STATUS_UPDATE"
+          type: "STATUS_UPDATE",
         });
       }
     }
