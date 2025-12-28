@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import {
   format,
   startOfMonth,
@@ -18,7 +18,8 @@ import {
   Loader2,
   AlertCircle,
   User,
-  Plus, // ייבוא האייקון החדש
+  Plus,
+  Search,
 } from "lucide-react";
 import AddPlacementModal from "@/components/AddPlacementModal";
 
@@ -27,17 +28,46 @@ export default function SupervisorCalendar() {
   const [placements, setPlacements] = useState([]);
   const [loading, setLoading] = useState(true);
   const [user, setUser] = useState<any>(null);
-  const [allSubstitutes, setAllSubstitutes] = useState([]);
+
+  // States למודאל עריכה ומחליפות
   const [editingPlacement, setEditingPlacement] = useState<any>(null);
+  const [availableSubs, setAvailableSubs] = useState([]);
+  const [loadingSubs, setLoadingSubs] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+
+  // States למודאל הוספה
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
 
-  const filteredSubstitutes = allSubstitutes.filter((sub: any) => {
-    const fullName = `${sub.firstName} ${sub.lastName}`.toLowerCase();
-    return fullName.includes(searchQuery.toLowerCase());
-  });
+  // פונקציה להבאת מחליפות פנויות לתאריך ספציפי
+  const fetchAvailableSubstitutes = async (date: Date) => {
+    setLoadingSubs(true);
+    try {
+      const dateParam = encodeURIComponent(date.toISOString());
+      const res = await fetch(`/api/supervisor/substitutes?date=${dateParam}`);
+      if (res.ok) {
+        const data = await res.json();
+        setAvailableSubs(data);
+      }
+    } catch (err) {
+      console.error("Error fetching subs:", err);
+    } finally {
+      setLoadingSubs(false);
+    }
+  };
 
+  // סינון רשימת המחליפות לפי חיפוש
+  const filteredAvailableSubs = useMemo(() => {
+    return availableSubs.filter((sub: any) => {
+      const fullName = `${sub.firstName} ${sub.lastName}`.toLowerCase();
+      return (
+        fullName.includes(searchQuery.toLowerCase()) ||
+        sub.phoneNumber?.includes(searchQuery)
+      );
+    });
+  }, [availableSubs, searchQuery]);
+
+  // טעינת פרטי המשתמש המחובר בטעינה ראשונית
   useEffect(() => {
     const initPage = async () => {
       try {
@@ -46,12 +76,6 @@ export default function SupervisorCalendar() {
           const userData = await userRes.json();
           setUser(userData);
         }
-
-        const subsRes = await fetch("/api/test?role=SUBSTITUTE");
-        if (subsRes.ok) {
-          const subsData = await subsRes.json();
-          setAllSubstitutes(subsData);
-        }
       } catch (err) {
         console.error("Initialization error:", err);
       }
@@ -59,6 +83,7 @@ export default function SupervisorCalendar() {
     initPage();
   }, []);
 
+  // טעינת נתוני לוח השנה
   const fetchData = useCallback(async () => {
     if (!user?.id) return;
 
@@ -91,11 +116,20 @@ export default function SupervisorCalendar() {
     fetchData();
   }, [fetchData]);
 
+  // בכל פעם שנפתח מודאל עריכה - נטען מחליפות רלוונטיות לתאריך הדיווח
+  useEffect(() => {
+    if (editingPlacement) {
+      fetchAvailableSubstitutes(new Date(editingPlacement.date));
+      setSearchQuery("");
+    }
+  }, [editingPlacement]);
+
   const handleDelete = async (id: string) => {
     if (!confirm("למחוק את הדיווח לצמיתות?")) return;
     try {
       const res = await fetch(`/api/calendar`, {
         method: "DELETE",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id }),
       });
       if (res.ok) setPlacements((prev) => prev.filter((p: any) => p.id !== id));
@@ -146,7 +180,7 @@ export default function SupervisorCalendar() {
   if (!user && loading) {
     return (
       <div className="flex h-screen items-center justify-center bg-slate-50">
-        <Loader2 className="animate-spin text-blue-600" size={48} />
+        <Loader2 className="animate-spin text-indigo-600" size={48} />
       </div>
     );
   }
@@ -154,16 +188,19 @@ export default function SupervisorCalendar() {
   return (
     <div className="p-8 bg-slate-50 min-h-screen font-sans" dir="rtl">
       <div className="max-w-7xl mx-auto">
+        {/* Header Section */}
         <div className="flex justify-between items-center mb-8 bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
           <div className="flex items-center gap-4">
-            <div className="bg-blue-600 p-3 rounded-xl text-white shadow-lg shadow-blue-200">
+            <div className="bg-indigo-600 p-3 rounded-xl text-white shadow-lg shadow-indigo-200">
               <CalendarIcon size={24} />
             </div>
             <div>
               <h1 className="text-2xl font-bold text-slate-800">
                 יומן שיבוצים חודשי
               </h1>
-              <p className="text-slate-400 text-sm">המפקחת: {user?.name}</p>
+              <p className="text-slate-400 text-sm font-medium italic">
+                המפקחת: {user?.name}
+              </p>
             </div>
           </div>
 
@@ -174,7 +211,7 @@ export default function SupervisorCalendar() {
             >
               <ChevronRight />
             </button>
-            <span className="text-xl font-bold text-slate-700 min-w-35 text-center">
+            <span className="text-xl font-bold text-slate-700 min-w-[140px] text-center">
               {format(currentDate, "MMMM yyyy", { locale: he })}
             </span>
             <button
@@ -186,7 +223,8 @@ export default function SupervisorCalendar() {
           </div>
         </div>
 
-        <div className="bg-white rounded-4xl shadow-xl border border-slate-200 overflow-hidden">
+        {/* Calendar Grid */}
+        <div className="bg-white rounded-[2.5rem] shadow-xl border border-slate-200 overflow-hidden">
           <div className="grid grid-cols-7 bg-slate-50/50 border-b border-slate-200">
             {["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת"].map(
               (d) => (
@@ -202,19 +240,17 @@ export default function SupervisorCalendar() {
 
           <div className="grid grid-cols-7">
             {days.map((day, index) => {
-              {
-              }
               if (!day) {
                 return (
                   <div
                     key={`empty-${index}`}
-                    className="min-h-37 border-l border-b border-slate-50"
+                    className="min-h-[150px] border-l border-b border-slate-50"
                   />
                 );
               }
 
               const isSaturday = day.getDay() === 6;
-
+              const isToday = isSameDay(day, new Date());
               const dayPlacements = Array.isArray(placements)
                 ? placements.filter((p: any) =>
                     isSameDay(new Date(p.date), day)
@@ -224,30 +260,32 @@ export default function SupervisorCalendar() {
               return (
                 <div
                   key={day.toString()}
-                  className={`min-h-37 border-l border-b border-slate-100 p-3 flex flex-col transition-all ${
-                    isSaturday ? "bg-slate-50/50" : "hover:bg-blue-50/10"
+                  className={`min-h-[150px] border-l border-b border-slate-100 p-3 flex flex-col transition-all ${
+                    isSaturday ? "bg-slate-50/50" : "hover:bg-indigo-50/5"
                   }`}
                 >
-                  <div className="flex justify-between items-start mb-2">
+                  <div className="flex justify-between items-center mb-3">
                     <span
-                      className={`text-sm font-black ${
-                        isSameDay(day, new Date())
-                          ? "bg-blue-600 text-white w-6 h-6 flex items-center justify-center rounded-full"
-                          : "text-slate-300"
+                      className={`text-sm font-black transition-colors ${
+                        isToday
+                          ? "bg-indigo-600 text-white w-7 h-7 flex items-center justify-center rounded-full shadow-md shadow-indigo-100"
+                          : "text-slate-400"
                       }`}
                     >
                       {format(day, "d")}
                     </span>
-                                            <button
-                          onClick={() => {
-                            setSelectedDate(day);
-                            setIsAddModalOpen(true);
-                          }}
-                          className="mt-auto flex items-center justify-center gap-1 text-[11px] font-bold text-blue-600 hover:bg-blue-50 p-1 rounded-lg transition-colors border border-dashed border-blue-200"
-                        >
-                          <Plus size={12} />
-                         
-                        </button>
+                    {!isSaturday && (
+                      <button
+                        onClick={() => {
+                          setSelectedDate(day);
+                          setIsAddModalOpen(true);
+                        }}
+                        className="p-1 text-slate-400 hover:bg-indigo-600 hover:text-white rounded-md transition-all group/btn"
+                        title="הוספת דיווח"
+                      >
+                        <Plus size={14} strokeWidth={3} />
+                      </button>
+                    )}
                   </div>
 
                   {isSaturday ? (
@@ -255,59 +293,54 @@ export default function SupervisorCalendar() {
                       יום מנוחה
                     </div>
                   ) : (
-                    <div className="flex-1 flex flex-col">
-                      <div className="space-y-2 mb-2">
-                        {dayPlacements.map((p: any) => (
-                          <div
-                            key={p.id}
-                            className="group relative p-2 rounded-xl border border-slate-100 bg-white shadow-sm hover:border-blue-300 hover:shadow-md transition-all cursor-pointer"
-                            onClick={() => setEditingPlacement(p)}
-                          >
-                            <div className="text-[16px] font-bold text-slate-700 leading-tight">
-                              {p.mainTeacher?.firstName}{" "}
-                              {p.mainTeacher?.lastName}
-                            </div>
-                            <div
-                              className={`text-[15px] mt-1 flex items-center gap-1 ${
-                                p.status === "OPEN"
-                                  ? "text-yellow-500 font-bold"
-                                  : p.status === "CANCELLED"
-                                  ? "text-red-500 font-bold"
-                                  : "text-emerald-500 font-medium"
-                              }`}
-                            >
-                              <div
-                                className={`w-1.5 h-1.5 rounded-full ${
-                                  p.status === "OPEN"
-                                    ? "bg-yellow-500 "
-                                    : p.status === "CANCELLED"
-                                    ? "bg-red-500 "
-                                    : "bg-emerald-500 "
-                                }`}
-                              />
-                              {/* לוגיקה משופרת להצגת טקסט הסטטוס/שם */}
-                              {p.status === "OPEN"
-                                ? "ממתין למחליפה"
-                                : p.status === "CANCELLED"
-                                ? "הגן נסגר"
-                                : p.substitute
-                                ? `${p.substitute.firstName} ${p.substitute.lastName}`
-                                : "שגיאה בנתוני מחליפה"}
-                            </div>
-
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleDelete(p.id);
-                              }}
-                              className="absolute -top-1 -left-1 opacity-0 group-hover:opacity-100 bg-red-500 text-white p-1 rounded-full shadow-lg transition-opacity hover:bg-red-600"
-                            >
-                              <X size={8} />
-                            </button>
+                    <div className="flex-1 space-y-2 overflow-y-auto overflow-x-hidden custom-calendar-scroll">
+                      {" "}
+                      {dayPlacements.map((p: any) => (
+                        <div
+                          key={p.id}
+                          className="group relative p-2 rounded-xl border border-slate-100 bg-white shadow-sm hover:border-indigo-300 hover:shadow-md transition-all cursor-pointer"
+                          onClick={() => setEditingPlacement(p)}
+                        >
+                          <div className="text-[14px] font-bold text-slate-700 leading-tight">
+                            {p.mainTeacher?.firstName} {p.mainTeacher?.lastName}
                           </div>
-                        ))}
-
-                      </div>
+                          <div
+                            className={`text-[12px] mt-1 flex items-center gap-1.5 ${
+                              p.status === "OPEN"
+                                ? "text-amber-600 font-bold"
+                                : p.status === "CANCELLED"
+                                ? "text-red-500 font-bold"
+                                : "text-emerald-600 font-bold"
+                            }`}
+                          >
+                            <div
+                              className={`w-1.5 h-1.5 rounded-full ${
+                                p.status === "OPEN"
+                                  ? "bg-amber-500 animate-pulse"
+                                  : p.status === "CANCELLED"
+                                  ? "bg-red-500"
+                                  : "bg-emerald-500"
+                              }`}
+                            />
+                            {p.status === "OPEN"
+                              ? "ממתין"
+                              : p.status === "CANCELLED"
+                              ? "סגור"
+                              : p.substitute
+                              ? `${p.substitute.firstName} ${p.substitute.lastName[0]}.`
+                              : "משובץ"}
+                          </div>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDelete(p.id);
+                            }}
+                            className="absolute -top-1.5 -left-1.5 opacity-0 group-hover:opacity-100 bg-white text-red-500 p-1 rounded-full shadow-md border border-red-50 hover:bg-red-500 hover:text-white transition-all"
+                          >
+                            <X size={10} />
+                          </button>
+                        </div>
+                      ))}
                     </div>
                   )}
                 </div>
@@ -317,115 +350,124 @@ export default function SupervisorCalendar() {
         </div>
       </div>
 
-      {/* מודאל עריכה */}
+      {/* --- מודאל עריכה (התיקון שעשינו) --- */}
       {editingPlacement && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg shadow-xl w-full max-w-md overflow-hidden">
-            <div className="p-5 border-b border-gray-200 flex justify-between items-center">
-              <div>
-                <h3 className="text-lg font-semibold text-gray-900">
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-[100] p-4 animate-in fade-in duration-300">
+          <div className="bg-white w-full max-w-lg rounded-[2.5rem] shadow-2xl overflow-hidden flex flex-col max-h-[85vh] border border-slate-100">
+            <div className="p-8 bg-slate-900 text-white flex justify-between items-center relative overflow-hidden">
+              <div className="absolute top-0 left-0 w-full h-full opacity-10 pointer-events-none">
+                <div className="absolute -top-10 -right-10 w-32 h-32 bg-indigo-500 rounded-full blur-3xl"></div>
+              </div>
+
+              <div className="relative z-10">
+                <h3 className="text-2xl font-black tracking-tight">
                   עריכת שיבוץ
                 </h3>
-                <p className="text-sm text-gray-500 mt-0.5">
-                  {format(new Date(editingPlacement.date), "dd/MM/yyyy")}
+                <p className="text-slate-400 text-sm font-medium mt-1">
+                  {format(new Date(editingPlacement.date), "EEEE, dd/MM/yyyy", {
+                    locale: he,
+                  })}
+                  <span className="mx-2">|</span> גן{" "}
+                  {editingPlacement.institution?.name}
                 </p>
               </div>
+
               <button
                 onClick={() => setEditingPlacement(null)}
-                className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                className="relative z-10 p-2 hover:bg-white/10 rounded-full transition-colors"
               >
-                <X size={20} className="text-gray-500" />
+                <X size={24} />
               </button>
             </div>
-            <div className="p-6">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-3">
-                  בחירת מחליפה או פעולה
-                </label>
 
-                <div className="grid grid-cols-2 gap-3 mb-4">
-                  <button
-                    onClick={() => handleQuickUpdate("CANCEL")}
-                    className="p-4 rounded-lg border-2 border-gray-200 hover:border-red-500 hover:bg-red-50 transition-all text-right group"
+            <div className="p-6 bg-slate-50 border-b border-slate-100 grid grid-cols-2 gap-4">
+              <button
+                onClick={() => handleQuickUpdate("CANCEL")}
+                className="flex flex-col items-center justify-center gap-2 p-4 bg-white rounded-2xl border-2 border-transparent hover:border-red-500 hover:text-red-600 transition-all shadow-sm group"
+              >
+                <div className="p-2 bg-red-50 rounded-xl group-hover:bg-red-500 group-hover:text-white transition-colors">
+                  <X size={20} />
+                </div>
+                <span className="text-xs font-black uppercase">סגירת הגן</span>
+              </button>
+              <button
+                onClick={() => handleQuickUpdate("OPEN")}
+                className="flex flex-col items-center justify-center gap-2 p-4 bg-white rounded-2xl border-2 border-transparent hover:border-amber-500 hover:text-amber-600 transition-all shadow-sm group"
+              >
+                <div className="p-2 bg-amber-50 rounded-xl group-hover:bg-amber-500 group-hover:text-white transition-colors">
+                  <AlertCircle size={20} />
+                </div>
+                <span className="text-xs font-black uppercase">
+                  החזרה להמתנה
+                </span>
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <label className="block text-sm font-black text-slate-700 flex items-center gap-2">
+                <Search size={16} className="text-indigo-500" /> שיבוץ גננת
+                מחליפה:
+              </label>
+              <input
+                type="text"
+                placeholder="חפשי לפי שם או טלפון..."
+                className="w-full px-5 py-3.5 bg-slate-50 border-none rounded-2xl focus:ring-2 focus:ring-indigo-500 font-bold text-slate-700 transition-all"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-6 pb-8 space-y-2">
+              {loadingSubs ? (
+                <div className="flex flex-col items-center justify-center p-12 space-y-3">
+                  <Loader2 className="animate-spin text-indigo-500 w-8 h-8" />
+                  <p className="text-slate-400 text-sm font-bold">
+                    בודק זמינות מחליפות...
+                  </p>
+                </div>
+              ) : filteredAvailableSubs.length > 0 ? (
+                filteredAvailableSubs.map((sub: any) => (
+                  <div
+                    key={sub.id}
+                    className="flex items-center justify-between p-4 bg-white rounded-2xl border border-slate-100 hover:border-indigo-200 hover:bg-indigo-50/30 transition-all group shadow-sm"
                   >
-                    <div className="flex items-center gap-3">
-                      <div className=" p-2 rounded-full bg-red-100 group-hover:bg-red-200 flex items-center justify-center transition-colors">
-                        <X size={20} className="text-red-600 " />
+                    <div className="flex items-center gap-4">
+                      <div className="w-10 h-10 bg-indigo-600 text-white rounded-full flex items-center justify-center font-black shadow-md">
+                        {sub.firstName[0]}
                       </div>
                       <div>
-                        <div className="text-sm font-medium text-gray-900">
-                          סגירת הגן
-                        </div>
-                        <div className="text-xs text-gray-500">ביטול יום</div>
+                        <p className="font-black text-slate-800">
+                          {sub.firstName} {sub.lastName}
+                        </p>
+                        <p className="text-xs text-slate-400 font-medium">
+                          {sub.phoneNumber}
+                        </p>
                       </div>
                     </div>
-                  </button>
-
-                  <button
-                    onClick={() => handleQuickUpdate("OPEN")}
-                    className="p-4 rounded-lg border-2 border-gray-200 hover:border-orange-500 hover:bg-orange-50 transition-all text-right group"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className="p-2 rounded-full bg-orange-100 group-hover:bg-orange-200 flex items-center justify-center transition-colors">
-                        <AlertCircle size={20} className="text-orange-600 " />
-                      </div>
-                      <div>
-                        <div className="text-sm font-medium text-gray-900">
-                          מחיקת שיבוץ
-                        </div>
-                        <div className="text-xs text-gray-500">
-                          שחרור לשיבוץ
-                        </div>
-                      </div>
-                    </div>
-                  </button>
-                </div>
-
-                <div className="space-y-3">
-                  <div className="relative">
-                    <input
-                      type="text"
-                      placeholder="חיפוש גננת מחליפה..."
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      className="w-full p-3 pr-10 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent text-sm"
-                    />
-                    <User
-                      size={18}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400"
-                    />
+                    <button
+                      onClick={() => handleQuickUpdate(sub.id)}
+                      className="px-4 py-2 bg-indigo-50 text-indigo-600 rounded-xl font-black text-xs hover:bg-indigo-600 hover:text-white transition-all"
+                    >
+                      שבצי
+                    </button>
                   </div>
-
-                  <div className="max-h-64 overflow-y-auto border border-gray-200 rounded-lg">
-                    {filteredSubstitutes.length > 0 ? (
-                      filteredSubstitutes.map((sub: any) => (
-                        <button
-                          key={sub.id}
-                          onClick={() => handleQuickUpdate(sub.id)}
-                          className="w-full p-3 hover:bg-gray-50 transition-colors border-b border-gray-100 last:border-b-0 text-right flex items-center gap-3 group"
-                        >
-                          <div className="w-10 h-10 rounded-full bg-gray-100 group-hover:bg-gray-200 flex items-center justify-center transition-colors shrink-0">
-                            <User size={18} className="text-gray-600" />
-                          </div>
-                          <div className="flex-1">
-                            <div className="text-sm font-medium text-gray-900">
-                              {sub.firstName} {sub.lastName}
-                            </div>
-                          </div>
-                        </button>
-                      ))
-                    ) : (
-                      <div className="p-6 text-center text-gray-500 text-sm">
-                        לא נמצאו גננות מחליפות
-                      </div>
-                    )}
-                  </div>
+                ))
+              ) : (
+                <div className="text-center py-12 px-6 bg-slate-50 rounded-[2rem] border-2 border-dashed border-slate-200">
+                  <User size={20} className="mx-auto text-slate-400 mb-4" />
+                  <p className="text-slate-900 font-black text-lg">
+                    אין מחליפות פנויות
+                  </p>
+                  <p className="text-slate-500 text-sm">
+                    נסו לבדוק תאריך אחר או לשנות סטטוס
+                  </p>
                 </div>
-              </div>
+              )}
             </div>
           </div>
         </div>
       )}
+
       {isAddModalOpen && selectedDate && (
         <AddPlacementModal
           isOpen={isAddModalOpen}
