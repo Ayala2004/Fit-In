@@ -219,12 +219,16 @@ export async function db_createPlacement(data: {
       date: targetDate,
     },
   });
-  if (existingReport) {
+if (existingReport) {
+    // הוספת לוגיקה: אם המפקחת מנסה ליצור דיווח על משהו שכבר סגור או משובץ
     if (existingReport.status === "CANCELLED") {
-      throw new Error("הגן כבר הוגדר כסגור לתאריך זה. לא ניתן לשבץ.");
+      throw new Error("הגן כבר הוגדר כסגור לתאריך זה.");
+    }
+    if (existingReport.status === "ASSIGNED") {
+      throw new Error("כבר קיימת מחליפה משובצת לגן זה.");
     }
     throw new Error("כבר קיים דיווח פעיל לגן זה בתאריך שנבחר");
-  }
+}
 
   const diffInDays =
     (targetDate.getTime() - today.getTime()) / (1000 * 3600 * 24);

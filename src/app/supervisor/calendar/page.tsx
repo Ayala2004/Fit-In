@@ -238,6 +238,16 @@ export default function SupervisorCalendar() {
                     >
                       {format(day, "d")}
                     </span>
+                                            <button
+                          onClick={() => {
+                            setSelectedDate(day);
+                            setIsAddModalOpen(true);
+                          }}
+                          className="mt-auto flex items-center justify-center gap-1 text-[11px] font-bold text-blue-600 hover:bg-blue-50 p-1 rounded-lg transition-colors border border-dashed border-blue-200"
+                        >
+                          <Plus size={12} />
+                         
+                        </button>
                   </div>
 
                   {isSaturday ? (
@@ -296,16 +306,7 @@ export default function SupervisorCalendar() {
                             </button>
                           </div>
                         ))}
-                        <button
-                          onClick={() => {
-                            setSelectedDate(day);
-                            setIsAddModalOpen(true);
-                          }}
-                          className="mt-auto flex items-center justify-center gap-1 text-[11px] font-bold text-blue-600 hover:bg-blue-50 p-1 rounded-lg transition-colors border border-dashed border-blue-200"
-                        >
-                          <Plus size={12} />
-                          הוספת דיווח
-                        </button>
+
                       </div>
                     </div>
                   )}
