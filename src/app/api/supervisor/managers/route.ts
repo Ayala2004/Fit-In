@@ -22,7 +22,6 @@ export async function GET(req: Request) {
           gte: new Date(selectedDate.setHours(0,0,0,0)),
           lte: new Date(selectedDate.setHours(23,59,59,999))
         },
-        status: { not: "CANCELLED" }
       },
       select: { mainTeacherId: true, substituteId: true }
     });

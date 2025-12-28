@@ -4,47 +4,34 @@ import {
   db_notifyMultipleUsers,
 } from "./notificationService";
 import { Day } from "@prisma/client";
-import { startOfDay, endOfDay, addDays } from "date-fns";
+import { addMonths, endOfMonth, startOfDay, endOfDay, addDays } from "date-fns";
 
 /**
  * שליפת נתונים ללוח הבקרה של המפקחת
  */
 export async function db_getSupervisorDashboard(supervisorId: string) {
   const today = startOfDay(new Date());
+  const oneMonthFromNow = endOfDay(addMonths(new Date(), 1));
+
   const endOfWeek = endOfDay(addDays(today, 5));
 
   // --- פונקציית עזר לחישוב דילוג שבת ---
-  const getTargetDate = (startDate: Date, daysToCount: number) => {
+   const getTargetDate = (startDate: Date, daysToCount: number) => {
     let currentDate = new Date(startDate);
     let addedDays = 0;
     while (addedDays < daysToCount) {
       currentDate = addDays(currentDate, 1);
       if (currentDate.getDay() !== 6) {
-        // 6 = יום שבת
         addedDays++;
       }
     }
     return endOfDay(currentDate);
   };
 
-  // חישוב תאריך היעד לקריאות דחופות (3 ימי פעילות קדימה)
+  // 1. חישוב תאריך היעד לקריאות דחופות (3 ימי פעילות קדימה)
   const urgentDeadline = getTargetDate(today, 2);
 
-  // 1. חוסרים מהעבר (Pending Updates)
-  const pendingUpdates = await prisma.placement.findMany({
-    where: {
-      institution: { supervisorId: supervisorId },
-      status: "OPEN",
-      date: { lt: today },
-    },
-    include: {
-      institution: { select: { name: true } },
-      mainTeacher: { select: { firstName: true, lastName: true } },
-    },
-    orderBy: { date: "desc" },
-  });
-
-  // 2. קריאות דחופות (כולל דילוג שבת)
+  // 2. קריאות דחופות (מהיום ועד הדדליין הדחוף)
   const urgentAlerts = await prisma.placement.findMany({
     where: {
       institution: { supervisorId: supervisorId },
@@ -58,7 +45,38 @@ export async function db_getSupervisorDashboard(supervisorId: string) {
     orderBy: { date: "asc" },
   });
 
-  // 3. Snapshot שבועי
+  // 3. בקשות פתוחות לשאר החודש (החל מהיום שאחרי הדדליין הדחוף)
+  const openMonthlyRequests = await prisma.placement.findMany({
+    where: {
+      institution: { supervisorId: supervisorId },
+      status: "OPEN",
+      date: {
+        gt: urgentDeadline,   // מעבר לטווח הדחוף
+        lte: oneMonthFromNow, // עד בדיוק חודש מהיום
+      },
+    },
+    include: {
+      institution: { select: { name: true } },
+      mainTeacher: { select: { firstName: true, lastName: true } },
+    },
+    orderBy: { date: "asc" },
+  });
+
+  // 4. חוסרים מהעבר (Pending Updates - כאלו שקרו ולא טופלו)
+  const pendingUpdates = await prisma.placement.findMany({
+    where: {
+      institution: { supervisorId: supervisorId },
+      status: "OPEN",
+      date: { lt: today },
+    },
+    include: {
+      institution: { select: { name: true } },
+      mainTeacher: { select: { firstName: true, lastName: true } },
+    },
+    orderBy: { date: "desc" },
+  });
+
+  // 5. Snapshot שבועי (לצורך הגרף/תצוגה שבועית)
   const weeklyPlacements = await prisma.placement.findMany({
     where: {
       institution: { supervisorId: supervisorId },
@@ -67,11 +85,11 @@ export async function db_getSupervisorDashboard(supervisorId: string) {
     select: { date: true, status: true },
   });
 
-  // 4. פעולות אחרונות
+  // 6. פעולות אחרונות (לפי זמן עדכון)
   const recentActivity = await prisma.placement.findMany({
     where: { institution: { supervisorId: supervisorId } },
     take: 5,
-    orderBy: { createdAt: "desc" },
+    orderBy: { updatedAt: "desc" },
     include: {
       institution: { select: { name: true } },
       substitute: { select: { firstName: true, lastName: true } },
@@ -84,7 +102,37 @@ export async function db_getSupervisorDashboard(supervisorId: string) {
     urgentAlerts,
     pendingUpdates,
     recentActivity,
+    openMonthlyRequests,
   };
+}
+
+/**
+ * שליפת היסטוריה מלאה לחודש ספציפי
+ */
+export async function db_getMonthlyHistory(
+  supervisorId: string,
+  month: number,
+  year: number
+) {
+  const startDate = new Date(year, month - 1, 1);
+  const endDate = new Date(year, month, 0, 23, 59, 59);
+
+  return await prisma.placement.findMany({
+    where: {
+      institution: { supervisorId: supervisorId },
+      updatedAt: {
+        // אנחנו מסתכלים על מתי השינוי קרה
+        gte: startDate,
+        lte: endDate,
+      },
+    },
+    include: {
+      institution: { select: { name: true } },
+      substitute: { select: { firstName: true, lastName: true } },
+      mainTeacher: { select: { firstName: true, lastName: true } },
+    },
+    orderBy: { updatedAt: "desc" },
+  });
 }
 
 /**
@@ -134,7 +182,7 @@ export async function db_createPlacement(data: {
   date: Date;
   institutionId: string;
   mainTeacherId: string;
-  substituteId?: string | null; 
+  substituteId?: string | null;
   notes?: string;
   creatorRoles: string[];
   status?: "OPEN" | "ASSIGNED" | "CANCELLED";
@@ -169,11 +217,14 @@ export async function db_createPlacement(data: {
     where: {
       institutionId: data.institutionId,
       date: targetDate,
-      status: { not: "CANCELLED" },
     },
   });
-  if (existingReport)
+  if (existingReport) {
+    if (existingReport.status === "CANCELLED") {
+      throw new Error("הגן כבר הוגדר כסגור לתאריך זה. לא ניתן לשבץ.");
+    }
     throw new Error("כבר קיים דיווח פעיל לגן זה בתאריך שנבחר");
+  }
 
   const diffInDays =
     (targetDate.getTime() - today.getTime()) / (1000 * 3600 * 24);
@@ -184,7 +235,7 @@ export async function db_createPlacement(data: {
       date: targetDate,
       institutionId: data.institutionId,
       mainTeacherId: data.mainTeacherId,
-      substituteId: data.substituteId, 
+      substituteId: data.substituteId,
       notes: data.notes,
       status: finalStatus,
       priority: priority,

@@ -3,7 +3,14 @@
 import { useEffect, useState } from "react";
 import { format, addDays, isSameDay } from "date-fns";
 import { he } from "date-fns/locale";
-import { AlertCircle, Calendar, ChevronLeft, Clock, MapPin, User } from "lucide-react";
+import {
+  AlertCircle,
+  Calendar,
+  ChevronLeft,
+  Clock,
+  MapPin,
+  User,
+} from "lucide-react";
 import PlacementModal from "@/components/PlacementModal";
 import RecentActivityModal from "@/components/RecentActivityModal";
 
@@ -13,6 +20,9 @@ export default function SupervisorDashboardPage() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedPlacement, setSelectedPlacement] = useState<any>(null);
   const [isActivityModalOpen, setIsActivityModalOpen] = useState(false);
+  const [fullHistory, setFullHistory] = useState([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+
   const loadData = async () => {
     try {
       const res = await fetch("/api/supervisor/dashboard");
@@ -24,6 +34,19 @@ export default function SupervisorDashboardPage() {
     }
   };
 
+  const loadFullHistory = async () => {
+    setLoadingHistory(true);
+    setIsActivityModalOpen(true);
+    try {
+      const res = await fetch("/api/supervisor/history"); // יטען אוטומטית לחודש הנוכחי
+      const data = await res.json();
+      setFullHistory(data);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoadingHistory(false);
+    }
+  };
   useEffect(() => {
     loadData();
   }, []);
@@ -77,7 +100,10 @@ export default function SupervisorDashboardPage() {
   );
 
   return (
-    <div className="p-4 md:p-8 bg-[#F8FAFC] min-h-screen font-sans text-slate-900" dir="rtl">
+    <div
+      className="p-4 md:p-8 bg-[#F8FAFC] min-h-screen font-sans text-slate-900"
+      dir="rtl"
+    >
       {/* Header */}
       <header className="max-w-7xl mx-auto mb-8 flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
@@ -97,32 +123,43 @@ export default function SupervisorDashboardPage() {
       </header>
 
       <main className="max-w-7xl mx-auto">
-        
         {/* Weekly Snapshot Card */}
         <section className="mb-10 bg-white p-6 rounded-[2rem] shadow-sm border border-slate-200">
           <div className="flex items-center gap-2 mb-6">
             <div className="w-2 h-6 bg-indigo-600 rounded-full"></div>
-            <h2 className="text-lg font-bold text-slate-800 tracking-wide">מבט שבועי</h2>
+            <h2 className="text-lg font-bold text-slate-800 tracking-wide">
+              מבט שבועי
+            </h2>
           </div>
           <div className="grid grid-cols-2 lg:grid-cols-6 gap-3">
             {displayDaysWithoutSaturday.map((date) => {
               const isToday = isSameDay(date, new Date());
               return (
-                <div 
-                  key={date.toString()} 
+                <div
+                  key={date.toString()}
                   className={`relative overflow-hidden p-4 rounded-2xl border transition-all duration-300 ${
-                    isToday 
-                    ? "bg-indigo-600 border-indigo-600 shadow-lg shadow-indigo-100 scale-[1.02]" 
-                    : "bg-slate-50 border-slate-100 hover:border-slate-300"
+                    isToday
+                      ? "bg-indigo-600 border-indigo-600 shadow-lg shadow-indigo-100 scale-[1.02]"
+                      : "bg-slate-50 border-slate-100 hover:border-slate-300"
                   }`}
                 >
-                  <p className={`text-[11px] font-black uppercase tracking-wider mb-1 ${isToday ? "text-indigo-100" : "text-slate-400"}`}>
+                  <p
+                    className={`text-[11px] font-black uppercase tracking-wider mb-1 ${
+                      isToday ? "text-indigo-100" : "text-slate-400"
+                    }`}
+                  >
                     {format(date, "EEEE", { locale: he })}
                   </p>
-                  <p className={`text-xl font-black ${isToday ? "text-white" : "text-slate-700"}`}>
+                  <p
+                    className={`text-xl font-black ${
+                      isToday ? "text-white" : "text-slate-700"
+                    }`}
+                  >
                     {format(date, "dd/MM")}
                   </p>
-                  {isToday && <div className="absolute top-[-10px] left-[-10px] w-8 h-8 bg-white/10 rounded-full blur-xl"></div>}
+                  {isToday && (
+                    <div className="absolute top-[-10px] left-[-10px] w-8 h-8 bg-white/10 rounded-full blur-xl"></div>
+                  )}
                 </div>
               );
             })}
@@ -130,17 +167,15 @@ export default function SupervisorDashboardPage() {
         </section>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          
           {/* Main Column: Urgent Alerts */}
           <div className="lg:col-span-2 space-y-6">
             <div className="flex items-center justify-between px-2">
               <h2 className="text-xl font-black text-slate-800 flex items-center gap-3">
-                <div className="p-2 bg-red-100 rounded-lg text-red-600">
-                   <AlertCircle size={22} />
-                </div>
-                קריאות דחופות
+              🚨  קריאות דחופות 
                 <span className="bg-red-500 text-white text-[12px] px-2 py-0.5 rounded-full font-bold">
-                  {dashboardData.urgentAlerts.length}
+                  {Array.isArray(dashboardData?.urgentAlerts)
+                    ? dashboardData.urgentAlerts.length
+                    : 0}{" "}
                 </span>
               </h2>
             </div>
@@ -153,7 +188,7 @@ export default function SupervisorDashboardPage() {
                 >
                   <div className="flex items-center gap-5">
                     <div className="w-14 h-14 bg-slate-50 rounded-2xl flex items-center justify-center text-slate-400 group-hover:bg-indigo-50 group-hover:text-indigo-600 transition-colors">
-                       <MapPin size={28} />
+                      <AlertCircle size={28} />
                     </div>
                     <div>
                       <h3 className="font-black text-lg text-slate-800 leading-tight mb-1">
@@ -162,7 +197,15 @@ export default function SupervisorDashboardPage() {
                       <div className="flex items-center gap-2 text-slate-500">
                         <User size={14} />
                         <span className="text-sm font-medium italic">
-                          גננת: {alert.mainTeacher.firstName} {alert.mainTeacher.lastName}
+                          גננת: {alert.mainTeacher.firstName}{" "}
+                          {alert.mainTeacher.lastName}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2 text-slate-500">
+                        <Calendar size={14} />
+                        <span className="text-sm font-medium italic">
+                          בתאריך:{" "}
+                          {new Date(alert.date).toLocaleDateString("he-IL")}
                         </span>
                       </div>
                     </div>
@@ -190,53 +233,112 @@ export default function SupervisorDashboardPage() {
 
               {dashboardData.urgentAlerts.length === 0 && (
                 <div className="bg-white rounded-3xl p-12 text-center border border-dashed border-slate-300">
-                   <p className="text-slate-400 font-medium">אין קריאות דחופות כרגע. עבודה טובה! ✨</p>
+                  <p className="text-slate-400 font-medium">
+                    אין קריאות דחופות כרגע. עבודה טובה! ✨
+                  </p>
                 </div>
               )}
             </div>
+            <section className="space-y-6">
+              <h2 className="text-xl font-black text-slate-800 flex items-center gap-3 px-2">
+
+               🗓️ בקשות פתוחות לחודש הקרוב
+                <span className="bg-amber-500 text-white text-[12px] px-2 py-0.5 rounded-full font-bold">
+                  {dashboardData.openMonthlyRequests.length}
+                </span>
+              </h2>
+
+              <div className="grid gap-3">
+                {dashboardData.openMonthlyRequests.map((req: any) => (
+                  <div
+                    key={req.id}
+                    className="bg-white rounded-2xl p-4 border border-slate-200 shadow-sm flex items-center justify-between hover:border-amber-300 transition-all"
+                  >
+                    <div className="flex items-center gap-4">
+                      <div className="bg-slate-50 p-3 rounded-xl text-slate-400">
+                        <Clock size={20} />
+                      </div>
+                      <div>
+                        <h3 className="font-bold text-slate-800">
+                          {req.institution.name}
+                        </h3>
+                        <p className="text-xs text-slate-500">
+                        <span className="text-sm font-medium italic">
+                          בתאריך: {new Date(req.date).toLocaleDateString("he-IL")}
+                        </span>
+                      
+                        </p>
+                      </div>
+                    </div>
+
+                    <button
+                      onClick={() => {
+                        setSelectedPlacement(req);
+                        setIsModalOpen(true);
+                      }}
+                      className="px-4 py-2 text-xs font-bold text-amber-700 bg-amber-50 rounded-lg hover:bg-amber-100 transition-colors"
+                    >
+                      שבצי מחליפה
+                    </button>
+                  </div>
+                ))}
+
+                {dashboardData.openMonthlyRequests.length === 0 && (
+                  <p className="text-center text-slate-400 py-4 italic text-sm">
+                    אין בקשות פתוחות נוספות לחודש זה
+                  </p>
+                )}
+              </div>
+            </section>
           </div>
 
           {/* Side Column: Recent Activity */}
           <div className="space-y-6">
             <h2 className="text-xl font-black text-slate-800 flex items-center gap-3 px-2">
-               <div className="p-2 bg-slate-100 rounded-lg text-slate-600">
-                  <Clock size={22} />
-               </div>
-               עדכונים אחרונים
+              <div className="p-2 bg-slate-100 rounded-lg text-slate-600">
+                <Clock size={22} />
+              </div>
+              עדכונים אחרונים
             </h2>
-            
+
             <div className="bg-white rounded-[2rem] border border-slate-200 shadow-sm overflow-hidden flex flex-col">
               <div className="p-6 space-y-5 flex-1">
-                {dashboardData.recentActivity.slice(0, 5).map((act: any, idx: number) => (
-                  <div
-                    key={act.id}
-                    className={`relative pr-6 py-1 group ${
-                      idx !== 4 ? "before:content-[''] before:absolute before:right-0 before:top-8 before:w-0.5 before:h-8 before:bg-slate-100" : ""
-                    }`}
-                  >
-                    <div className="absolute right-[-4px] top-2 w-2.5 h-2.5 rounded-full bg-slate-300 group-hover:bg-indigo-500 transition-colors border-2 border-white shadow-sm ring-4 ring-white"></div>
-                    <p className="text-[13.5px] font-bold text-slate-700 leading-relaxed mb-1">
-                      {act.status === "CANCELLED"
-                        ? `הגן ${act.institution.name} נסגר `
-                        : act.substitute
-                        ? `שובצה ${act.substitute.firstName} לגן ${act.institution.name}`
-                        : `דווחה היעדרות בגן ${act.institution.name}`}
-                    </p>
-                  </div>
-                ))}
+                {dashboardData.recentActivity
+                  .slice(0, 5)
+                  .map((act: any, idx: number) => (
+                    <div
+                      key={act.id}
+                      className={`relative pr-6 py-1 group ${
+                        idx !== 4
+                          ? "before:content-[''] before:absolute before:right-0 before:top-8 before:w-0.5 before:h-8 before:bg-slate-100"
+                          : ""
+                      }`}
+                    >
+                      <div className="absolute right-[-4px] top-2 w-2.5 h-2.5 rounded-full bg-slate-300 group-hover:bg-indigo-500 transition-colors border-2 border-white shadow-sm ring-4 ring-white"></div>
+                      <p className="text-[13.5px] font-bold text-slate-700 leading-relaxed mb-1">
+                        {act.status === "CANCELLED"
+                          ? `הגן ${act.institution.name} נסגר `
+                          : act.substitute
+                          ? `שובצה ${act.substitute.firstName} לגן ${act.institution.name}`
+                          : `דווחה היעדרות בגן ${act.institution.name}`}
+                      </p>
+                    </div>
+                  ))}
 
                 {dashboardData.recentActivity.length === 0 && (
                   <div className="text-center py-10">
-                    <p className="text-sm text-slate-400 font-medium italic">אין עדכונים חדשים</p>
+                    <p className="text-sm text-slate-400 font-medium italic">
+                      אין עדכונים חדשים
+                    </p>
                   </div>
                 )}
               </div>
 
               <button
-                onClick={() => setIsActivityModalOpen(true)}
+                onClick={loadFullHistory} // קריאה לפונקציה החדשה
                 className="w-full py-4 bg-slate-50 border-t border-slate-100 text-sm font-black text-indigo-600 hover:bg-indigo-50 transition-colors flex items-center justify-center gap-2"
               >
-                צפה בהיסטוריה המלאה
+                {loadingHistory ? "טוען..." : "צפה בהיסטוריה המלאה"}
                 <ChevronLeft size={16} />
               </button>
             </div>
@@ -257,7 +359,7 @@ export default function SupervisorDashboardPage() {
       <RecentActivityModal
         isOpen={isActivityModalOpen}
         onClose={() => setIsActivityModalOpen(false)}
-        activities={dashboardData.recentActivity}
+        activities={fullHistory}
       />
     </div>
   );
