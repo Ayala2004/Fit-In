@@ -372,17 +372,41 @@ export async function GET(req: Request) {
 
     const { searchParams } = new URL(req.url);
     const dateStr = searchParams.get('date');
-    if (!dateStr) return NextResponse.json({ message: "חובה לציין תאריך" }, { status: 400 });
 
+    // --- מקרה א': הקמת גן חדש (אין תאריך בבקשה) ---
+    // נשלוף רק גננות אם שאין להן עדיין גן באחריותן
+    if (!dateStr) {
+      const availableForNewInstitution = await prisma.user.findMany({
+        where: {
+          supervisorId: session.id,
+          roles: { has: "MANAGER" },
+          // התנאי הקריטי: מחפשים משתמשת שאין לה (none) מוסדות בניהול ראשי
+          mainManagedInstitutions: {
+            none: {}
+          }
+        },
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          email: true,
+          instructorId: true // נחוץ כדי להצמיד אוטומטית את המדריכה שלה לגן החדש
+        }
+      });
+      
+      return NextResponse.json(availableForNewInstitution);
+    }
+
+    // --- מקרה ב': דיווח יומי בלוח השנה (יש תאריך בבקשה) ---
     const selectedDate = new Date(dateStr);
-    const dayOfWeek = format(selectedDate, 'EEEE').toUpperCase(); // למשל "MONDAY"
+    const dayOfWeek = format(selectedDate, 'EEEE').toUpperCase();
 
-    // 1. נמצא את כל השיבוצים הקיימים באותו יום
+    // 1. נמצא את כל השיבוצים הקיימים באותו יום (כולל סגירות גן)
     const existingPlacements = await prisma.placement.findMany({
       where: {
         date: {
-          gte: new Date(selectedDate.setHours(0,0,0,0)),
-          lte: new Date(selectedDate.setHours(23,59,59,999))
+          gte: new Date(new Date(selectedDate).setHours(0,0,0,0)),
+          lte: new Date(new Date(selectedDate).setHours(23,59,59,999))
         },
       },
       select: { mainTeacherId: true, substituteId: true }
@@ -391,12 +415,12 @@ export async function GET(req: Request) {
     const busyMainTeachers = existingPlacements.map(p => p.mainTeacherId);
     const busySubstitutes = existingPlacements.map(p => p.substituteId).filter(Boolean);
 
-    // 2. שליפת גננות אם (Managers) שיש להן גן ואין להן דיווח היום
+    // 2. שליפת גננות אם שיש להן גן ואין להן דיווח היום
     const availableManagers = await prisma.user.findMany({
       where: {
         supervisorId: session.id,
         roles: { has: "MANAGER" },
-        mainManagedInstitutions: { some: {} },
+        mainManagedInstitutions: { some: {} }, // חייב להיות להן גן כדי לדווח על היעדרות
         id: { notIn: busyMainTeachers }
       },
       select: {
@@ -408,8 +432,8 @@ export async function GET(req: Request) {
     // 3. שליפת מחליפות (Substitutes) שהיום הוא יום עבודה שלהן ואינן משובצות
     const availableSubstitutes = await prisma.user.findMany({
       where: {
-        roles: { has: "SUBSTITUTE" },
-        workDays: { has: dayOfWeek as any }, // מוודא שזה יום עבודה שלהן
+        roles: { hasSome: ["SUBSTITUTE", "ROTATION"] },
+        workDays: { has: dayOfWeek as any },
         id: { notIn: busySubstitutes as string[] }
       },
       select: { id: true, firstName: true, lastName: true }
@@ -419,7 +443,9 @@ export async function GET(req: Request) {
       managers: availableManagers,
       substitutes: availableSubstitutes
     });
+
   } catch (error) {
+    console.error("Managers API Error:", error);
     return NextResponse.json({ message: "שגיאה בסינון נתונים" }, { status: 500 });
   }
 }
@@ -652,6 +678,61 @@ export async function POST(req: Request) {
   }
 }
 ==============================
+FILE: src/app\api\supervisor\stats\route.ts
+==============================
+import { NextResponse } from 'next/server';
+import { prisma } from '@/lib/prisma';
+import { getSession } from '@/lib/auth';
+import { startOfDay, endOfDay } from 'date-fns';
+
+export async function GET(req: Request) {
+  const session = await getSession();
+  if (!session) return NextResponse.json({ message: "לא מורשה" }, { status: 401 });
+
+  const { searchParams } = new URL(req.url);
+  const start = searchParams.get('start');
+  const end = searchParams.get('end');
+  const userId = searchParams.get('userId');
+
+  try {
+    const whereClause: any = {
+      institution: { supervisorId: session.id },
+      date: {
+        gte: start ? startOfDay(new Date(start)) : undefined,
+        lte: end ? endOfDay(new Date(end)) : undefined,
+      }
+    };
+
+    // אם חיפשנו משתמשת ספציפית
+    if (userId) {
+      whereClause.OR = [
+        { mainTeacherId: userId },
+        { substituteId: userId }
+      ];
+    }
+
+    const placements = await prisma.placement.findMany({
+      where: whereClause,
+      select: { status: true, mainTeacherId: true, substituteId: true }
+    });
+
+    const stats = {
+      total: placements.length,
+      assigned: placements.filter(p => p.status === 'ASSIGNED').length,
+      cancelled: placements.filter(p => p.status === 'CANCELLED').length,
+      open: placements.filter(p => p.status === 'OPEN').length,
+      userSpecific: userId ? {
+        asMain: placements.filter(p => p.mainTeacherId === userId).length,
+        asSub: placements.filter(p => p.substituteId === userId).length,
+      } : null
+    };
+
+    return NextResponse.json(stats);
+  } catch (error) {
+    return NextResponse.json({ message: "שגיאה" }, { status: 500 });
+  }
+}
+==============================
 FILE: src/app\api\supervisor\substitutes\route.ts
 ==============================
 import { NextResponse } from 'next/server';
@@ -711,6 +792,46 @@ export async function GET(request: Request) {
   } catch (error) {
     console.error("Error fetching substitutes:", error);
     return NextResponse.json({ error: "שגיאת שרת" }, { status: 500 });
+  }
+}
+==============================
+FILE: src/app\api\supervisor\users-stats\route.ts
+==============================
+    import { NextResponse } from 'next/server';
+import { prisma } from '@/lib/prisma';
+import { getSession } from '@/lib/auth';
+
+export async function GET() {
+  const session = await getSession();
+  if (!session || !session.roles.includes("SUPERVISOR")) {
+    return NextResponse.json({ message: "לא מורשה" }, { status: 401 });
+  }
+
+  try {
+    // שליפת כל המשתמשים שקשורים למפקחת הזו
+    // כולל ספירה של שיבוצים כגננת אם (היעדרויות) וכמחליפה
+    const users = await prisma.user.findMany({
+      where: {
+        OR: [
+          { supervisorId: session.id },
+          { roles: { hasSome: ["SUBSTITUTE", "ROTATION"] } } // מחליפות הן בפורל הכללי
+        ]
+      },
+      include: {
+        _count: {
+          select: {
+            placementsAsMain: true, // כמה פעמים נעדרה
+            placementsAsSub: true,  // כמה פעמים החליפה
+          }
+        },
+        mainManagedInstitutions: { select: { name: true } }
+      },
+      orderBy: { lastName: 'asc' }
+    });
+
+    return NextResponse.json(users);
+  } catch (error) {
+    return NextResponse.json({ message: "שגיאה בטעינת נתונים" }, { status: 500 });
   }
 }
 ==============================
@@ -920,7 +1041,33 @@ body {
   @apply bg-brand-surface text-slate-900;
   font-family: system-ui, -apple-system, sans-serif;
 }
+/* בתוך src/app/globals.css */
 
+@layer utilities {
+  /* הסתרת גלגלת בדפדפנים שונים */
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  /* גלגלת עדינה לתיבות בלוח השנה */
+  .custom-calendar-scroll::-webkit-scrollbar {
+    width: 4px;
+  }
+  .custom-calendar-scroll::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .custom-calendar-scroll::-webkit-scrollbar-thumb {
+    background: #e2e8f0; /* slate-200 */
+    border-radius: 10px;
+  }
+  .custom-calendar-scroll::-webkit-scrollbar-thumb:hover {
+    background: #6366f1; /* indigo-500 */
+  }
+}
 ==============================
 FILE: src/app\layout.tsx
 ==============================
@@ -1287,7 +1434,7 @@ export default function ReportAbsencePage() {
 FILE: src/app\supervisor\calendar\page.tsx
 ==============================
 "use client";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import {
   format,
   startOfMonth,
@@ -1306,7 +1453,8 @@ import {
   Loader2,
   AlertCircle,
   User,
-  Plus, // ייבוא האייקון החדש
+  Plus,
+  Search,
 } from "lucide-react";
 import AddPlacementModal from "@/components/AddPlacementModal";
 
@@ -1315,17 +1463,46 @@ export default function SupervisorCalendar() {
   const [placements, setPlacements] = useState([]);
   const [loading, setLoading] = useState(true);
   const [user, setUser] = useState<any>(null);
-  const [allSubstitutes, setAllSubstitutes] = useState([]);
+
+  // States למודאל עריכה ומחליפות
   const [editingPlacement, setEditingPlacement] = useState<any>(null);
+  const [availableSubs, setAvailableSubs] = useState([]);
+  const [loadingSubs, setLoadingSubs] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+
+  // States למודאל הוספה
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
 
-  const filteredSubstitutes = allSubstitutes.filter((sub: any) => {
-    const fullName = `${sub.firstName} ${sub.lastName}`.toLowerCase();
-    return fullName.includes(searchQuery.toLowerCase());
-  });
+  // פונקציה להבאת מחליפות פנויות לתאריך ספציפי
+  const fetchAvailableSubstitutes = async (date: Date) => {
+    setLoadingSubs(true);
+    try {
+      const dateParam = encodeURIComponent(date.toISOString());
+      const res = await fetch(`/api/supervisor/substitutes?date=${dateParam}`);
+      if (res.ok) {
+        const data = await res.json();
+        setAvailableSubs(data);
+      }
+    } catch (err) {
+      console.error("Error fetching subs:", err);
+    } finally {
+      setLoadingSubs(false);
+    }
+  };
 
+  // סינון רשימת המחליפות לפי חיפוש
+  const filteredAvailableSubs = useMemo(() => {
+    return availableSubs.filter((sub: any) => {
+      const fullName = `${sub.firstName} ${sub.lastName}`.toLowerCase();
+      return (
+        fullName.includes(searchQuery.toLowerCase()) ||
+        sub.phoneNumber?.includes(searchQuery)
+      );
+    });
+  }, [availableSubs, searchQuery]);
+
+  // טעינת פרטי המשתמש המחובר בטעינה ראשונית
   useEffect(() => {
     const initPage = async () => {
       try {
@@ -1334,12 +1511,6 @@ export default function SupervisorCalendar() {
           const userData = await userRes.json();
           setUser(userData);
         }
-
-        const subsRes = await fetch("/api/test?role=SUBSTITUTE");
-        if (subsRes.ok) {
-          const subsData = await subsRes.json();
-          setAllSubstitutes(subsData);
-        }
       } catch (err) {
         console.error("Initialization error:", err);
       }
@@ -1347,6 +1518,7 @@ export default function SupervisorCalendar() {
     initPage();
   }, []);
 
+  // טעינת נתוני לוח השנה
   const fetchData = useCallback(async () => {
     if (!user?.id) return;
 
@@ -1379,11 +1551,20 @@ export default function SupervisorCalendar() {
     fetchData();
   }, [fetchData]);
 
+  // בכל פעם שנפתח מודאל עריכה - נטען מחליפות רלוונטיות לתאריך הדיווח
+  useEffect(() => {
+    if (editingPlacement) {
+      fetchAvailableSubstitutes(new Date(editingPlacement.date));
+      setSearchQuery("");
+    }
+  }, [editingPlacement]);
+
   const handleDelete = async (id: string) => {
     if (!confirm("למחוק את הדיווח לצמיתות?")) return;
     try {
       const res = await fetch(`/api/calendar`, {
         method: "DELETE",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id }),
       });
       if (res.ok) setPlacements((prev) => prev.filter((p: any) => p.id !== id));
@@ -1434,7 +1615,7 @@ export default function SupervisorCalendar() {
   if (!user && loading) {
     return (
       <div className="flex h-screen items-center justify-center bg-slate-50">
-        <Loader2 className="animate-spin text-blue-600" size={48} />
+        <Loader2 className="animate-spin text-indigo-600" size={48} />
       </div>
     );
   }
@@ -1442,16 +1623,19 @@ export default function SupervisorCalendar() {
   return (
     <div className="p-8 bg-slate-50 min-h-screen font-sans" dir="rtl">
       <div className="max-w-7xl mx-auto">
+        {/* Header Section */}
         <div className="flex justify-between items-center mb-8 bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
           <div className="flex items-center gap-4">
-            <div className="bg-blue-600 p-3 rounded-xl text-white shadow-lg shadow-blue-200">
+            <div className="bg-indigo-600 p-3 rounded-xl text-white shadow-lg shadow-indigo-200">
               <CalendarIcon size={24} />
             </div>
             <div>
               <h1 className="text-2xl font-bold text-slate-800">
                 יומן שיבוצים חודשי
               </h1>
-              <p className="text-slate-400 text-sm">המפקחת: {user?.name}</p>
+              <p className="text-slate-400 text-sm font-medium italic">
+                המפקחת: {user?.name}
+              </p>
             </div>
           </div>
 
@@ -1462,7 +1646,7 @@ export default function SupervisorCalendar() {
             >
               <ChevronRight />
             </button>
-            <span className="text-xl font-bold text-slate-700 min-w-35 text-center">
+            <span className="text-xl font-bold text-slate-700 min-w-[140px] text-center">
               {format(currentDate, "MMMM yyyy", { locale: he })}
             </span>
             <button
@@ -1474,7 +1658,8 @@ export default function SupervisorCalendar() {
           </div>
         </div>
 
-        <div className="bg-white rounded-4xl shadow-xl border border-slate-200 overflow-hidden">
+        {/* Calendar Grid */}
+        <div className="bg-white rounded-[2.5rem] shadow-xl border border-slate-200 overflow-hidden">
           <div className="grid grid-cols-7 bg-slate-50/50 border-b border-slate-200">
             {["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת"].map(
               (d) => (
@@ -1490,19 +1675,17 @@ export default function SupervisorCalendar() {
 
           <div className="grid grid-cols-7">
             {days.map((day, index) => {
-              {
-              }
               if (!day) {
                 return (
                   <div
                     key={`empty-${index}`}
-                    className="min-h-37 border-l border-b border-slate-50"
+                    className="min-h-[150px] border-l border-b border-slate-50"
                   />
                 );
               }
 
               const isSaturday = day.getDay() === 6;
-
+              const isToday = isSameDay(day, new Date());
               const dayPlacements = Array.isArray(placements)
                 ? placements.filter((p: any) =>
                     isSameDay(new Date(p.date), day)
@@ -1512,20 +1695,32 @@ export default function SupervisorCalendar() {
               return (
                 <div
                   key={day.toString()}
-                  className={`min-h-37 border-l border-b border-slate-100 p-3 flex flex-col transition-all ${
-                    isSaturday ? "bg-slate-50/50" : "hover:bg-blue-50/10"
+                  className={`min-h-[150px] border-l border-b border-slate-100 p-3 flex flex-col transition-all ${
+                    isSaturday ? "bg-slate-50/50" : "hover:bg-indigo-50/5"
                   }`}
                 >
-                  <div className="flex justify-between items-start mb-2">
+                  <div className="flex justify-between items-center mb-3">
                     <span
-                      className={`text-sm font-black ${
-                        isSameDay(day, new Date())
-                          ? "bg-blue-600 text-white w-6 h-6 flex items-center justify-center rounded-full"
-                          : "text-slate-300"
+                      className={`text-sm font-black transition-colors ${
+                        isToday
+                          ? "bg-indigo-600 text-white w-7 h-7 flex items-center justify-center rounded-full shadow-md shadow-indigo-100"
+                          : "text-slate-400"
                       }`}
                     >
                       {format(day, "d")}
                     </span>
+                    {!isSaturday && (
+                      <button
+                        onClick={() => {
+                          setSelectedDate(day);
+                          setIsAddModalOpen(true);
+                        }}
+                        className="p-1 text-slate-400 hover:bg-indigo-600 hover:text-white rounded-md transition-all group/btn"
+                        title="הוספת דיווח"
+                      >
+                        <Plus size={14} strokeWidth={3} />
+                      </button>
+                    )}
                   </div>
 
                   {isSaturday ? (
@@ -1533,68 +1728,54 @@ export default function SupervisorCalendar() {
                       יום מנוחה
                     </div>
                   ) : (
-                    <div className="flex-1 flex flex-col">
-                      <div className="space-y-2 mb-2">
-                        {dayPlacements.map((p: any) => (
-                          <div
-                            key={p.id}
-                            className="group relative p-2 rounded-xl border border-slate-100 bg-white shadow-sm hover:border-blue-300 hover:shadow-md transition-all cursor-pointer"
-                            onClick={() => setEditingPlacement(p)}
-                          >
-                            <div className="text-[16px] font-bold text-slate-700 leading-tight">
-                              {p.mainTeacher?.firstName}{" "}
-                              {p.mainTeacher?.lastName}
-                            </div>
-                            <div
-                              className={`text-[15px] mt-1 flex items-center gap-1 ${
-                                p.status === "OPEN"
-                                  ? "text-yellow-500 font-bold"
-                                  : p.status === "CANCELLED"
-                                  ? "text-red-500 font-bold"
-                                  : "text-emerald-500 font-medium"
-                              }`}
-                            >
-                              <div
-                                className={`w-1.5 h-1.5 rounded-full ${
-                                  p.status === "OPEN"
-                                    ? "bg-yellow-500 "
-                                    : p.status === "CANCELLED"
-                                    ? "bg-red-500 "
-                                    : "bg-emerald-500 "
-                                }`}
-                              />
-                              {/* לוגיקה משופרת להצגת טקסט הסטטוס/שם */}
-                              {p.status === "OPEN"
-                                ? "ממתין למחליפה"
-                                : p.status === "CANCELLED"
-                                ? "הגן נסגר"
-                                : p.substitute
-                                ? `${p.substitute.firstName} ${p.substitute.lastName}`
-                                : "שגיאה בנתוני מחליפה"}
-                            </div>
-
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleDelete(p.id);
-                              }}
-                              className="absolute -top-1 -left-1 opacity-0 group-hover:opacity-100 bg-red-500 text-white p-1 rounded-full shadow-lg transition-opacity hover:bg-red-600"
-                            >
-                              <X size={8} />
-                            </button>
-                          </div>
-                        ))}
-                        <button
-                          onClick={() => {
-                            setSelectedDate(day);
-                            setIsAddModalOpen(true);
-                          }}
-                          className="mt-auto flex items-center justify-center gap-1 text-[11px] font-bold text-blue-600 hover:bg-blue-50 p-1 rounded-lg transition-colors border border-dashed border-blue-200"
+                    <div className="flex-1 space-y-2 overflow-y-auto overflow-x-hidden custom-calendar-scroll">
+                      {" "}
+                      {dayPlacements.map((p: any) => (
+                        <div
+                          key={p.id}
+                          className="group relative p-2 rounded-xl border border-slate-100 bg-white shadow-sm hover:border-indigo-300 hover:shadow-md transition-all cursor-pointer"
+                          onClick={() => setEditingPlacement(p)}
                         >
-                          <Plus size={12} />
-                          הוספת דיווח
-                        </button>
-                      </div>
+                          <div className="text-[14px] font-bold text-slate-700 leading-tight">
+                            {p.mainTeacher?.firstName} {p.mainTeacher?.lastName}
+                          </div>
+                          <div
+                            className={`text-[12px] mt-1 flex items-center gap-1.5 ${
+                              p.status === "OPEN"
+                                ? "text-amber-600 font-bold"
+                                : p.status === "CANCELLED"
+                                ? "text-red-500 font-bold"
+                                : "text-emerald-600 font-bold"
+                            }`}
+                          >
+                            <div
+                              className={`w-1.5 h-1.5 rounded-full ${
+                                p.status === "OPEN"
+                                  ? "bg-amber-500 animate-pulse"
+                                  : p.status === "CANCELLED"
+                                  ? "bg-red-500"
+                                  : "bg-emerald-500"
+                              }`}
+                            />
+                            {p.status === "OPEN"
+                              ? "ממתין"
+                              : p.status === "CANCELLED"
+                              ? "סגור"
+                              : p.substitute
+                              ? `${p.substitute.firstName} ${p.substitute.lastName[0]}.`
+                              : "משובץ"}
+                          </div>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDelete(p.id);
+                            }}
+                            className="absolute -top-1.5 -left-1.5 opacity-0 group-hover:opacity-100 bg-white text-red-500 p-1 rounded-full shadow-md border border-red-50 hover:bg-red-500 hover:text-white transition-all"
+                          >
+                            <X size={10} />
+                          </button>
+                        </div>
+                      ))}
                     </div>
                   )}
                 </div>
@@ -1604,115 +1785,124 @@ export default function SupervisorCalendar() {
         </div>
       </div>
 
-      {/* מודאל עריכה */}
+      {/* --- מודאל עריכה (התיקון שעשינו) --- */}
       {editingPlacement && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg shadow-xl w-full max-w-md overflow-hidden">
-            <div className="p-5 border-b border-gray-200 flex justify-between items-center">
-              <div>
-                <h3 className="text-lg font-semibold text-gray-900">
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-[100] p-4 animate-in fade-in duration-300">
+          <div className="bg-white w-full max-w-lg rounded-[2.5rem] shadow-2xl overflow-hidden flex flex-col max-h-[85vh] border border-slate-100">
+            <div className="p-8 bg-slate-900 text-white flex justify-between items-center relative overflow-hidden">
+              <div className="absolute top-0 left-0 w-full h-full opacity-10 pointer-events-none">
+                <div className="absolute -top-10 -right-10 w-32 h-32 bg-indigo-500 rounded-full blur-3xl"></div>
+              </div>
+
+              <div className="relative z-10">
+                <h3 className="text-2xl font-black tracking-tight">
                   עריכת שיבוץ
                 </h3>
-                <p className="text-sm text-gray-500 mt-0.5">
-                  {format(new Date(editingPlacement.date), "dd/MM/yyyy")}
+                <p className="text-slate-400 text-sm font-medium mt-1">
+                  {format(new Date(editingPlacement.date), "EEEE, dd/MM/yyyy", {
+                    locale: he,
+                  })}
+                  <span className="mx-2">|</span> גן{" "}
+                  {editingPlacement.institution?.name}
                 </p>
               </div>
+
               <button
                 onClick={() => setEditingPlacement(null)}
-                className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                className="relative z-10 p-2 hover:bg-white/10 rounded-full transition-colors"
               >
-                <X size={20} className="text-gray-500" />
+                <X size={24} />
               </button>
             </div>
-            <div className="p-6">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-3">
-                  בחירת מחליפה או פעולה
-                </label>
 
-                <div className="grid grid-cols-2 gap-3 mb-4">
-                  <button
-                    onClick={() => handleQuickUpdate("CANCEL")}
-                    className="p-4 rounded-lg border-2 border-gray-200 hover:border-red-500 hover:bg-red-50 transition-all text-right group"
+            <div className="p-6 bg-slate-50 border-b border-slate-100 grid grid-cols-2 gap-4">
+              <button
+                onClick={() => handleQuickUpdate("CANCEL")}
+                className="flex flex-col items-center justify-center gap-2 p-4 bg-white rounded-2xl border-2 border-transparent hover:border-red-500 hover:text-red-600 transition-all shadow-sm group"
+              >
+                <div className="p-2 bg-red-50 rounded-xl group-hover:bg-red-500 group-hover:text-white transition-colors">
+                  <X size={20} />
+                </div>
+                <span className="text-xs font-black uppercase">סגירת הגן</span>
+              </button>
+              <button
+                onClick={() => handleQuickUpdate("OPEN")}
+                className="flex flex-col items-center justify-center gap-2 p-4 bg-white rounded-2xl border-2 border-transparent hover:border-amber-500 hover:text-amber-600 transition-all shadow-sm group"
+              >
+                <div className="p-2 bg-amber-50 rounded-xl group-hover:bg-amber-500 group-hover:text-white transition-colors">
+                  <AlertCircle size={20} />
+                </div>
+                <span className="text-xs font-black uppercase">
+                  החזרה להמתנה
+                </span>
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <label className="block text-sm font-black text-slate-700 flex items-center gap-2">
+                <Search size={16} className="text-indigo-500" /> שיבוץ גננת
+                מחליפה:
+              </label>
+              <input
+                type="text"
+                placeholder="חפשי לפי שם או טלפון..."
+                className="w-full px-5 py-3.5 bg-slate-50 border-none rounded-2xl focus:ring-2 focus:ring-indigo-500 font-bold text-slate-700 transition-all"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-6 pb-8 space-y-2">
+              {loadingSubs ? (
+                <div className="flex flex-col items-center justify-center p-12 space-y-3">
+                  <Loader2 className="animate-spin text-indigo-500 w-8 h-8" />
+                  <p className="text-slate-400 text-sm font-bold">
+                    בודק זמינות מחליפות...
+                  </p>
+                </div>
+              ) : filteredAvailableSubs.length > 0 ? (
+                filteredAvailableSubs.map((sub: any) => (
+                  <div
+                    key={sub.id}
+                    className="flex items-center justify-between p-4 bg-white rounded-2xl border border-slate-100 hover:border-indigo-200 hover:bg-indigo-50/30 transition-all group shadow-sm"
                   >
-                    <div className="flex items-center gap-3">
-                      <div className=" p-2 rounded-full bg-red-100 group-hover:bg-red-200 flex items-center justify-center transition-colors">
-                        <X size={20} className="text-red-600 " />
+                    <div className="flex items-center gap-4">
+                      <div className="w-10 h-10 bg-indigo-600 text-white rounded-full flex items-center justify-center font-black shadow-md">
+                        {sub.firstName[0]}
                       </div>
                       <div>
-                        <div className="text-sm font-medium text-gray-900">
-                          סגירת הגן
-                        </div>
-                        <div className="text-xs text-gray-500">ביטול יום</div>
+                        <p className="font-black text-slate-800">
+                          {sub.firstName} {sub.lastName}
+                        </p>
+                        <p className="text-xs text-slate-400 font-medium">
+                          {sub.phoneNumber}
+                        </p>
                       </div>
                     </div>
-                  </button>
-
-                  <button
-                    onClick={() => handleQuickUpdate("OPEN")}
-                    className="p-4 rounded-lg border-2 border-gray-200 hover:border-orange-500 hover:bg-orange-50 transition-all text-right group"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className="p-2 rounded-full bg-orange-100 group-hover:bg-orange-200 flex items-center justify-center transition-colors">
-                        <AlertCircle size={20} className="text-orange-600 " />
-                      </div>
-                      <div>
-                        <div className="text-sm font-medium text-gray-900">
-                          מחיקת שיבוץ
-                        </div>
-                        <div className="text-xs text-gray-500">
-                          שחרור לשיבוץ
-                        </div>
-                      </div>
-                    </div>
-                  </button>
-                </div>
-
-                <div className="space-y-3">
-                  <div className="relative">
-                    <input
-                      type="text"
-                      placeholder="חיפוש גננת מחליפה..."
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      className="w-full p-3 pr-10 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent text-sm"
-                    />
-                    <User
-                      size={18}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400"
-                    />
+                    <button
+                      onClick={() => handleQuickUpdate(sub.id)}
+                      className="px-4 py-2 bg-indigo-50 text-indigo-600 rounded-xl font-black text-xs hover:bg-indigo-600 hover:text-white transition-all"
+                    >
+                      שבצי
+                    </button>
                   </div>
-
-                  <div className="max-h-64 overflow-y-auto border border-gray-200 rounded-lg">
-                    {filteredSubstitutes.length > 0 ? (
-                      filteredSubstitutes.map((sub: any) => (
-                        <button
-                          key={sub.id}
-                          onClick={() => handleQuickUpdate(sub.id)}
-                          className="w-full p-3 hover:bg-gray-50 transition-colors border-b border-gray-100 last:border-b-0 text-right flex items-center gap-3 group"
-                        >
-                          <div className="w-10 h-10 rounded-full bg-gray-100 group-hover:bg-gray-200 flex items-center justify-center transition-colors shrink-0">
-                            <User size={18} className="text-gray-600" />
-                          </div>
-                          <div className="flex-1">
-                            <div className="text-sm font-medium text-gray-900">
-                              {sub.firstName} {sub.lastName}
-                            </div>
-                          </div>
-                        </button>
-                      ))
-                    ) : (
-                      <div className="p-6 text-center text-gray-500 text-sm">
-                        לא נמצאו גננות מחליפות
-                      </div>
-                    )}
-                  </div>
+                ))
+              ) : (
+                <div className="text-center py-12 px-6 bg-slate-50 rounded-[2rem] border-2 border-dashed border-slate-200">
+                  <User size={20} className="mx-auto text-slate-400 mb-4" />
+                  <p className="text-slate-900 font-black text-lg">
+                    אין מחליפות פנויות
+                  </p>
+                  <p className="text-slate-500 text-sm">
+                    נסו לבדוק תאריך אחר או לשנות סטטוס
+                  </p>
                 </div>
-              </div>
+              )}
             </div>
           </div>
         </div>
       )}
+
       {isAddModalOpen && selectedDate && (
         <AddPlacementModal
           isOpen={isAddModalOpen}
@@ -1926,10 +2116,7 @@ export default function SupervisorDashboardPage() {
           <div className="lg:col-span-2 space-y-6">
             <div className="flex items-center justify-between px-2">
               <h2 className="text-xl font-black text-slate-800 flex items-center gap-3">
-                <div className="p-2 bg-red-100 rounded-lg text-red-600">
-                  <AlertCircle size={22} />
-                </div>
-                קריאות דחופות
+              🚨  קריאות דחופות 
                 <span className="bg-red-500 text-white text-[12px] px-2 py-0.5 rounded-full font-bold">
                   {Array.isArray(dashboardData?.urgentAlerts)
                     ? dashboardData.urgentAlerts.length
@@ -1946,7 +2133,7 @@ export default function SupervisorDashboardPage() {
                 >
                   <div className="flex items-center gap-5">
                     <div className="w-14 h-14 bg-slate-50 rounded-2xl flex items-center justify-center text-slate-400 group-hover:bg-indigo-50 group-hover:text-indigo-600 transition-colors">
-                      <MapPin size={28} />
+                      <AlertCircle size={28} />
                     </div>
                     <div>
                       <h3 className="font-black text-lg text-slate-800 leading-tight mb-1">
@@ -1957,6 +2144,13 @@ export default function SupervisorDashboardPage() {
                         <span className="text-sm font-medium italic">
                           גננת: {alert.mainTeacher.firstName}{" "}
                           {alert.mainTeacher.lastName}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2 text-slate-500">
+                        <Calendar size={14} />
+                        <span className="text-sm font-medium italic">
+                          בתאריך:{" "}
+                          {new Date(alert.date).toLocaleDateString("he-IL")}
                         </span>
                       </div>
                     </div>
@@ -1992,10 +2186,8 @@ export default function SupervisorDashboardPage() {
             </div>
             <section className="space-y-6">
               <h2 className="text-xl font-black text-slate-800 flex items-center gap-3 px-2">
-                <div className="p-2 bg-amber-100 rounded-lg text-amber-600">
-                  <Calendar size={22} />
-                </div>
-                בקשות פתוחות לחודש זה
+
+               🗓️ בקשות פתוחות לחודש הקרוב
                 <span className="bg-amber-500 text-white text-[12px] px-2 py-0.5 rounded-full font-bold">
                   {dashboardData.openMonthlyRequests.length}
                 </span>
@@ -2016,10 +2208,10 @@ export default function SupervisorDashboardPage() {
                           {req.institution.name}
                         </h3>
                         <p className="text-xs text-slate-500">
-                          {format(new Date(req.date), "EEEE, dd/MM", {
-                            locale: he,
-                          })}{" "}
-                          | גננת: {req.mainTeacher.firstName}
+                        <span className="text-sm font-medium italic">
+                          בתאריך: {new Date(req.date).toLocaleDateString("he-IL")}
+                        </span>
+                      
                         </p>
                       </div>
                     </div>
@@ -2128,27 +2320,23 @@ import PlacementModal from "@/components/PlacementModal";
 import InstructorPlacementsModal from "@/components/InstructorPlacementsModal";
 import { highlightText } from "@/lib/utils/formatters";
 import AddInstitutionModal from "@/components/AddInstitutionModal";
-import { isRegistrationOpen } from "@/utils/dateHelpers";
 import AddUserModal from "@/components/AddUserModal.tsx";
-import { Search, UserPlus, Building2, Users, ChevronLeft, Loader2 } from "lucide-react";
+import { 
+  Search, UserPlus, Building2, Users, ChevronLeft, 
+  Sparkles, GraduationCap, MapPin, Plus, UserCheck, LayoutGrid
+} from "lucide-react";
 
 export default function SupervisorPlacements() {
   const [data, setData] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
 
-  // מודאל 1: רשימת הגננות של מדריכה
+  // Modals States
   const [isInstructorModalOpen, setIsInstructorModalOpen] = useState(false);
   const [activeInstructor, setActiveInstructor] = useState<any>(null);
-
-  // מודאל 2: שיבוץ מחליפה
   const [isAssignModalOpen, setIsAssignModalOpen] = useState(false);
   const [selectedPlacement, setSelectedPlacement] = useState<any>(null);
-
-  // מודאל 3: הוספת גננת אם חדשה
   const [isAddTeacherOpen, setIsAddTeacherOpen] = useState(false);
-
-  // מודאל 4: הוספת מוסד
   const [isAddInstitutionOpen, setIsAddInstitutionOpen] = useState(false);
 
   const loadData = () => {
@@ -2162,9 +2350,7 @@ export default function SupervisorPlacements() {
       .catch(() => setLoading(false));
   };
 
-  useEffect(() => {
-    loadData();
-  }, []);
+  useEffect(() => { loadData(); }, []);
 
   const openInstructorModal = (instructor: any) => {
     setActiveInstructor(instructor);
@@ -2176,178 +2362,121 @@ export default function SupervisorPlacements() {
     setIsAssignModalOpen(true);
   };
 
-  // חישוב filteredData
   const filteredData = data.filter((instructor) => {
-    const instructorName =
-      `${instructor.firstName} ${instructor.lastName}`.toLowerCase();
+    const instructorName = `${instructor.firstName} ${instructor.lastName}`.toLowerCase();
     const hasMatchingGanenet = instructor.subordinatesIns?.some((g: any) =>
-      `${g.firstName} ${g.lastName}`
-        .toLowerCase()
-        .includes(searchTerm.toLowerCase())
+      `${g.firstName} ${g.lastName}`.toLowerCase().includes(searchTerm.toLowerCase())
     );
-    return (
-      instructorName.includes(searchTerm.toLowerCase()) || hasMatchingGanenet
-    );
+    return instructorName.includes(searchTerm.toLowerCase()) || hasMatchingGanenet;
   });
 
-  // פתיחה אוטומטית של מודאל אם יש חיפוש שמתאים לגננת
-  useEffect(() => {
-    if (searchTerm.trim() && filteredData.length > 0) {
-      const instructorWithMatch = filteredData.find((instructor) => {
-        const hasMatchingGanenet = instructor.subordinatesIns?.some((g: any) =>
-          `${g.firstName} ${g.lastName}`
-            .toLowerCase()
-            .includes(searchTerm.toLowerCase())
-        );
-        const instructorNameMatch = `${instructor.firstName} ${instructor.lastName}`
-          .toLowerCase()
-          .includes(searchTerm.toLowerCase());
-        
-        // פתח רק אם יש התאמה לגננת (לא למדריכה עצמה)
-        return hasMatchingGanenet && !instructorNameMatch;
-      });
-
-      if (instructorWithMatch && activeInstructor?.id !== instructorWithMatch.id) {
-        openInstructorModal(instructorWithMatch);
-      }
-    }
-  }, [searchTerm, data]);
-
-  if (loading)
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        <div className="text-center">
-          <Loader2 className="animate-spin text-gray-400 mx-auto mb-4" size={48} />
-          <p className="text-lg font-medium text-gray-600">טוען נתונים...</p>
-        </div>
+  if (loading) return (
+    <div className="min-h-[80vh] flex items-center justify-center">
+      <div className="text-center">
+        <div className="w-16 h-16 border-4 border-indigo-100 border-t-indigo-600 rounded-full animate-spin mx-auto mb-4"></div>
+        <p className="text-slate-500 font-bold">טוען נתונים...</p>
       </div>
-    );
+    </div>
+  );
 
   return (
-    <div className="min-h-screen bg-gray-50" dir="rtl">
-      {/* Header */}
-      <div className="bg-white border-b border-gray-200">
-        <div className="max-w-7xl mx-auto px-6 py-6">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div>
-              <h1 className="text-2xl font-semibold text-gray-900">ניהול שיבוצים והדרכה</h1>
-              <p className="text-sm text-gray-500 mt-1">מערכת ניהול מדריכות וגננות</p>
-            </div>
-            
-            {/* כפתורי פעולה */}
-            <div className="flex flex-wrap gap-3">
-              <button
-                onClick={() => setIsAddTeacherOpen(true)}
-                className="flex items-center gap-2 bg-gray-900 hover:bg-gray-800 text-white px-4 py-2.5 rounded-lg font-medium transition-all text-sm"
-              >
-                <UserPlus size={18} />
-                הוספת גננת
-              </button>
-
-              <button
-                onClick={() => setIsAddInstitutionOpen(true)}
-                className="flex items-center gap-2 bg-gray-700 hover:bg-gray-600 text-white px-4 py-2.5 rounded-lg font-medium transition-all text-sm"
-              >
-                <Building2 size={18} />
-                הוספת גן
-              </button>
-            </div>
+    <div className="max-w-6xl mx-auto space-y-8 pb-12 animate-in fade-in duration-700" dir="rtl">
+      
+      {/* --- Header Section (Style matched with Statistics) --- */}
+      <div className="flex flex-col md:flex-row justify-between items-center gap-6">
+        <div className="flex items-center gap-4 w-full">
+          <div className="p-3 bg-indigo-600 rounded-2xl text-white shadow-lg shadow-indigo-100">
+            <LayoutGrid size={28} />
           </div>
+          <div>
+            <h1 className="text-3xl font-black text-slate-800 tracking-tight">ניהול שיבוצים והדרכה</h1>
+            <p className="text-slate-500 font-medium italic">ניהול מדריכות, גננות ומוסדות חינוך</p>
+          </div>
+        </div>
+
+        <div className="flex gap-3 w-full md:w-auto">
+          <button
+            onClick={() => setIsAddTeacherOpen(true)}
+            className="flex-1 md:flex-none px-5 py-3 bg-white text-indigo-600 rounded-2xl font-bold text-sm shadow-sm border border-indigo-100 hover:bg-indigo-50 transition-all flex items-center justify-center gap-2 whitespace-nowrap"
+          >
+            <UserPlus size={18} />
+            הוספת גננת/מדריכה
+          </button>
+          <button
+            onClick={() => setIsAddInstitutionOpen(true)}
+            className="flex-1 md:flex-none px-5 py-3 bg-indigo-600 text-white rounded-2xl font-bold text-sm shadow-lg shadow-indigo-100 hover:bg-indigo-700 transition-all flex items-center justify-center gap-2 whitespace-nowrap"
+          >
+            <Plus size={18} />
+            הקמת גן חדש
+          </button>
         </div>
       </div>
 
-      {/* Main Content */}
-      <div className="max-w-7xl mx-auto px-6 py-8">
-        
-        {/* חיפוש וכותרת */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
-          <div>
-            <h2 className="text-lg font-semibold text-gray-900">רשימת מדריכות</h2>
-            <p className="text-sm text-gray-500 mt-0.5">{filteredData.length} מדריכות במערכת</p>
-          </div>
+      {/* --- Search Bar --- */}
+      <div className="relative group">
+        <Search className="absolute right-5 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-indigo-500 transition-colors" size={20} />
+        <input
+          type="text"
+          placeholder="חיפוש לפי שם מדריכה או גננת אם..."
+          className="w-full pr-14 pl-6 py-4 bg-white border border-slate-100 rounded-[2rem] shadow-sm focus:ring-2 focus:ring-indigo-500 font-bold text-slate-700 transition-all outline-none"
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+        />
+      </div>
 
-          {/* שדה חיפוש */}
-          <div className="relative">
-            <input
-              type="text"
-              placeholder="חיפוש מדריכה או גננת..."
-              className="w-full sm:w-80 px-4 py-2.5 pr-11 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent placeholder:text-gray-400 text-sm"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-            />
-            <Search size={18} className="absolute right-3.5 top-1/2 -translate-y-1/2 text-gray-400" />
-          </div>
-        </div>
+      {/* --- Instructors Grid --- */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        {filteredData.map((instructor, index) => {
+          const teacherCount = instructor.subordinatesIns?.filter((g: any) => g.roles.includes("MANAGER")).length || 0;
 
-        {/* Instructors Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-          {filteredData.map((instructor: any) => {
-            const teacherCount =
-              instructor.subordinatesIns?.filter((g: any) =>
-                g.roles.includes("MANAGER")
-              ).length || 0;
-
-            return (
-              <div
-                key={instructor.id}
-                onClick={() => openInstructorModal(instructor)}
-                className="group bg-white rounded-lg border border-gray-200 hover:border-gray-400 hover:shadow-lg transition-all duration-200 cursor-pointer overflow-hidden"
-              >
-                {/* כותרת הכרטיס */}
-                <div className="p-5 border-b border-gray-100">
-                  <div className="flex items-start justify-between mb-3">
-                    <div className="flex-1">
-                      <h3 className="text-lg font-semibold text-gray-900 mb-1">
-                        {highlightText(
-                          `${instructor.firstName} ${instructor.lastName}`,
-                          searchTerm
-                        )}
-                      </h3>
-                      <div className="flex items-center gap-1.5 text-sm text-gray-500">
-                        <Users size={14} />
-                        <span>מדריכה</span>
-                      </div>
-                    </div>
-                    
-                    <div className="w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center group-hover:bg-gray-200 transition-colors flex-shrink-0">
-                      <Users size={20} className="text-gray-600" />
-                    </div>
-                  </div>
-
-                  {/* מספר גננות */}
-                  <div className="inline-flex items-center gap-2 bg-gray-100 px-3 py-1.5 rounded-lg">
-                    <span className="text-lg font-bold text-gray-900">{teacherCount}</span>
-                    <span className="text-xs text-gray-600 font-medium">גננות אם</span>
+          return (
+            <div
+              key={instructor.id}
+              onClick={() => openInstructorModal(instructor)}
+              className="group bg-white rounded-[2rem] border border-slate-100 shadow-sm hover:shadow-xl hover:shadow-indigo-100/40 hover:-translate-y-1 transition-all duration-300 cursor-pointer overflow-hidden flex flex-col"
+            >
+              <div className="p-8">
+                <div className="flex justify-between items-start mb-4">
+                  <div className="px-3 py-1 bg-indigo-50 text-indigo-600 text-[10px] font-black uppercase tracking-widest rounded-lg">
+                    מדריכה
                   </div>
                 </div>
 
-                {/* תחתית הכרטיס */}
-                <div className="p-4 bg-gray-50">
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-gray-600">לחצי לצפייה בפרטים</span>
-                    <ChevronLeft size={16} className="text-gray-400 group-hover:translate-x-[-2px] transition-transform" />
-                  </div>
+                <h3 className="text-xl font-black text-slate-800 mb-1 group-hover:text-indigo-600 transition-colors">
+                  {highlightText(`${instructor.firstName} ${instructor.lastName}`, searchTerm)}
+                </h3>
+                <p className="text-slate-400 text-sm font-medium mb-6">{instructor.email}</p>
+
+                <div className="inline-flex items-center gap-3 px-5 py-3 bg-slate-50 rounded-2xl border border-slate-100 group-hover:bg-indigo-50/50 group-hover:border-indigo-100 transition-colors">
+                   <Users size={18} className="text-indigo-500" />
+                   <div>
+                     <p className="text-[10px] font-black text-slate-400 uppercase leading-none mb-1">גננות אם בניהולה</p>
+                     <p className="text-lg font-black text-slate-800 leading-none">{teacherCount}</p>
+                   </div>
                 </div>
               </div>
-            );
-          })}
-        </div>
 
-        {/* Empty State */}
-        {filteredData.length === 0 && (
-          <div className="text-center py-20">
-            <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
-              <Search size={32} className="text-gray-400" />
+              <div className="mt-auto p-6 bg-slate-50/50 border-t border-slate-50 group-hover:bg-indigo-50 transition-colors">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-bold text-slate-500 group-hover:text-indigo-600 transition-colors">צפייה בפרטים ושיבוץ</span>
+                  <ChevronLeft size={18} className="text-slate-300 group-hover:text-indigo-600 group-hover:-translate-x-1 transition-all" />
+                </div>
+              </div>
             </div>
-            <h3 className="text-lg font-semibold text-gray-900 mb-2">
-              לא נמצאו תוצאות
-            </h3>
-            <p className="text-sm text-gray-500">נסי לשנות את מילות החיפוש</p>
-          </div>
-        )}
+          );
+        })}
       </div>
 
-      {/* Modals */}
+      {/* --- Empty State --- */}
+      {filteredData.length === 0 && (
+        <div className="bg-white p-20 rounded-[3rem] text-center border-2 border-dashed border-slate-100">
+          <Search className="mx-auto text-slate-200 mb-4" size={48} />
+          <h3 className="text-xl font-bold text-slate-800">לא נמצאו תוצאות</h3>
+          <p className="text-slate-400">נסו לשנות את מילות החיפוש</p>
+        </div>
+      )}
+
+      {/* --- Modals (Keep as they were) --- */}
       <InstructorPlacementsModal
         isOpen={isInstructorModalOpen}
         onClose={() => setIsInstructorModalOpen(false)}
@@ -2361,28 +2490,241 @@ export default function SupervisorPlacements() {
           isOpen={isAssignModalOpen}
           placement={selectedPlacement}
           onClose={() => setIsAssignModalOpen(false)}
-          onSuccess={() => {
-            loadData();
-            setIsAssignModalOpen(false);
-          }}
+          onSuccess={() => { loadData(); setIsAssignModalOpen(false); }}
         />
       )}
 
-      <AddUserModal
-        isOpen={isAddTeacherOpen}
-        onClose={() => setIsAddTeacherOpen(false)}
-        onSuccess={() => {
-          loadData();
-        }}
-      />
+      <AddUserModal isOpen={isAddTeacherOpen} onClose={() => setIsAddTeacherOpen(false)} onSuccess={loadData} />
+      <AddInstitutionModal isOpen={isAddInstitutionOpen} onClose={() => setIsAddInstitutionOpen(false)} onSuccess={loadData} />
+    </div>
+  );
+}
+==============================
+FILE: src/app\supervisor\statistics\page.tsx
+==============================
+"use client";
 
-      <AddInstitutionModal
-        isOpen={isAddInstitutionOpen}
-        onClose={() => setIsAddInstitutionOpen(false)}
-        onSuccess={() => {
-          loadData();
-        }}
-      />
+import { useState, useEffect, useMemo } from "react";
+import { format, subMonths, subYears, startOfMonth, isSameDay } from "date-fns";
+import { BarChart3, Calendar, User, Search, TrendingUp, XCircle, CheckCircle, Info } from "lucide-react";
+
+export default function StatisticsPage() {
+  const [stats, setStats] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
+  const [users, setUsers] = useState<any[]>([]);
+  
+  // פילטרים
+  const [startDate, setStartDate] = useState(format(startOfMonth(new Date()), "yyyy-MM-dd"));
+  const [endDate, setEndDate] = useState(format(new Date(), "yyyy-MM-dd"));
+  const [selectedUserId, setSelectedUserId] = useState("");
+  const [activeShortcut, setActiveShortcut] = useState<'month' | 'year' | null>('month');
+
+  // טעינת משתמשות
+  useEffect(() => {
+    fetch("/api/supervisor/users-stats")
+      .then(res => res.json())
+      .then(data => setUsers(Array.isArray(data) ? data : []));
+  }, []);
+
+  // שליפת הנתונים מהשרת
+  const fetchStats = async () => {
+    setLoading(true);
+    const params = new URLSearchParams({
+      start: startDate,
+      end: endDate,
+      ...(selectedUserId && { userId: selectedUserId })
+    });
+    const res = await fetch(`/api/supervisor/stats?${params}`);
+    const data = await res.json();
+    setStats(data);
+    setLoading(false);
+  };
+
+  // קריאה ראשונית וכל שינוי בטווח/משתמשת
+  useEffect(() => {
+    fetchStats();
+  }, [startDate, endDate, selectedUserId]);
+
+  // זיהוי תפקיד המשתמשת הנבחרת
+  const selectedUser = useMemo(() => 
+    users.find(u => u.id === selectedUserId), 
+    [selectedUserId, users]
+  );
+
+  const isManager = selectedUser?.roles.includes("MANAGER");
+  const isSubstitute = selectedUser?.roles.some((r: string) => ["SUBSTITUTE", "ROTATION"].includes(r));
+
+  // פונקציה להגדרת קיצור דרך
+  const handleShortcut = (type: 'month' | 'year') => {
+    const end = new Date();
+    const start = type === 'month' ? subMonths(end, 1) : subYears(end, 1);
+    
+    setStartDate(format(start, "yyyy-MM-dd"));
+    setEndDate(format(end, "yyyy-MM-dd"));
+    setActiveShortcut(type);
+  };
+
+  // פונקציה לשינוי ידני של תאריך (מבטל את הדגשת הקיצור)
+  const handleDateChange = (type: 'start' | 'end', val: string) => {
+    if (type === 'start') setStartDate(val);
+    else setEndDate(val);
+    setActiveShortcut(null);
+  };
+
+  return (
+    <div className="max-w-6xl mx-auto space-y-8 pb-10 animate-in fade-in duration-700" dir="rtl">
+      
+      {/* Header */}
+      <div className="flex items-center gap-4">
+        <div className="p-3 bg-indigo-600 rounded-2xl text-white shadow-lg shadow-indigo-100">
+          <BarChart3 size={28} />
+        </div>
+        <div>
+          <h1 className="text-3xl font-black text-slate-800 tracking-tight">מרכז נתונים וסטטיסטיקה</h1>
+          <p className="text-slate-500 font-medium italic">ניתוח פעילות הגנים וצוותי ההוראה</p>
+        </div>
+      </div>
+
+      {/* Filters Card */}
+      <div className="bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-100 grid grid-cols-1 md:grid-cols-3 gap-8 items-end">
+        
+        {/* טווח תאריכים */}
+        <div className="space-y-3">
+          <label className="block text-sm font-black text-slate-700 flex items-center gap-2">
+            <Calendar size={16} className="text-indigo-500" /> טווח תאריכים
+          </label>
+          <div className="flex gap-2 p-1 bg-slate-50 rounded-2xl">
+            <input 
+              type="date" 
+              value={startDate} 
+              onChange={(e) => handleDateChange('start', e.target.value)} 
+              className="w-full bg-transparent border-none text-sm font-bold focus:ring-0 text-slate-600 cursor-pointer" 
+            />
+            <div className="w-px h-6 bg-slate-200 self-center"></div>
+            <input 
+              type="date" 
+              value={endDate} 
+              onChange={(e) => handleDateChange('end', e.target.value)} 
+              className="w-full bg-transparent border-none text-sm font-bold focus:ring-0 text-slate-600 cursor-pointer" 
+            />
+          </div>
+        </div>
+
+        {/* בחירת משתמשת */}
+        <div className="space-y-3">
+          <label className="block text-sm font-black text-slate-700 flex items-center gap-2">
+            <User size={16} className="text-indigo-500" /> בחירת גננת / מחליפה
+          </label>
+          <select 
+            value={selectedUserId} 
+            onChange={(e) => setSelectedUserId(e.target.value)}
+            className="w-full p-3 bg-slate-50 rounded-2xl border-none text-sm font-bold text-slate-600 focus:ring-2 focus:ring-indigo-500 outline-none transition-all cursor-pointer"
+          >
+            <option value="">-- כל המשתמשות --</option>
+            {users.map(u => (
+              <option key={u.id} value={u.id}>{u.firstName} {u.lastName} ({u.roles.includes("MANAGER") ? "גננת אם" : "צוות מחליף"})</option>
+            ))}
+          </select>
+        </div>
+
+        {/* קיצורי דרך */}
+        <div className="flex gap-3 h-[52px]">
+          <button 
+            onClick={() => handleShortcut('month')} 
+            className={`flex-1 rounded-2xl text-sm font-bold transition-all duration-300 border-2 ${
+              activeShortcut === 'month' 
+              ? 'bg-indigo-50 border-indigo-600 text-indigo-700 shadow-sm' 
+              : 'bg-white border-slate-100 text-slate-500 hover:bg-slate-50'
+            }`}
+          >
+            בחודש האחרון
+          </button>
+          <button 
+            onClick={() => handleShortcut('year')} 
+            className={`flex-1 rounded-2xl text-sm font-bold transition-all duration-300 border-2 ${
+              activeShortcut === 'year' 
+              ? 'bg-indigo-50 border-indigo-600 text-indigo-700 shadow-sm' 
+              : 'bg-white border-slate-100 text-slate-500 hover:bg-slate-50'
+            }`}
+          >
+            בשנה האחרונה
+          </button>
+        </div>
+      </div>
+
+      {/* Stats Results */}
+      {stats && (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          
+          {/* כרטיסים כלליים - מוסתרים אם נבחר משתמש ספציפי כדי לפנות מקום (אופציונלי) */}
+          <div className="bg-white p-8 rounded-[2.5rem] border border-slate-100 shadow-sm relative overflow-hidden group">
+            <div className="absolute -top-4 -right-4 opacity-5 group-hover:scale-110 group-hover:opacity-10 transition-all duration-500"><TrendingUp size={120}/></div>
+            <p className="text-slate-400 font-bold text-xs uppercase tracking-widest">סה"כ אירועים בטווח</p>
+            <h2 className="text-5xl font-black text-slate-800 mt-3">{stats.total}</h2>
+          </div>
+
+          <div className="bg-emerald-50 p-8 rounded-[2.5rem] border border-emerald-100 shadow-sm relative overflow-hidden group">
+            <div className="absolute -top-4 -right-4 opacity-10 text-emerald-600 group-hover:scale-110 transition-all duration-500"><CheckCircle size={120}/></div>
+            <p className="text-emerald-600 font-bold text-xs uppercase tracking-widest">גנים שאויישו</p>
+            <h2 className="text-5xl font-black text-emerald-700 mt-3">{stats.assigned}</h2>
+          </div>
+
+          <div className="bg-red-50 p-8 rounded-[2.5rem] border border-red-100 shadow-sm relative overflow-hidden group">
+            <div className="absolute -top-4 -right-4 opacity-10 text-red-600 group-hover:scale-110 transition-all duration-500"><XCircle size={120}/></div>
+            <p className="text-red-600 font-bold text-xs uppercase tracking-widest">גנים שנסגרו</p>
+            <h2 className="text-5xl font-black text-red-700 mt-3">{stats.cancelled}</h2>
+          </div>
+
+          {/* הצגת מידע ספציפי למשתמשת */}
+          {stats.userSpecific && (
+            <div className="md:col-span-3 border-sky-600 p-10 rounded-[3rem] text-gray-800 relative overflow-hidden shadow-xl shadow-indigo-100">
+               {/* דקורציה לרקע */}
+              <div className="absolute top-0 left-0 w-64 h-64 bg-inigo/5 rounded-full -translate-x-1/2 -translate-y-1/2 blur-3xl"></div>
+              
+              <div className="relative flex flex-col md:flex-row items-center justify-between gap-8">
+                <div className="flex items-center gap-6">
+                  <div className="w-20 h-20 bg-white/20 backdrop-blur-md rounded-3xl flex items-center justify-center text-3xl font-black shadow-inner">
+                    {selectedUser?.firstName[0]}
+                  </div>
+                  <div>
+                    <h3 className="text-2xl font-black">{selectedUser?.firstName} {selectedUser?.lastName}</h3>
+                    <p className="text-slate-500 font-medium opacity-80">סיכום נתונים אישי לתקופה שנבחרה</p>
+                  </div>
+                </div>
+
+                <div className="flex gap-12 text-center">
+                  {/* אם זו גננת אם - הצג רק היעדרויות */}
+                  {(isManager || (!isManager && !isSubstitute)) && (
+                    <div className="animate-in slide-in-from-bottom-4 duration-500">
+                      <p className="text-slate-700 text-xs font-bold uppercase tracking-widest mb-1">ימי היעדרות</p>
+                      <p className="text-6xl font-black tabular-nums">{stats.userSpecific.asMain}</p>
+                    </div>
+                  )}
+
+                  {/* מחיצה ויזואלית אם המשתמשת מחזיקה בשני התפקידים */}
+                  {isManager && isSubstitute && <div className="w-px h-16 bg-white/20 hidden md:block"></div>}
+
+                  {/* אם זו מחליפה/רוטציה - הצג רק החלפות */}
+                  {isSubstitute && (
+                    <div className="animate-in slide-in-from-bottom-4 duration-500 delay-100">
+                      <p className="text-slate-700 text-xs font-bold uppercase tracking-widest mb-1">החלפות שבוצעו</p>
+                      <p className="text-6xl font-black tabular-nums text-sky-950">{stats.userSpecific.asSub}</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Empty State */}
+      {!loading && stats?.total === 0 && (
+        <div className="bg-white p-20 rounded-[3rem] border-2 border-dashed border-slate-100 text-center">
+          <Info className="mx-auto text-slate-200 mb-4" size={48} />
+          <p className="text-slate-400 font-bold text-lg">אין נתונים להצגה בטווח התאריכים הנבחר</p>
+        </div>
+      )}
     </div>
   );
 }
@@ -2618,39 +2960,65 @@ FILE: src/components\AddInstitutionModal.tsx
 ==============================
 "use client";
 import { useState, useEffect } from "react";
-import { X, Search, Building2, MapPin, Hash, User } from "lucide-react";
+import {
+  X,
+  Search,
+  Building2,
+  MapPin,
+  Hash,
+  User,
+  Info,
+  CheckCircle2,
+  Plus,
+  Sparkles,
+  Building,
+} from "lucide-react";
 
-export default function AddInstitutionModal({ isOpen, onClose, onSuccess }: any) {
+export default function AddInstitutionModal({
+  isOpen,
+  onClose,
+  onSuccess,
+}: any) {
   const [managers, setManagers] = useState<any[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [loading, setLoading] = useState(false);
+  const [selectedId, setSelectedId] = useState(""); // <--- הוספת State לבחירה
 
   useEffect(() => {
     if (isOpen) {
       fetch("/api/supervisor/managers")
-        .then(res => res.json())
-        .then(data => setManagers(Array.isArray(data) ? data : []));
+        .then((res) => res.json())
+        .then((data) => setManagers(Array.isArray(data) ? data : []));
     }
   }, [isOpen]);
 
-  // פונקציית סינון לפי חיפוש
-  const filteredManagers = managers.filter(m => 
-    `${m.firstName} ${m.lastName}`.toLowerCase().includes(searchTerm.toLowerCase())
+  useEffect(() => {
+    if (isOpen) {
+      fetch("/api/supervisor/managers")
+        .then((res) => res.json())
+        .then((data) => setManagers(Array.isArray(data) ? data : []));
+    }
+  }, [isOpen]);
+
+  const filteredManagers = managers.filter((m) =>
+    `${m.firstName} ${m.lastName}`
+      .toLowerCase()
+      .includes(searchTerm.toLowerCase())
   );
 
   const handleSubmit = async (e: any) => {
     e.preventDefault();
+    if (!selectedId) return alert("חובה לבחור גננת אם"); // בדיקה שנבחרה גננת
+
     setLoading(true);
-    
     const formData = new FormData(e.target);
-    const selectedManagerId = formData.get("mainManagerId");
-    const selectedManager = managers.find(m => m.id === selectedManagerId);
+    const selectedManager = managers.find((m) => m.id === selectedId);
 
     const payload = {
       name: formData.get("name"),
       address: formData.get("address"),
       institutionNumber: formData.get("institutionNumber"),
-      mainManagerId: selectedManagerId,
+      mainManagerId: selectedId, // שימוש ב-State
       instructorId: selectedManager?.instructorId,
     };
 
@@ -2663,6 +3031,8 @@ export default function AddInstitutionModal({ isOpen, onClose, onSuccess }: any)
     if (res.ok) {
       onSuccess();
       onClose();
+      setSearchTerm("");
+      setSelectedId(""); // איפוס
     } else {
       const err = await res.json();
       alert(err.message || "שגיאה ביצירת הגן");
@@ -2673,130 +3043,205 @@ export default function AddInstitutionModal({ isOpen, onClose, onSuccess }: any)
   if (!isOpen) return null;
 
   return (
-  <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 overflow-y-auto" dir="rtl">
-    <div className="bg-white w-full max-w-md rounded-xl shadow-2xl max-h-[90vh] overflow-y-auto">
+    <div
+      className="fixed inset-0 z-[150] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 overflow-y-auto animate-in fade-in duration-300"
+      dir="rtl"
+    >
+      <div className="bg-white w-full max-w-lg rounded-[2.5rem] shadow-2xl my-auto overflow-hidden flex flex-col max-h-[90vh] border border-slate-100">
+        {/* Header - סגנון כהה ויוקרתי */}
+        <div className="p-8 bg-slate-900 text-white relative overflow-hidden shrink-0">
+          <div className="absolute top-0 left-0 w-full h-full opacity-10 pointer-events-none">
+            <div className="absolute -top-10 -right-10 w-40 h-40 bg-indigo-500 rounded-full blur-3xl"></div>
+          </div>
 
-      {/* כותרת */}
-      <div className="p-6 border-b border-gray-200 flex justify-between items-center">
-        <div>
-          <h2 className="text-xl font-semibold text-gray-900">הקמת גן חדש</h2>
-          <p className="text-sm text-gray-500 mt-1">הזיני את פרטי הגן החדש</p>
+          <div className="relative z-10 flex justify-between items-center">
+            <div>
+              <h2 className="text-2xl font-black tracking-tight">
+                הקמת גן חדש
+              </h2>
+              <p className="text-slate-400 text-sm font-medium mt-1 flex items-center gap-2">
+                <Plus size={14} /> רישום מוסד חינוכי חדש במחוז
+              </p>
+            </div>
+            <button
+              onClick={onClose}
+              className="p-2 hover:bg-white/10 rounded-full transition-colors"
+            >
+              <X size={24} />
+            </button>
+          </div>
         </div>
-        <button 
-          onClick={onClose} 
-          className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+
+        <form
+          onSubmit={handleSubmit}
+          className="flex-1 overflow-y-auto p-8 space-y-6 custom-calendar-scroll"
         >
-          <X size={20} className="text-gray-500" />
-        </button>
-      </div>
-
-        <form onSubmit={handleSubmit} className="p-6 space-y-4">
-          
-          {/* שם הגן */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">שם הגן</label>
-            <div className="relative">
-              <input 
-                name="name" 
-                required 
-                placeholder="לדוגמה: גן הילדים הקטנים"
-                className="w-full border border-gray-300 p-3 pr-10 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent placeholder:text-gray-400" 
-              />
-              <Building2 size={18} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" />
+          {/* פרטי הגן */}
+          <div className="space-y-4">
+            <div className="flex items-center gap-2 text-indigo-600 font-black text-xs uppercase tracking-widest pb-2 border-b border-slate-50">
+              <Building size={14} /> פרטי המוסד
             </div>
-          </div>
 
-          {/* כתובת */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">כתובת</label>
-            <div className="relative">
-              <input 
-                name="address" 
-                required 
-                placeholder="רחוב, עיר"
-                className="w-full border border-gray-300 p-3 pr-10 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent placeholder:text-gray-400" 
-              />
-              <MapPin size={18} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" />
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-slate-500 mr-2">
+                שם הגן
+              </label>
+              <div className="relative">
+                <input
+                  name="name"
+                  required
+                  className="w-full pr-10 pl-4 py-3 bg-slate-50 border-none rounded-xl focus:ring-2 focus:ring-indigo-500 font-medium text-slate-700"
+                  placeholder="לדוגמה: גן אורן"
+                />
+                <Building2
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400"
+                  size={18}
+                />
+              </div>
             </div>
-          </div>
 
-          {/* מספר מוסד */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">מספר מוסד</label>
-            <div className="relative">
-              <input 
-                name="institutionNumber" 
-                required 
-                placeholder="מספר מזהה של המוסד"
-                className="w-full border border-gray-300 p-3 pr-10 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent placeholder:text-gray-400" 
-              />
-              <Hash size={18} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" />
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-slate-500 mr-2">
+                כתובת
+              </label>
+              <div className="relative">
+                <input
+                  name="address"
+                  required
+                  className="w-full pr-10 pl-4 py-3 bg-slate-50 border-none rounded-xl focus:ring-2 focus:ring-indigo-500 font-medium text-slate-700"
+                  placeholder="רחוב ומספר, עיר"
+                />
+                <MapPin
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400"
+                  size={18}
+                />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-slate-500 mr-2">
+                מספר מוסד
+              </label>
+              <div className="relative">
+                <input
+                  name="institutionNumber"
+                  required
+                  className="w-full pr-10 pl-4 py-3 bg-slate-50 border-none rounded-xl focus:ring-2 focus:ring-indigo-500 font-medium"
+                  placeholder="מספר זיהוי משרד החינוך"
+                />
+                <Hash
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400"
+                  size={18}
+                />
+              </div>
             </div>
           </div>
 
           {/* בחירת גננת אם */}
-          <div className="pt-4 border-t border-gray-200">
-            <label className="block text-sm font-medium text-gray-700 mb-3">גננת אם לגן</label>
-            
-            {/* שדה חיפוש */}
-            <div className="relative mb-3">
-              <input 
-                type="text" 
-                placeholder="חיפוש גננת..." 
-                className="w-full border border-gray-300 p-3 pr-10 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent placeholder:text-gray-400 bg-gray-50"
+          <div className="space-y-4 pt-4">
+            <div className="flex items-center gap-2 text-indigo-600 font-black text-xs uppercase tracking-widest pb-2 border-b border-slate-50">
+              <User size={14} /> גננת אם אחראית
+            </div>
+
+            <div className="relative group">
+              <Search
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-indigo-500 transition-colors"
+                size={16}
+              />
+              <input
+                type="text"
+                placeholder="חפשי גננת ברשימה..."
+                className="w-full pr-10 pl-4 py-2.5 bg-slate-100 border-none rounded-xl focus:ring-2 focus:ring-indigo-500 text-sm font-bold text-slate-600"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
               />
-              <Search size={18} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" />
             </div>
 
-            {/* רשימת גננות */}
-            <div className="max-h-48 overflow-y-auto border border-gray-200 rounded-lg">
+            <div className="max-h-48 overflow-y-auto rounded-2xl border border-slate-100 bg-slate-50/50 custom-calendar-scroll">
               {filteredManagers.length > 0 ? (
                 filteredManagers.map((m: any) => (
-                  <label
+                  <div
                     key={m.id}
-                    className="flex items-center gap-3 p-3 hover:bg-gray-50 transition-colors border-b border-gray-100 last:border-b-0 cursor-pointer group"
+                    onClick={() => setSelectedId(m.id)} // הבחירה מתבצעת בלחיצה על כל השטח
+                    className={`flex items-center gap-4 p-4 transition-all cursor-pointer border-b border-slate-50 last:border-0 group ${
+                      selectedId === m.id
+                        ? "bg-indigo-50/80 shadow-inner"
+                        : "hover:bg-white"
+                    }`}
                   >
-                    <input
-                      type="radio"
-                      name="mainManagerId"
-                      value={m.id}
-                      required
-                      className="w-4 h-4 accent-gray-900"
-                    />
-                    <div className="w-10 h-10 rounded-full bg-gray-100 group-hover:bg-gray-200 flex items-center justify-center transition-colors flex-shrink-0">
-                      <User size={18} className="text-gray-600" />
+                    <div
+                      className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all ${
+                        selectedId === m.id
+                          ? "border-indigo-600 bg-indigo-600"
+                          : "border-slate-300"
+                      }`}
+                    >
+                      {selectedId === m.id && (
+                        <div className="w-2 h-2 bg-white rounded-full" />
+                      )}
                     </div>
-                    <div className="flex-1">
-                      <div className="text-sm font-medium text-gray-900">
+
+                    <div
+                      className={`w-10 h-10 rounded-full flex items-center justify-center font-bold transition-all ${
+                        selectedId === m.id
+                          ? "bg-indigo-600 text-white"
+                          : "bg-indigo-50 text-indigo-600"
+                      }`}
+                    >
+                      {m.firstName[0]}
+                    </div>
+
+                    <div className="flex-1 text-right">
+                      <div
+                        className={`text-sm font-black ${
+                          selectedId === m.id
+                            ? "text-indigo-900"
+                            : "text-slate-700"
+                        }`}
+                      >
                         {m.firstName} {m.lastName}
                       </div>
+                      <div className="text-[11px] text-slate-400 font-medium">
+                        גננת זמינה לשיבוץ מוסד
+                      </div>
                     </div>
-                  </label>
+                  </div>
                 ))
               ) : (
-                <div className="p-6 text-center text-gray-500 text-sm">
-                  {searchTerm ? "לא נמצאו תוצאות" : "אין גננות פנויות"}
+                <div className="p-8 text-center">
+                  <Info className="mx-auto text-slate-300 mb-2" size={24} />
+                  <p className="text-slate-400 text-xs font-bold italic">
+                    {searchTerm
+                      ? "לא נמצאו תוצאות"
+                      : "אין גננות אם פנויות כרגע"}
+                  </p>
                 </div>
               )}
             </div>
-            
-            {filteredManagers.length > 0 && (
-              <p className="text-xs text-gray-500 mt-2">
-                {filteredManagers.length} גננות נמצאו
-              </p>
-            )}
           </div>
 
-          {/* כפתור שליחה */}
-          <div className="pt-4">
-            <button 
-              type="submit" 
-              disabled={loading || managers.length === 0} 
-              className="w-full bg-gray-900 text-white p-3 rounded-lg font-medium hover:bg-gray-800 disabled:bg-gray-300 disabled:cursor-not-allowed transition-all"
+          {/* Footer Actions */}
+          <div className="pt-6 flex gap-4 shrink-0">
+            <button
+              type="submit"
+              disabled={loading || managers.length === 0}
+              className="flex-[2] py-4 bg-indigo-600 text-white rounded-2xl font-black shadow-lg shadow-indigo-100 hover:bg-indigo-700 transition-all disabled:bg-slate-200 disabled:shadow-none active:scale-95 flex items-center justify-center gap-2"
             >
-              {loading ? "יוצר גן..." : "יצירת גן חדש"}
+              {loading ? (
+                "מקים גן..."
+              ) : (
+                <>
+                  <Sparkles size={18} />
+                  סיום והקמת הגן
+                </>
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex-1 py-4 bg-slate-100 text-slate-600 rounded-2xl font-bold hover:bg-slate-200 transition-all"
+            >
+              ביטול
             </button>
           </div>
         </form>
@@ -2804,12 +3249,13 @@ export default function AddInstitutionModal({ isOpen, onClose, onSuccess }: any)
     </div>
   );
 }
+
 ==============================
 FILE: src/components\AddPlacementModal.tsx
 ==============================
 "use client";
 import { useState, useEffect } from "react";
-import { User, Home, X, Check } from "lucide-react";
+import { User, Home, X, Check, Clock, UserPlus, AlertCircle } from "lucide-react";
 
 interface Teacher {
   id: string;
@@ -2823,14 +3269,16 @@ interface Props {
   onClose: () => void;
   date: Date;
   refreshData: () => void;
-  user: { roles: string[] };
+  user: { id: string; roles: string[] };
 }
 
 export default function AddPlacementModal({ isOpen, onClose, date, refreshData, user }: Props) {
   const [data, setData] = useState<{ managers: Teacher[]; substitutes: Teacher[] }>({ managers: [], substitutes: [] });
   const [selectedManagerId, setSelectedManagerId] = useState("");
   const [selectedSubId, setSelectedSubId] = useState("");
-  const [isGardenClosed, setIsGardenClosed] = useState(false);
+  
+  // מצבים: 'pending' (ממתין), 'assign' (שיבוץ), 'closed' (גן סגור)
+  const [mode, setMode] = useState<'pending' | 'assign' | 'closed'>('pending');
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -2841,25 +3289,23 @@ export default function AddPlacementModal({ isOpen, onClose, date, refreshData, 
     }
   }, [isOpen, date]);
 
-  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    // ולידציה
     if (!selectedManagerId) return alert("חובה לבחור גננת אם");
-    if (!isGardenClosed && !selectedSubId) return alert("חובה לבחור גננת מחליפה או לסמן שהגן סגור");
+    if (mode === 'assign' && !selectedSubId) return alert("חובה לבחור גננת מחליפה");
 
     setLoading(true);
-
     const manager = data.managers.find((m) => m.id === selectedManagerId);
 
     const payload = {
       date: date.toISOString(),
       mainTeacherId: selectedManagerId,
       institutionId: manager?.mainManagedInstitutions?.[0]?.id,
-      substituteId: isGardenClosed ? null : selectedSubId,
-      status: isGardenClosed ? "CANCELLED" : "ASSIGNED",
-      creatorRoles: user.roles.includes("SUPERVISOR") ? ["SUPERVISOR"] : ["INSTRUCTOR"],
-      notes: isGardenClosed ? "הגן נסגר על ידי הפיקוח" : "",
+      substituteId: mode === 'assign' ? selectedSubId : null,
+      status: mode === 'closed' ? "CANCELLED" : mode === 'assign' ? "ASSIGNED" : "OPEN",
+      creatorRoles: user.roles,
+      notes: mode === 'closed' ? "הגן נסגר על ידי הפיקוח" : "",
     };
 
     try {
@@ -2872,11 +3318,10 @@ export default function AddPlacementModal({ isOpen, onClose, date, refreshData, 
       if (res.ok) {
         refreshData();
         onClose();
-        setSelectedManagerId("");
-        setSelectedSubId("");
-        setIsGardenClosed(false);
+        resetForm();
       } else {
-        alert("שגיאה בשמירת השיבוץ");
+        const err = await res.json();
+        alert(err.message || "שגיאה בשמירת השיבוץ");
       }
     } catch {
       alert("שגיאת תקשורת עם השרת");
@@ -2885,22 +3330,39 @@ export default function AddPlacementModal({ isOpen, onClose, date, refreshData, 
     }
   };
 
+  const resetForm = () => {
+    setSelectedManagerId("");
+    setSelectedSubId("");
+    setMode('pending');
+  };
+
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4" dir="rtl">
-      <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden border border-gray-100">
-        <div className="bg-slate-800 p-6 text-white">
-          <h2 className="text-xl font-bold">דיווח שיבוץ סופי</h2>
-          <p className="text-slate-400 text-sm">{date.toLocaleDateString("he-IL")}</p>
+    <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-[110] p-4" dir="rtl">
+      <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden border border-slate-100 animate-in fade-in zoom-in-95 duration-200">
+        
+        {/* Header */}
+        <div className="bg-indigo-600 p-6 text-white flex justify-between items-center">
+          <div>
+            <h2 className="text-xl font-bold">הוספת דיווח חדש</h2>
+            <p className="text-indigo-100 text-sm opacity-90">
+              {new Date(date).toLocaleString("IL-he")}
+            </p>
+          </div>
+          <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-full transition-colors">
+            <X size={24} />
+          </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-6 space-y-6">
-          {/* בחירת גננת אם */}
+        <form onSubmit={handleSubmit} className="p-6 space-y-5">
+          {/* 1. בחירת גננת אם */}
           <div>
-            <label className="block text-sm font-bold text-gray-700 mb-2">גננת אם (נעדרת):</label>
+            <label className="block text-sm font-bold text-slate-700 mb-2 flex items-center gap-2">
+              <User size={16} className="text-indigo-500" /> גננת אם (נעדרת):
+            </label>
             <select
-              className="w-full p-3 rounded-xl border-2 border-gray-100 focus:border-blue-500 outline-none bg-gray-50 transition-all"
+              className="w-full p-3 rounded-xl border-2 border-slate-100 focus:border-indigo-500 outline-none bg-slate-50 transition-all font-medium"
               value={selectedManagerId}
               onChange={(e) => setSelectedManagerId(e.target.value)}
               required
@@ -2908,74 +3370,101 @@ export default function AddPlacementModal({ isOpen, onClose, date, refreshData, 
               <option value="">-- בחרי גננת אם --</option>
               {data.managers.map((m) => (
                 <option key={m.id} value={m.id}>
-                  {m.firstName} {m.lastName} ({m.mainManagedInstitutions?.[0]?.name})
+                  {m.firstName} {m.lastName} ({m.mainManagedInstitutions?.[0]?.name || 'ללא גן'})
                 </option>
               ))}
             </select>
           </div>
 
-          {/* בחירה בין שיבוץ לסגירה */}
-          <div className="flex gap-4 p-1 bg-gray-100 rounded-2xl">
-            <button
-              type="button"
-              onClick={() => setIsGardenClosed(false)}
-              className={`flex-1 flex items-center justify-center gap-2 p-3 rounded-xl font-bold transition-all ${
-                !isGardenClosed ? "bg-white shadow-sm text-blue-600" : "text-gray-500"
-              }`}
-            >
-              <User size={18} /> שיבוץ מחליפה
-            </button>
-            <button
-              type="button"
-              onClick={() => setIsGardenClosed(true)}
-              className={`flex-1 flex items-center justify-center gap-2 p-3 rounded-xl font-bold transition-all ${
-                isGardenClosed ? "bg-white shadow-sm text-red-600" : "text-gray-500"
-              }`}
-            >
-              <Home size={18} /> הגן סגור
-            </button>
+          {/* 2. בחירת סוג הדיווח */}
+          <div className="space-y-2">
+             <label className="block text-sm font-bold text-slate-700 mb-2 flex items-center gap-2">
+              <AlertCircle size={16} className="text-indigo-500" /> מה תרצי לבצע?
+            </label>
+            <div className="grid grid-cols-3 gap-2 p-1 bg-slate-100 rounded-2xl">
+              <button
+                type="button"
+                onClick={() => setMode('pending')}
+                className={`flex flex-col items-center gap-1 p-3 rounded-xl text-[11px] font-bold transition-all ${
+                  mode === 'pending' ? "bg-white shadow-sm text-indigo-600" : "text-slate-500 hover:text-slate-700"
+                }`}
+              >
+                <Clock size={18} /> דיווח בלבד
+              </button>
+              <button
+                type="button"
+                onClick={() => setMode('assign')}
+                className={`flex flex-col items-center gap-1 p-3 rounded-xl text-[11px] font-bold transition-all ${
+                  mode === 'assign' ? "bg-white shadow-sm text-emerald-600" : "text-slate-500 hover:text-slate-700"
+                }`}
+              >
+                <UserPlus size={18} /> שיבוץ מחליפה
+              </button>
+              <button
+                type="button"
+                onClick={() => setMode('closed')}
+                className={`flex flex-col items-center gap-1 p-3 rounded-xl text-[11px] font-bold transition-all ${
+                  mode === 'closed' ? "bg-white shadow-sm text-red-600" : "text-slate-500 hover:text-slate-700"
+                }`}
+              >
+                <Home size={18} /> סגירת גן
+              </button>
+            </div>
           </div>
 
-          {/* בחירת מחליפה */}
-          {!isGardenClosed ? (
-            <div className="animate-in fade-in slide-in-from-top-2">
-              <label className="block text-sm font-bold text-gray-700 mb-2">גננת מחליפה:</label>
-              <select
-                className="w-full p-3 rounded-xl border-2 border-blue-100 focus:border-blue-500 outline-none bg-blue-50/30 transition-all"
-                value={selectedSubId}
-                onChange={(e) => setSelectedSubId(e.target.value)}
-                required={!isGardenClosed}
-              >
-                <option value="">-- בחרי מחליפה פנויה --</option>
-                {data.substitutes.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.firstName} {s.lastName}
-                  </option>
-                ))}
-              </select>
-            </div>
-          ) : (
-            <div className="p-4 bg-red-50 rounded-xl border border-red-100 animate-in fade-in zoom-in-95">
-              <p className="text-red-700 text-sm font-medium flex items-center gap-2">
-                <Check size={16} /> הדיווח יישמר כ"גן סגור" (בוטל)
-              </p>
-            </div>
-          )}
+          {/* 3. שדות דינמיים לפי המצב */}
+          <div className="min-h-[80px] flex items-end">
+            {mode === 'assign' && (
+              <div className="w-full animate-in slide-in-from-top-2 duration-300">
+                <label className="block text-sm font-bold text-slate-700 mb-2">בחירת גננת מחליפה:</label>
+                <select
+                  className="w-full p-3 rounded-xl border-2 border-emerald-100 focus:border-emerald-500 outline-none bg-emerald-50/30 transition-all font-medium"
+                  value={selectedSubId}
+                  onChange={(e) => setSelectedSubId(e.target.value)}
+                  required
+                >
+                  <option value="">-- בחרי מחליפה פנויה --</option>
+                  {data.substitutes.map((s) => (
+                    <option key={s.id} value={s.id}>{s.firstName} {s.lastName}</option>
+                  ))}
+                </select>
+              </div>
+            )}
 
+            {mode === 'pending' && (
+              <div className="w-full p-4 bg-amber-50 rounded-xl border border-amber-100 animate-in fade-in duration-300">
+                <p className="text-amber-800 text-xs font-medium flex items-center gap-2">
+                  <Clock size={14} /> הדיווח יישמר במצב "ממתין" ויופיע בדאשבורד כקריאה פתוחה.
+                </p>
+              </div>
+            )}
+
+            {mode === 'closed' && (
+              <div className="w-full p-4 bg-red-50 rounded-xl border border-red-100 animate-in fade-in duration-300">
+                <p className="text-red-800 text-xs font-medium flex items-center gap-2">
+                  <Check size={14} /> הגן יסומן כסגור ולא יחפשו עבורו מחליפה להיום.
+                </p>
+              </div>
+            )}
+          </div>
+
+          {/* Footer Buttons */}
           <div className="flex gap-3 pt-4">
-            <button
+             <button
               type="submit"
               disabled={loading}
-              className={`flex-[2] p-4 rounded-2xl font-bold text-white shadow-lg transition-all ${
-                isGardenClosed ? "bg-red-600 hover:bg-red-700 shadow-red-100" : "bg-blue-600 hover:bg-blue-700 shadow-blue-100"
+              className={`flex-[2] p-4 rounded-2xl font-bold text-white shadow-lg transition-all active:scale-95 ${
+                mode === 'closed' ? "bg-red-600 hover:bg-red-700 shadow-red-100" : 
+                mode === 'assign' ? "bg-emerald-600 hover:bg-emerald-700 shadow-emerald-100" :
+                "bg-indigo-600 hover:bg-indigo-700 shadow-indigo-100"
               }`}
             >
-              {loading ? "שומר..." : "אישור וביצוע שיבוץ"}
+              {loading ? "מעבד..." : "אישור וביצוע"}
             </button>
             <button
               type="button"
               onClick={onClose}
-              className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-600 p-4 rounded-2xl font-bold"
+              className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-600 p-4 rounded-2xl font-bold transition-colors"
             >
               ביטול
             </button>
@@ -2985,13 +3474,17 @@ export default function AddPlacementModal({ isOpen, onClose, date, refreshData, 
     </div>
   );
 }
-
 ==============================
 FILE: src/components\AddUserModal.tsx.tsx
 ==============================
 "use client";
 import { useState, useEffect } from "react";
-import { X, User, Mail, Phone, Calendar, CreditCard, Lock, UserCheck } from "lucide-react";
+import { 
+  X, User, Mail, Phone, Calendar, CreditCard, 
+  Lock, UserCheck, Shield, GraduationCap, Building,
+  Info, CheckCircle2, AlertCircle,
+  Sparkles
+} from "lucide-react";
 
 export default function AddUserModal({ isOpen, onClose, onSuccess }: any) {
   const [instructors, setInstructors] = useState<any[]>([]);
@@ -3008,6 +3501,7 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }: any) {
   }, [isOpen]);
 
   const handleRoleChange = (role: string) => {
+    // בגלל שלפעמים מדריכה היא גם גננת אם, נאפשר בחירה מרובה
     setSelectedRoles(prev =>
       prev.includes(role) ? prev.filter(r => r !== role) : [...prev, role]
     );
@@ -3023,6 +3517,8 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }: any) {
     const payload = {
       ...formProps,
       roles: selectedRoles,
+      // וודא ששם המשתמש הוא האימייל כברירת מחדל אם לא הוגדר אחרת
+      username: formProps.email, 
     };
 
     try {
@@ -3035,9 +3531,10 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }: any) {
       if (res.ok) {
         onSuccess();
         onClose();
+        setSelectedRoles([]);
       } else {
         const err = await res.json();
-        alert(err.message || "שגיאה ברישום");
+        alert(err.message || "שגיאה ברישום המשתמשת");
       }
     } catch {
       alert("שגיאת תקשורת עם השרת");
@@ -3052,232 +3549,180 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }: any) {
   const hasSelectedRole = selectedRoles.length > 0;
 
   return (
-  <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 overflow-y-auto" dir="rtl">
-    <div className="bg-white w-full max-w-2xl rounded-xl shadow-2xl my-auto max-h-[90vh] overflow-y-auto">
-     
-        {/* כותרת */}
-        <div className="p-6 border-b border-gray-200 flex justify-between items-center">
-          <div>
-            <h2 className="text-xl font-semibold text-gray-900">רישום משתמשת חדשה</h2>
-            <p className="text-sm text-gray-500 mt-1">הזיני את פרטי המשתמשת החדשה</p>
+    <div className="fixed inset-0 z-[150] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 overflow-y-auto animate-in fade-in duration-300" dir="rtl">
+      <div className="bg-white w-full max-w-2xl rounded-[2.5rem] shadow-2xl my-auto overflow-hidden flex flex-col max-h-[95vh] border border-slate-100">
+        
+        {/* Header - סגנון כהה ויוקרתי */}
+        <div className="p-8 bg-slate-900 text-white relative overflow-hidden shrink-0">
+          <div className="absolute top-0 left-0 w-full h-full opacity-10 pointer-events-none">
+            <div className="absolute -top-10 -right-10 w-40 h-40 bg-indigo-500 rounded-full blur-3xl"></div>
           </div>
-          <button 
-            onClick={onClose} 
-            className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
-          >
-            <X size={20} className="text-gray-500" />
-          </button>
+          
+          <div className="relative z-10 flex justify-between items-center">
+            <div>
+              <h2 className="text-2xl font-black tracking-tight">רישום משתמשת חדשה</h2>
+              <p className="text-slate-400 text-sm font-medium mt-1 flex items-center gap-2">
+                <Info size={14} /> הקימי פרופיל חדש במערכת הפיקוח
+              </p>
+            </div>
+            <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-full transition-colors">
+              <X size={24} />
+            </button>
+          </div>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-6 space-y-6">
-
-          {/* בחירת תפקיד */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-3">בחירת תפקיד</label>
-            <div className="grid grid-cols-2 gap-3">
-              <button
-                type="button"
-                onClick={() => handleRoleChange("MANAGER")}
-                className={`p-4 rounded-lg border-2 transition-all text-right ${
-                  selectedRoles.includes("MANAGER")
-                    ? "border-gray-900 bg-gray-50"
-                    : "border-gray-200 hover:border-gray-300"
-                }`}
-              >
-                <div className="flex items-center gap-3">
-                  <div className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-colors ${
-                    selectedRoles.includes("MANAGER")
-                      ? "border-gray-900 bg-gray-900"
-                      : "border-gray-300"
+        <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-8 space-y-8 custom-calendar-scroll">
+          
+          {/* סקציה 1: בחירת תפקיד */}
+          <div className="space-y-4">
+            <label className="block text-sm font-black text-slate-700 flex items-center gap-2">
+              <Shield size={16} className="text-indigo-500" /> בחרי תפקיד/ים במערכת:
+            </label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {[
+                { id: "MANAGER", label: "גננת אם", desc: "ניהול גן קבוע", icon: Building },
+                { id: "INSTRUCTOR", label: "מדריכה", desc: "ליווי פדגוגי והדרכה", icon: GraduationCap },
+                { id: "SUBSTITUTE", label: "גננת מחליפה", desc: "מילוי מקום מזדמן", icon: UserCheck },
+                { id: "ROTATION", label: "גננת רוטציה", desc: "החלפה ביום חופשי", icon: Sparkles },
+              ].map((role) => (
+                <button
+                  key={role.id}
+                  type="button"
+                  onClick={() => handleRoleChange(role.id)}
+                  className={`p-4 rounded-2xl border-2 text-right transition-all flex items-center gap-4 group ${
+                    selectedRoles.includes(role.id)
+                      ? "border-indigo-600 bg-indigo-50/50 shadow-sm"
+                      : "border-slate-100 hover:border-indigo-200 bg-white"
+                  }`}
+                >
+                  <div className={`p-3 rounded-xl transition-colors ${
+                    selectedRoles.includes(role.id) ? "bg-indigo-600 text-white" : "bg-slate-50 text-slate-400 group-hover:text-indigo-500"
                   }`}>
-                    {selectedRoles.includes("MANAGER") && (
-                      <div className="w-2 h-2 bg-white rounded-sm" />
-                    )}
+                    <role.icon size={20} />
                   </div>
-                  <div>
-                    <div className="text-sm font-medium text-gray-900">גננת אם</div>
-                    <div className="text-xs text-gray-500">ניהול גן</div>
+                  <div className="flex-1">
+                    <div className={`text-sm font-black ${selectedRoles.includes(role.id) ? "text-indigo-900" : "text-slate-700"}`}>
+                      {role.label}
+                    </div>
+                    <div className="text-[11px] text-slate-400 font-medium">{role.desc}</div>
                   </div>
-                </div>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => handleRoleChange("INSTRUCTOR")}
-                className={`p-4 rounded-lg border-2 transition-all text-right ${
-                  selectedRoles.includes("INSTRUCTOR")
-                    ? "border-gray-900 bg-gray-50"
-                    : "border-gray-200 hover:border-gray-300"
-                }`}
-              >
-                <div className="flex items-center gap-3">
-                  <div className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-colors ${
-                    selectedRoles.includes("INSTRUCTOR")
-                      ? "border-gray-900 bg-gray-900"
-                      : "border-gray-300"
-                  }`}>
-                    {selectedRoles.includes("INSTRUCTOR") && (
-                      <div className="w-2 h-2 bg-white rounded-sm" />
-                    )}
-                  </div>
-                  <div>
-                    <div className="text-sm font-medium text-gray-900">מדריכה</div>
-                    <div className="text-xs text-gray-500">ליווי והדרכה</div>
-                  </div>
-                </div>
-              </button>
+                  {selectedRoles.includes(role.id) && <CheckCircle2 size={18} className="text-indigo-600" />}
+                </button>
+              ))}
             </div>
           </div>
 
-          {!hasSelectedRole && (
-            <div className="text-center py-8">
-              <div className="w-12 h-12 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-3">
-                <User size={24} className="text-gray-400" />
-              </div>
-              <p className="text-sm text-gray-500">יש לבחור תפקיד כדי להמשיך</p>
+          {!hasSelectedRole ? (
+            <div className="p-10 text-center bg-slate-50 rounded-[2rem] border-2 border-dashed border-slate-200">
+               <AlertCircle className="mx-auto text-slate-300 mb-3" size={32} />
+               <p className="text-slate-500 font-bold">יש לבחור לפחות תפקיד אחד כדי להמשיך</p>
             </div>
-          )}
-
-          {hasSelectedRole && (
-            <div className="space-y-4">
+          ) : (
+            <div className="space-y-6 animate-in slide-in-from-top-4 duration-500">
               
-              {/* שם פרטי ושם משפחה */}
+              <div className="flex items-center gap-2 text-indigo-600 font-black text-xs uppercase tracking-widest pb-2 border-b border-slate-50">
+                <User size={14} /> פרטי זהות ויצירת קשר
+              </div>
+
+              {/* שורת שם */}
               <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">שם פרטי</label>
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-slate-500 mr-2">שם פרטי</label>
                   <div className="relative">
-                    <input 
-                      name="firstName" 
-                      required 
-                      className="w-full border border-gray-300 p-3 pr-10 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent placeholder:text-gray-400" 
-                      placeholder="הזיני שם פרטי"
-                    />
-                    <User size={18} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                    <input name="firstName" required className="w-full pr-10 pl-4 py-3 bg-slate-50 border-none rounded-xl focus:ring-2 focus:ring-indigo-500 font-medium" placeholder="ישראל" />
+                    <User className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
                   </div>
                 </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">שם משפחה</label>
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-slate-500 mr-2">שם משפחה</label>
                   <div className="relative">
-                    <input 
-                      name="lastName" 
-                      required 
-                      className="w-full border border-gray-300 p-3 pr-10 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent placeholder:text-gray-400" 
-                      placeholder="הזיני שם משפחה"
-                    />
-                    <User size={18} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                    <input name="lastName" required className="w-full pr-10 pl-4 py-3 bg-slate-50 border-none rounded-xl focus:ring-2 focus:ring-indigo-500 font-medium" placeholder="ישראלי" />
+                    <User className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
                   </div>
                 </div>
               </div>
 
-              {/* תעודת זהות ואימייל */}
+              {/* שורת קשר */}
               <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">תעודת זהות</label>
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-slate-500 mr-2">מספר תעודת זהות</label>
                   <div className="relative">
-                    <input 
-                      name="idNumber" 
-                      required 
-                      className="w-full border border-gray-300 p-3 pr-10 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent placeholder:text-gray-400" 
-                      placeholder="9 ספרות"
-                    />
-                    <CreditCard size={18} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                    <input name="idNumber" required className="w-full pr-10 pl-4 py-3 bg-slate-50 border-none rounded-xl focus:ring-2 focus:ring-indigo-500 font-medium" placeholder="9 ספרות" />
+                    <CreditCard className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
                   </div>
                 </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">אימייל</label>
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-slate-500 mr-2">מספר טלפון</label>
                   <div className="relative">
-                    <input 
-                      name="email" 
-                      type="email" 
-                      required 
-                      className="w-full border border-gray-300 p-3 pr-10 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent placeholder:text-gray-400" 
-                      placeholder="example@email.com"
-                    />
-                    <Mail size={18} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                    <input name="phoneNumber" required className="w-full pr-10 pl-4 py-3 bg-slate-50 border-none rounded-xl focus:ring-2 focus:ring-indigo-500 font-medium text-left" placeholder="050-0000000" dir="ltr" />
+                    <Phone className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
                   </div>
                 </div>
               </div>
 
-              {/* סיסמה וטלפון */}
+              {/* שורת אימייל וסיסמה */}
               <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">סיסמה</label>
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-slate-500 mr-2">אימייל (ישמש להתחברות)</label>
                   <div className="relative">
-                    <input 
-                      name="password" 
-                      type="password" 
-                      required 
-                      className="w-full border border-gray-300 p-3 pr-10 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent placeholder:text-gray-400" 
-                      placeholder="לפחות 6 תווים"
-                    />
-                    <Lock size={18} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                    <input name="email" type="email" required className="w-full pr-10 pl-4 py-3 bg-slate-50 border-none rounded-xl focus:ring-2 focus:ring-indigo-500 font-medium text-left" placeholder="name@email.com" dir="ltr" />
+                    <Mail className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
                   </div>
                 </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">טלפון</label>
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-slate-500 mr-2">סיסמה זמנית</label>
                   <div className="relative">
-                    <input 
-                      name="phoneNumber" 
-                      required 
-                      className="w-full border border-gray-300 p-3 pr-10 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent placeholder:text-gray-400" 
-                      placeholder="05X-XXXXXXX"
-                    />
-                    <Phone size={18} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                    <input name="password" type="password" required className="w-full pr-10 pl-4 py-3 bg-slate-50 border-none rounded-xl focus:ring-2 focus:ring-indigo-500 font-medium text-left" placeholder="******" dir="ltr" />
+                    <Lock className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
                   </div>
                 </div>
               </div>
 
-              {/* תאריך לידה */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">תאריך לידה</label>
-                <div className="relative">
-                  <input 
-                    name="dateOfBirth" 
-                    type="date" 
-                    required 
-                    className="w-full border border-gray-300 p-3 pr-10 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent" 
-                  />
-                  <Calendar size={18} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                </div>
-              </div>
-
-              {/* מדריכה מלווה - רק אם בחרו גננת אם */}
-              {isManager && (
-                <div className="p-4 bg-gray-50 rounded-lg border border-gray-200">
-                  <label className="block text-sm font-medium text-gray-700 mb-2">מדריכה מלווה</label>
+              {/* שורת תאריך לידה ומדריכה */}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-slate-500 mr-2">תאריך לידה</label>
                   <div className="relative">
-                    <select 
-                      name="instructorId" 
-                      required 
-                      className="w-full border border-gray-300 p-3 pr-10 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent bg-white appearance-none"
-                    >
-                      <option value="">בחרי מדריכה...</option>
-                      {Array.isArray(instructors) && instructors.map((i: any) => (
-                        <option key={i.id} value={i.id}>{i.firstName} {i.lastName}</option>
-                      ))}
-                    </select>
-                    <UserCheck size={18} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                    <input name="dateOfBirth" type="date" required className="w-full pr-10 pl-4 py-3 bg-slate-50 border-none rounded-xl focus:ring-2 focus:ring-indigo-500 font-medium" />
+                    <Calendar className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
                   </div>
                 </div>
-              )}
-
+                
+                {isManager && (
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold text-slate-500 mr-2">מדריכה מלווה</label>
+                    <div className="relative">
+                      <select name="instructorId" required className="w-full pr-10 pl-4 py-3 bg-indigo-50/50 border-none rounded-xl focus:ring-2 focus:ring-indigo-500 font-bold text-indigo-700 outline-none appearance-none">
+                        <option value="">בחרי מדריכה...</option>
+                        {instructors.map(i => (
+                          <option key={i.id} value={i.id}>{i.firstName} {i.lastName}</option>
+                        ))}
+                      </select>
+                      <GraduationCap className="absolute right-3 top-1/2 -translate-y-1/2 text-indigo-400" size={16} />
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           )}
 
-          {/* כפתור שליחה */}
-          <div className="pt-4 border-t border-gray-200">
+          {/* Footer Actions */}
+          <div className="pt-6 flex gap-4 shrink-0">
             <button
               type="submit"
               disabled={loading || !hasSelectedRole}
-              className="w-full bg-gray-900 text-white p-3 rounded-lg font-medium hover:bg-gray-800 disabled:bg-gray-300 disabled:cursor-not-allowed transition-all"
+              className="flex-[2] py-4 bg-indigo-600 text-white rounded-2xl font-black shadow-lg shadow-indigo-100 hover:bg-indigo-700 transition-all disabled:bg-slate-200 disabled:shadow-none active:scale-95"
             >
-              {loading ? "שומר..." : "רישום משתמשת"}
+              {loading ? "יוצר משתמשת..." : "סיום ורישום משתמשת"}
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex-1 py-4 bg-slate-100 text-slate-600 rounded-2xl font-bold hover:bg-slate-200 transition-all"
+            >
+              ביטול
             </button>
           </div>
-
         </form>
       </div>
     </div>
@@ -3581,20 +4026,25 @@ export default function InstructorPlacementsModal({ isOpen, onClose, instructor,
 ==============================
 FILE: src/components\Navbar.tsx
 ==============================
-'use client';
+"use client";
 
-import Link from 'next/link';
-import { usePathname, useRouter } from 'next/navigation';
-import { LayoutDashboard, Calendar, LogOut, PieChartIcon } from 'lucide-react';
-
+import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
+import {
+  LayoutDashboard,
+  Calendar,
+  LogOut,
+  PieChartIcon,
+  BarChart3,
+} from "lucide-react";
 export default function Navbar() {
   const router = useRouter();
   const pathname = usePathname();
 
   const handleLogout = async () => {
     if (!confirm("האם את בטוחה שברצונך להתנתק?")) return;
-    await fetch('/api/auth/logout', { method: 'POST' });
-    router.push('/login');
+    await fetch("/api/auth/logout", { method: "POST" });
+    router.push("/login");
     router.refresh();
   };
 
@@ -3605,48 +4055,62 @@ export default function Navbar() {
     <nav className="bg-white shadow-sm border-b border-gray-200 sticky top-0 z-40">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between h-16 items-center">
-          
           {/* צד ימין: לוגו ותפריט ניווט */}
           <div className="flex items-center gap-8">
             <div className="flex items-center gap-3">
-              <div className="bg-blue-600 text-white p-2 rounded-xl font-bold shadow-md shadow-blue-100">FitIn</div>
-              <span className="text-lg font-extrabold text-slate-800 hidden md:block">ממשק מפקחת</span>
+              <div className="bg-blue-600 text-white p-2 rounded-xl font-bold shadow-md shadow-blue-100">
+                FitIn
+              </div>
+              <span className="text-lg font-extrabold text-slate-800 hidden md:block">
+                ממשק מפקחת
+              </span>
             </div>
 
             <div className="flex items-center gap-2">
-              <Link 
-                href="/supervisor" 
+              <Link
+                href="/supervisor"
                 className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all ${
-                  isActive('/supervisor') 
-                  ? 'bg-blue-50 text-blue-600' 
-                  : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700'
+                  isActive("/supervisor")
+                    ? "bg-blue-50 text-blue-600"
+                    : "text-slate-500 hover:bg-slate-50 hover:text-slate-700"
                 }`}
               >
                 <LayoutDashboard size={18} />
                 <span>דאשבורד</span>
               </Link>
 
-              <Link 
-                href="/supervisor/calendar" 
+              <Link
+                href="/supervisor/calendar"
                 className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all ${
-                  isActive('/supervisor/calendar') 
-                  ? 'bg-blue-50 text-blue-600' 
-                  : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700'
+                  isActive("/supervisor/calendar")
+                    ? "bg-blue-50 text-blue-600"
+                    : "text-slate-500 hover:bg-slate-50 hover:text-slate-700"
                 }`}
               >
                 <Calendar size={18} />
                 <span>לוח שנה</span>
               </Link>
-              <Link 
-                href="/supervisor/placements" 
+              <Link
+                href="/supervisor/placements"
                 className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all ${
-                  isActive('/supervisor/placements') 
-                  ? 'bg-blue-50 text-blue-600' 
-                  : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700'
+                  isActive("/supervisor/placements")
+                    ? "bg-blue-50 text-blue-600"
+                    : "text-slate-500 hover:bg-slate-50 hover:text-slate-700"
                 }`}
               >
                 <PieChartIcon size={18} />
-                <span>נתונים</span>
+                <span>ניהול</span>
+              </Link>
+              <Link
+                href="/supervisor/statistics"
+                className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all ${
+                  isActive("/supervisor/statistics")
+                    ? "bg-indigo-50 text-indigo-600"
+                    : "text-slate-500 hover:bg-slate-50 hover:text-slate-700"
+                }`}
+              >
+                <BarChart3 size={18} />
+                <span>סטטיסטיקה</span>
               </Link>
             </div>
           </div>
@@ -3661,12 +4125,12 @@ export default function Navbar() {
               <span className="hidden sm:inline">התנתקות</span>
             </button>
           </div>
-
         </div>
       </div>
     </nav>
   );
 }
+
 ==============================
 FILE: src/components\PlacementModal.tsx
 ==============================
@@ -4006,6 +4470,118 @@ export default function RecentActivityModal({ isOpen, onClose, activities }: Pro
   );
 }
 ==============================
+FILE: src/components\UserDetailsModal.tsx
+==============================
+"use client";
+
+import { useState, useEffect } from "react";
+import { X, Calendar, MapPin, Phone, Mail, Award, Clock, Activity } from "lucide-react";
+import { format } from "date-fns";
+import { he } from "date-fns/locale";
+
+export default function UserDetailsModal({ user, isOpen, onClose }: any) {
+  const [history, setHistory] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (isOpen && user) {
+      setLoading(true);
+      // API שקיים אצלך ב-userService (נצטרך לחבר אותו לנתיב API)
+      fetch(`/api/test?action=allUsers`) // לצורך הדוגמה, בהמשך ניצור API ייעודי להיסטוריית משתמש
+        .then(res => res.json())
+        .then(() => {
+          setLoading(false);
+        });
+    }
+  }, [isOpen, user]);
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-[120] p-4" dir="rtl">
+      <div className="bg-white rounded-[2.5rem] shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]">
+        
+        {/* Header */}
+        <div className="p-8 bg-slate-800 text-white relative">
+          <button onClick={onClose} className="absolute top-6 left-6 p-2 hover:bg-white/10 rounded-full transition-colors">
+            <X size={24} />
+          </button>
+          
+          <div className="flex items-center gap-6">
+            <div className="w-20 h-20 bg-indigo-500 rounded-3xl flex items-center justify-center text-3xl font-black shadow-lg">
+              {user.firstName[0]}
+            </div>
+            <div>
+              <h2 className="text-3xl font-black">{user.firstName} {user.lastName}</h2>
+              <div className="flex flex-wrap gap-3 mt-2">
+                {user.roles.map((r: string) => (
+                  <span key={r} className="text-[10px] uppercase tracking-widest font-bold px-2 py-1 bg-white/10 rounded-md">
+                    {r}
+                  </span>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Content */}
+        <div className="flex-1 overflow-y-auto p-8 space-y-8">
+          
+          {/* Info Grid */}
+          <div className="grid grid-cols-2 gap-6">
+            <div className="flex items-center gap-3 text-slate-600">
+              <div className="p-2 bg-slate-50 rounded-lg"><Phone size={18} /></div>
+              <span className="font-bold">{user.phoneNumber}</span>
+            </div>
+            <div className="flex items-center gap-3 text-slate-600">
+              <div className="p-2 bg-slate-50 rounded-lg"><Mail size={18} /></div>
+              <span className="font-bold">{user.email}</span>
+            </div>
+            <div className="flex items-center gap-3 text-slate-600">
+              <div className="p-2 bg-slate-50 rounded-lg"><MapPin size={18} /></div>
+              <span className="font-bold">{user.address || "לא הוזנה כתובת"}</span>
+            </div>
+            <div className="flex items-center gap-3 text-slate-600">
+              <div className="p-2 bg-slate-50 rounded-lg"><Award size={18} /></div>
+              <span className="font-bold">ת"ז: {user.idNumber}</span>
+            </div>
+          </div>
+
+          <hr className="border-slate-100" />
+
+          {/* Activity Section */}
+          <div>
+            <h3 className="text-lg font-black text-slate-800 mb-4 flex items-center gap-2">
+              <Activity size={20} className="text-indigo-500" /> סיכום פעילות במערכת
+            </h3>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="p-4 bg-red-50 rounded-2xl border border-red-100">
+                <p className="text-red-800 font-black text-2xl">{user._count.placementsAsMain}</p>
+                <p className="text-red-600 text-xs font-bold">ימי היעדרות (גננת אם)</p>
+              </div>
+              <div className="p-4 bg-emerald-50 rounded-2xl border border-emerald-100">
+                <p className="text-emerald-800 font-black text-2xl">{user._count.placementsAsSub}</p>
+                <p className="text-emerald-600 text-xs font-bold">ימי החלפה שבוצעו</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Timeline Placeholder */}
+          <div>
+            <h3 className="text-lg font-black text-slate-800 mb-4 flex items-center gap-2">
+              <Clock size={20} className="text-indigo-500" /> היסטוריה אחרונה
+            </h3>
+            <div className="space-y-3">
+              <p className="text-sm text-slate-400 italic text-center py-10">טוען היסטוריית שיבוצים...</p>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  );
+}
+==============================
 FILE: src/lib\api.ts
 ==============================
 
@@ -4268,23 +4844,24 @@ import {
   db_notifyMultipleUsers,
 } from "./notificationService";
 import { Day } from "@prisma/client";
-import { startOfMonth, endOfMonth, startOfDay, endOfDay,addDays } from "date-fns";
+import { addMonths, endOfMonth, startOfDay, endOfDay, addDays } from "date-fns";
 
 /**
  * שליפת נתונים ללוח הבקרה של המפקחת
  */
 export async function db_getSupervisorDashboard(supervisorId: string) {
   const today = startOfDay(new Date());
-  const monthEnd = endOfMonth(today); 
+  const oneMonthFromNow = endOfDay(addMonths(new Date(), 1));
+
   const endOfWeek = endOfDay(addDays(today, 5));
 
   // --- פונקציית עזר לחישוב דילוג שבת ---
-  const getTargetDate = (startDate: Date, daysToCount: number) => {
+   const getTargetDate = (startDate: Date, daysToCount: number) => {
     let currentDate = new Date(startDate);
     let addedDays = 0;
     while (addedDays < daysToCount) {
       currentDate = addDays(currentDate, 1);
-      if (currentDate.getDay() !== 6) { // 6 = שבת
+      if (currentDate.getDay() !== 6) {
         addedDays++;
       }
     }
@@ -4314,8 +4891,8 @@ export async function db_getSupervisorDashboard(supervisorId: string) {
       institution: { supervisorId: supervisorId },
       status: "OPEN",
       date: {
-        gt: urgentDeadline, // <--- כאן השינוי: גדול מ-(ולא כולל) את הדדליין הדחוף
-        lte: monthEnd,
+        gt: urgentDeadline,   // מעבר לטווח הדחוף
+        lte: oneMonthFromNow, // עד בדיוק חודש מהיום
       },
     },
     include: {
@@ -4352,7 +4929,7 @@ export async function db_getSupervisorDashboard(supervisorId: string) {
   const recentActivity = await prisma.placement.findMany({
     where: { institution: { supervisorId: supervisorId } },
     take: 5,
-    orderBy: { updatedAt: "desc" }, 
+    orderBy: { updatedAt: "desc" },
     include: {
       institution: { select: { name: true } },
       substitute: { select: { firstName: true, lastName: true } },
@@ -4372,14 +4949,19 @@ export async function db_getSupervisorDashboard(supervisorId: string) {
 /**
  * שליפת היסטוריה מלאה לחודש ספציפי
  */
-export async function db_getMonthlyHistory(supervisorId: string, month: number, year: number) {
+export async function db_getMonthlyHistory(
+  supervisorId: string,
+  month: number,
+  year: number
+) {
   const startDate = new Date(year, month - 1, 1);
   const endDate = new Date(year, month, 0, 23, 59, 59);
 
   return await prisma.placement.findMany({
     where: {
       institution: { supervisorId: supervisorId },
-      updatedAt: { // אנחנו מסתכלים על מתי השינוי קרה
+      updatedAt: {
+        // אנחנו מסתכלים על מתי השינוי קרה
         gte: startDate,
         lte: endDate,
       },
@@ -4392,8 +4974,6 @@ export async function db_getMonthlyHistory(supervisorId: string, month: number, 
     orderBy: { updatedAt: "desc" },
   });
 }
-
-
 
 /**
  * אימות תקינות שיבוץ
@@ -4442,7 +5022,7 @@ export async function db_createPlacement(data: {
   date: Date;
   institutionId: string;
   mainTeacherId: string;
-  substituteId?: string | null; 
+  substituteId?: string | null;
   notes?: string;
   creatorRoles: string[];
   status?: "OPEN" | "ASSIGNED" | "CANCELLED";
@@ -4479,12 +5059,16 @@ export async function db_createPlacement(data: {
       date: targetDate,
     },
   });
- if (existingReport) {
+if (existingReport) {
+    // הוספת לוגיקה: אם המפקחת מנסה ליצור דיווח על משהו שכבר סגור או משובץ
     if (existingReport.status === "CANCELLED") {
-        throw new Error("הגן כבר הוגדר כסגור לתאריך זה. לא ניתן לשבץ.");
+      throw new Error("הגן כבר הוגדר כסגור לתאריך זה.");
+    }
+    if (existingReport.status === "ASSIGNED") {
+      throw new Error("כבר קיימת מחליפה משובצת לגן זה.");
     }
     throw new Error("כבר קיים דיווח פעיל לגן זה בתאריך שנבחר");
-  }
+}
 
   const diffInDays =
     (targetDate.getTime() - today.getTime()) / (1000 * 3600 * 24);
@@ -4495,7 +5079,7 @@ export async function db_createPlacement(data: {
       date: targetDate,
       institutionId: data.institutionId,
       mainTeacherId: data.mainTeacherId,
-      substituteId: data.substituteId, 
+      substituteId: data.substituteId,
       notes: data.notes,
       status: finalStatus,
       priority: priority,
