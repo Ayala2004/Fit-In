@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { X, Search, UserCheck, Loader2 } from "lucide-react";
+import { X, Search, UserCheck, Loader2, AlertCircle, Home } from "lucide-react";
 import { format } from "date-fns";
 import { he } from "date-fns/locale";
 
@@ -21,7 +21,7 @@ export default function PlacementModal({
   const [substitutes, setSubstitutes] = useState<any[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [loading, setLoading] = useState(true);
-  const [isAssigning, setIsAssigning] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
 
   useEffect(() => {
     if (isOpen && placement?.date) {
@@ -33,7 +33,7 @@ export default function PlacementModal({
       fetch(`/api/supervisor/substitutes?date=${dateParam}`)
         .then((res) => res.json())
         .then((data) => {
-          setSubstitutes(data);
+          setSubstitutes(Array.isArray(data) ? data : []);
           setLoading(false);
         })
         .catch((err) => {
@@ -43,16 +43,17 @@ export default function PlacementModal({
     }
   }, [isOpen, placement]);
 
-  const handleAssign = async (substituteId: string) => {
-    setIsAssigning(true);
+  // פונקציה לעדכון סטטוס (שיבוץ או סגירה)
+  const updatePlacement = async (subId: string | null, status: string) => {
+    setIsProcessing(true);
     try {
       const response = await fetch("/api/supervisor/placements", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           placementId: placement.id,
-          substituteId,
-          status: "ASSIGNED",
+          substituteId: subId,
+          status: status,
         }),
       });
 
@@ -60,13 +61,19 @@ export default function PlacementModal({
         onSuccess?.();
         onClose();
       } else {
-        alert("שגיאה בעדכון השיבוץ");
+        alert("שגיאה בעדכון הדיווח");
       }
     } catch (error) {
       console.error("Error updating placement:", error);
       alert("שגיאת תקשורת");
     } finally {
-      setIsAssigning(false);
+      setIsProcessing(false);
+    }
+  };
+
+  const handleCloseGarden = () => {
+    if (confirm(`האם את בטוחה שברצונך לסגור את גן ${placement.institution?.name} לתאריך זה?`)) {
+      updatePlacement(null, "CANCELLED");
     }
   };
 
@@ -79,107 +86,89 @@ export default function PlacementModal({
   );
 
   return (
-    <div
-      className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[100] p-4"
-      dir="rtl"
-    >
-      <div className="bg-white w-full max-w-lg rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh]">
+    <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-[100] p-4 animate-in fade-in duration-300" dir="rtl">
+      <div className="bg-white w-full max-w-lg rounded-[2.5rem] shadow-2xl overflow-hidden flex flex-col max-h-[85vh] border border-slate-100">
+        
         {/* Header */}
-        <div className="p-6 bg-slate-900 text-white flex justify-between items-center">
-          <div>
-            <h3 className="text-xl font-bold italic tracking-tight">
-              שיבוץ מחליפה
-            </h3>
-            <p className="text-slate-400 text-sm">
-              גן: {placement.institution?.name} |{" "}
-              {format(new Date(placement.date), "dd/MM/yyyy", { locale: he })}
+        <div className="p-8 bg-slate-900 text-white flex justify-between items-center relative overflow-hidden shrink-0">
+          <div className="absolute top-0 left-0 w-full h-full opacity-10 pointer-events-none">
+            <div className="absolute -top-10 -right-10 w-32 h-32 bg-indigo-500 rounded-full blur-3xl"></div>
+          </div>
+          
+          <div className="relative z-10">
+            <h3 className="text-2xl font-black tracking-tight italic">עדכון סטטוס גן</h3>
+            <p className="text-slate-400 text-sm font-medium mt-1">
+              גן {placement.institution?.name} | {format(new Date(placement.date), "dd/MM/yyyy", { locale: he })}
             </p>
           </div>
+          <button onClick={onClose} className="relative z-10 p-2 hover:bg-white/10 rounded-full transition-colors">
+            <X size={24} />
+          </button>
+        </div>
+
+        {/* --- פעולה מהירה: סגירת גן --- */}
+        <div className="p-6 bg-red-50/50 border-b border-red-100 shrink-0">
           <button
-            onClick={onClose}
-            className="p-2 hover:bg-white/10 rounded-full transition-colors"
+            onClick={handleCloseGarden}
+            disabled={isProcessing}
+            className="w-full flex items-center justify-center gap-3 p-4 bg-white rounded-2xl border-2 border-red-200 text-red-600 hover:bg-red-600 hover:text-white hover:border-red-600 transition-all shadow-sm group font-black uppercase text-sm tracking-widest disabled:opacity-50"
           >
-            <X className="w-6 h-6" />
+            <Home size={20} className="group-hover:scale-110 transition-transform" />
+            סגירת הגן עקב חוסר במחליפה
           </button>
         </div>
 
         {/* Search */}
-        <div className="p-4 border-b bg-slate-50">
-          <div className="relative">
-            <Search className="absolute right-3 top-3 text-slate-400 w-5 h-5" />
+        <div className="p-6 pb-2 shrink-0">
+          <label className="block text-sm font-black text-slate-700 mb-3 flex items-center gap-2">
+            <UserCheck size={18} className="text-indigo-500" /> או שיבוץ מחליפה פנויה:
+          </label>
+          <div className="relative group">
+            <Search className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-indigo-500 transition-colors" size={18} />
             <input
               type="text"
               placeholder="חפשי לפי שם או טלפון..."
-              className="w-full pr-10 pl-4 py-3 bg-white border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+              className="w-full pr-12 pl-4 py-3.5 bg-slate-50 border-none rounded-2xl focus:ring-2 focus:ring-indigo-500 font-bold text-slate-700 transition-all outline-none"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              autoFocus
             />
           </div>
         </div>
 
         {/* List */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-2 bg-white">
+        <div className="flex-1 overflow-y-auto px-6 pb-8 space-y-2 mt-4 custom-calendar-scroll">
           {loading ? (
-            <div className="flex flex-col items-center justify-center p-10 space-y-3">
-              <Loader2 className="animate-spin text-blue-500 w-8 h-8" />
-              <p className="text-slate-400 text-sm font-medium">
-                בודק זמינות מחליפות...
-              </p>
+            <div className="flex flex-col items-center justify-center p-12 space-y-3">
+              <Loader2 className="animate-spin text-indigo-500 w-8 h-8" />
+              <p className="text-slate-400 text-sm font-bold">בודק זמינות מחליפות...</p>
             </div>
           ) : filteredSubstitutes.length === 0 ? (
-            <div className="text-center py-12 px-6 bg-slate-50 rounded-2xl border-2 border-dashed border-slate-200">
-              <div className="bg-slate-200 w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-4">
-                <UserCheck className="text-slate-400 w-6 h-6" />
-              </div>
-              <p className="text-slate-900 font-bold text-lg mb-1">
-                אין מחליפות פנויות
-              </p>
-              <p className="text-slate-500 text-sm">
-                {`לא נמצאו מחליפות ליום ${format(
-                  new Date(placement.date),
-                  "EEEE",
-                  { locale: he }
-                )}`}
-              </p>
-
-              <button
-                onClick={() => setSearchQuery("")}
-                className="mt-4 text-blue-600 text-sm font-bold hover:underline"
-              >
-                נסי לנקות את החיפוש
-              </button>
+            <div className="text-center py-12 px-6 bg-slate-50 rounded-[2rem] border-2 border-dashed border-slate-200">
+              <AlertCircle className="mx-auto text-slate-300 mb-4" size={32} />
+              <p className="text-slate-900 font-black text-lg">אין מחליפות פנויות</p>
+              <p className="text-slate-500 text-sm mt-1">לא נמצאו גננות שעובדות ביום זה</p>
             </div>
           ) : (
             filteredSubstitutes.map((sub) => (
               <div
                 key={sub.id}
-                className="flex items-center justify-between p-4 rounded-2xl hover:bg-blue-50 transition"
+                className="flex items-center justify-between p-4 bg-white rounded-2xl border border-slate-100 hover:border-indigo-200 hover:bg-indigo-50/30 transition-all group shadow-sm"
               >
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 bg-blue-600 text-white rounded-full flex items-center justify-center font-bold">
+                <div className="flex items-center gap-4">
+                  <div className="w-10 h-10 bg-indigo-600 text-white rounded-full flex items-center justify-center font-black shadow-md">
                     {sub.firstName[0]}
                   </div>
                   <div>
-                    <p className="font-bold">
-                      {sub.firstName} {sub.lastName}
-                    </p>
-                    <p className="text-xs text-slate-500">{sub.phoneNumber}</p>
+                    <p className="font-black text-slate-800">{sub.firstName} {sub.lastName}</p>
+                    <p className="text-xs text-slate-400 font-medium">{sub.phoneNumber}</p>
                   </div>
                 </div>
                 <button
-                  disabled={isAssigning}
-                  onClick={() => handleAssign(sub.id)}
-                  className="flex items-center gap-1 px-4 py-2 bg-emerald-50 text-emerald-600 rounded-xl font-bold text-xs hover:bg-emerald-600 hover:text-white disabled:opacity-50"
+                  disabled={isProcessing}
+                  onClick={() => updatePlacement(sub.id, "ASSIGNED")}
+                  className="px-5 py-2.5 bg-indigo-50 text-indigo-600 rounded-xl font-black text-xs hover:bg-indigo-600 hover:text-white transition-all active:scale-95 disabled:opacity-50"
                 >
-                  {isAssigning ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <>
-                      {" "}
-                      <UserCheck className="w-4 h-4" /> שבצי עכשיו{" "}
-                    </>
-                  )}
+                  {isProcessing ? <Loader2 size={16} className="animate-spin" /> : "שבצי"}
                 </button>
               </div>
             ))

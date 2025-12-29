@@ -5,10 +5,11 @@ import { format, addDays, isSameDay } from "date-fns";
 import { he } from "date-fns/locale";
 import {
   AlertCircle,
+  AlertTriangle,
   Calendar,
   ChevronLeft,
   Clock,
-  MapPin,
+  History,
   User,
 } from "lucide-react";
 import PlacementModal from "@/components/PlacementModal";
@@ -111,7 +112,7 @@ export default function SupervisorDashboardPage() {
             שלום, מפקחת 👋
           </h1>
           <p className="text-slate-500 font-medium text-sm italic">
-            הנה תמונת המצב של הגנים שתחת חסותך להיום.
+            הנה תמונת המצב של הגנים שתחת חסותך .
           </p>
         </div>
         <div className="bg-white px-4 py-2 rounded-2xl shadow-sm border border-slate-200 flex items-center gap-3">
@@ -165,7 +166,52 @@ export default function SupervisorDashboardPage() {
             })}
           </div>
         </section>
+      {/* --- חדש: סקציית דיווחים מהעבר (Pending Updates) --- */}
+      {dashboardData.pendingUpdates.length > 0 && (
+        <section className="bg-amber-50 rounded-[2rem] border-2 border-amber-100 p-6 animate-pulse-slow mb-5">
+          <div className="flex items-center justify-between mb-6">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-amber-500 rounded-lg text-white shadow-lg shadow-amber-200">
+                <History size={20} />
+              </div>
+              <div>
+                <h2 className="text-lg font-black text-amber-900 leading-none">השלמת דיווחים מהעבר</h2>
+                <p className="text-amber-700 text-xs font-medium mt-1">ישנם אירועים שעברו וטרם עודכנו בסטטוס סופי</p>
+              </div>
+            </div>
+            <span className="bg-amber-200 text-amber-900 text-xs font-black px-3 py-1 rounded-full">
+              {dashboardData.pendingUpdates.length} משימות
+            </span>
+          </div>
 
+          <div className="grid gap-3">
+            {dashboardData.pendingUpdates.map((update: any) => (
+              <div key={update.id} className="bg-white/80 backdrop-blur-sm rounded-2xl p-4 flex items-center justify-between border border-amber-200 hover:border-amber-400 transition-all shadow-sm group">
+                <div className="flex items-center gap-4">
+                  <div className="w-10 h-10 bg-amber-100 rounded-xl flex items-center justify-center text-amber-600">
+                    <AlertTriangle size={20} />
+                  </div>
+                  <div>
+                    <h4 className="font-bold text-slate-800 text-sm">{update.institution.name}</h4>
+                    <p className="text-xs text-slate-500">
+                      בתאריך: <span className="font-bold">{new Date(update.date).toLocaleDateString("he-IL")}</span> | גננת: {update.mainTeacher.firstName}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => {
+                    setSelectedPlacement(update);
+                    setIsModalOpen(true);
+                  }}
+                  className="px-4 py-2 bg-amber-600 text-white text-xs font-black rounded-xl hover:bg-amber-700 transition-colors shadow-md shadow-amber-100"
+                >
+                  עדכני עכשיו
+                </button>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           {/* Main Column: Urgent Alerts */}
           <div className="lg:col-span-2 space-y-6">
