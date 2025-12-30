@@ -10,15 +10,18 @@ export async function db_registerUser(userData: any) {
     dateOfBirth,
     supervisorId,
     instructorId,
+    rotationTeacherId,
     ...rest
   } = userData;
 
   const hashedPassword = await bcrypt.hash(password, 10);
   const encryptedID = encrypt(idNumber);
+
+  // בדיקה לפי email במקום username
   const existing = await prisma.user.findUnique({
-    where: { username: rest.username },
+    where: { email: rest.email },
   });
-  if (existing) throw new Error("שם משתמש כבר קיים");
+  if (existing) throw new Error("אימייל זה כבר קיים במערכת");
 
   return await prisma.user.create({
     data: {
@@ -26,17 +29,17 @@ export async function db_registerUser(userData: any) {
       password: hashedPassword,
       idNumber: encryptedID,
       dateOfBirth: new Date(dateOfBirth),
-      // הוספת ה-IDs של המנהלות אם קיימים
       supervisorId: supervisorId || null,
       instructorId: instructorId || null,
+      rotationTeacherId: rotationTeacherId || null,
     },
   });
 }
 
-export async function db_login(username: string, password: string) {
-  const user = await prisma.user.findUnique({ where: { username } });
+export async function db_login(email: string, password: string) {
+  const user = await prisma.user.findUnique({ where: { email } });
   if (!user || !(await bcrypt.compare(password, user.password))) {
-    throw new Error("שם משתמש או סיסמה שגויים");
+    throw new Error("אימייל או סיסמה שגויים");
   }
 
   const token = jwt.sign(

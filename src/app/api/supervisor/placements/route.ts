@@ -14,7 +14,6 @@ export async function GET() {
     const today = new Date();
     const startOfToday = new Date(today.setHours(0, 0, 0, 0));
     const endOfToday = new Date(today.setHours(23, 59, 59, 999));
-
     const instructors = await prisma.user.findMany({
       where: {
         supervisorId: session.id,
@@ -191,7 +190,7 @@ export async function PATCH(request: Request) {
       }
     }
 
-    return NextResponse.json(updatedPlacement);
+    return NextResponse.json(updatedPlacement || []);
   } catch (error) {
     console.error("PATCH Error:", error);
     return NextResponse.json({ message: "שגיאה בעדכון" }, { status: 500 });

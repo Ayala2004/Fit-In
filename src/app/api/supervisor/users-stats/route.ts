@@ -1,6 +1,8 @@
-    import { NextResponse } from 'next/server';
+// src/app/api/supervisor/users-stats/route.ts
+import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { getSession } from '@/lib/auth';
+import { decrypt } from '@/utils/crypto';
 
 export async function GET() {
   const session = await getSession();
@@ -9,29 +11,31 @@ export async function GET() {
   }
 
   try {
-    // שליפת כל המשתמשים שקשורים למפקחת הזו
-    // כולל ספירה של שיבוצים כגננת אם (היעדרויות) וכמחליפה
     const users = await prisma.user.findMany({
       where: {
         OR: [
           { supervisorId: session.id },
-          { roles: { hasSome: ["SUBSTITUTE", "ROTATION"] } } // מחליפות הן בפורל הכללי
+          // כולל מחליפות ורוטציה שמשויכות למחוז או כלליות
+          { roles: { hasSome: ["SUBSTITUTE", "ROTATION"] } }
         ]
       },
       include: {
-        _count: {
-          select: {
-            placementsAsMain: true, // כמה פעמים נעדרה
-            placementsAsSub: true,  // כמה פעמים החליפה
-          }
-        },
-        mainManagedInstitutions: { select: { name: true } }
+        mainManagedInstitutions: { select: { name: true } },
+        instructor: { select: { firstName: true, lastName: true } }
       },
-      orderBy: { lastName: 'asc' }
+      orderBy: { firstName: 'asc' }
     });
 
-    return NextResponse.json(users);
+    const decryptedUsers = users.map(u => ({
+      ...u,
+      // פענוח תעודת זהות לצורך הצגה למפקחת
+      idNumber: u.idNumber ? decrypt(u.idNumber) : "לא הוזן",
+      // המרת תאריך לפורמט שקלט HTML מבין (YYYY-MM-DD)
+      dateOfBirth: u.dateOfBirth ? new Date(u.dateOfBirth).toISOString().split('T')[0] : ""
+    }));
+
+    return NextResponse.json(decryptedUsers);
   } catch (error) {
-    return NextResponse.json({ message: "שגיאה בטעינת נתונים" }, { status: 500 });
+    return NextResponse.json({ message: "שגיאת שרת" }, { status: 500 });
   }
 }

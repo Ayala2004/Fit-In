@@ -11,6 +11,7 @@ import {
 } from "@/services/placementService";
 import { prisma } from "@/lib/prisma";
 import { Role } from "@prisma/client";
+import { getSession } from "@/lib/auth";
 
 // ---------- GET ----------
 export async function GET(request: Request) {
@@ -51,7 +52,7 @@ export async function POST(request: Request) {
         break;
 
       case "login":
-        result = await db_login(data.username, data.password);
+        result = await db_login(data.email, data.password);
         break;
 
       case "institution":
@@ -88,7 +89,13 @@ export async function POST(request: Request) {
           data.supervisorId
         );
         break;
-
+      case "allInstitutions":
+        const session = await getSession();
+        result = await prisma.institution.findMany({
+          where: { supervisorId: session.id }, // רק הגנים שלה!
+          select: { id: true, name: true },
+        });
+        break;
       default:
         return NextResponse.json({ error: "Invalid type" }, { status: 400 });
     }

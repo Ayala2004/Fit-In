@@ -32,9 +32,9 @@ enum Day {
   FRIDAY
   SATURDAY
 }
+
 model User {
   id          String   @id @default(auto()) @map("_id") @db.ObjectId
-  username    String   @unique
   password    String
   firstName   String
   lastName    String
@@ -58,19 +58,24 @@ model User {
   subordinatesSup User[]   @relation("UserSupervisor")
   subordinatesIns User[]   @relation("UserInstructor")
 
-  // קשרים למוסדות
+  // --- חדש: רוטציה קבועה ---
+  // גננת אם יכולה להחזיק גננת רוטציה קבועה אחת
+  rotationTeacherId String? @db.ObjectId
+  rotationTeacher   User?   @relation("PermanentRotation", fields: [rotationTeacherId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  
+  // גננת רוטציה יכולה להיות משויכת לכמה גננות אם (בימים שונים)
+  rotationForManagers User[] @relation("PermanentRotation")
+  // -----------------------
+
   managedInstitutions    Institution[] @relation("InstitutionManager")
   instructedInstitutions Institution[] @relation("InstitutionInstructor")
-  mainManagedInstitutions Institution[] @relation("InstitutionMainManager") // תיקון: קשר לגננת אם
+  mainManagedInstitutions Institution[] @relation("InstitutionMainManager")
 
   institutionId String?      @db.ObjectId
   institution   Institution? @relation("InstitutionUsers", fields: [institutionId], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
-  // שיבוצים
   placementsAsMain Placement[] @relation("MainTeacher")
   placementsAsSub  Placement[] @relation("SubstituteTeacher")
-
-  // התראות
   notifications    Notification[]
 }
 
