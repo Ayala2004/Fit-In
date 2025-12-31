@@ -1,6 +1,6 @@
 "use client";
 
-import { X, Clock, CheckCircle, XCircle, UserCheck, Calendar } from "lucide-react";
+import { X, Clock, CheckCircle, XCircle, Calendar } from "lucide-react";
 import { format } from "date-fns";
 import { he } from "date-fns/locale";
 
@@ -8,14 +8,23 @@ interface Props {
   isOpen: boolean;
   onClose: () => void;
   activities: any[];
+  isLoading: boolean;
 }
 
-export default function RecentActivityModal({ isOpen, onClose, activities }: Props) {
+export default function RecentActivityModal({
+  isOpen,
+  onClose,
+  activities,
+  isLoading,
+}: Props) {
   if (!isOpen) return null;
 
   // קיבוץ לפי תאריכים
   const groupedActivities = activities.reduce((acc: any, activity: any) => {
-    const date = format(new Date(activity.updatedAt || activity.date), "yyyy-MM-dd");
+    const date = format(
+      new Date(activity.updatedAt || activity.date),
+      "yyyy-MM-dd"
+    );
     if (!acc[date]) {
       acc[date] = [];
     }
@@ -23,8 +32,8 @@ export default function RecentActivityModal({ isOpen, onClose, activities }: Pro
     return acc;
   }, {});
 
-  const sortedDates = Object.keys(groupedActivities).sort((a, b) => 
-    new Date(b).getTime() - new Date(a).getTime()
+  const sortedDates = Object.keys(groupedActivities).sort(
+    (a, b) => new Date(b).getTime() - new Date(a).getTime()
   );
 
   const getActivityIcon = (activity: any) => {
@@ -58,9 +67,11 @@ export default function RecentActivityModal({ isOpen, onClose, activities }: Pro
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm" dir="rtl">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
+      dir="rtl"
+    >
       <div className="bg-white w-full max-w-3xl rounded-xl shadow-2xl flex flex-col max-h-[85vh]">
-        
         {/* Header */}
         <div className="p-6 border-b border-gray-200 flex justify-between items-center">
           <div className="flex items-center gap-3">
@@ -68,12 +79,18 @@ export default function RecentActivityModal({ isOpen, onClose, activities }: Pro
               <Clock size={20} className="text-gray-700" />
             </div>
             <div>
-              <h2 className="text-xl font-semibold text-gray-900">עדכונים אחרונים</h2>
-              <p className="text-sm text-gray-500 mt-0.5">{activities.length} פעילויות במערכת</p>
+              <h2 className="text-xl font-semibold text-gray-900">
+                עדכונים אחרונים
+              </h2>
+              {!isLoading && (
+                <p className="text-sm text-gray-500 mt-0.5">
+                  {activities.length} פעילויות במערכת
+                </p>
+              )}
             </div>
           </div>
-          <button 
-            onClick={onClose} 
+          <button
+            onClick={onClose}
             className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
           >
             <X size={20} className="text-gray-500" />
@@ -82,7 +99,12 @@ export default function RecentActivityModal({ isOpen, onClose, activities }: Pro
 
         {/* Content */}
         <div className="overflow-y-auto p-6 space-y-6">
-          {sortedDates.length === 0 ? (
+          {isLoading ? (
+            <div className="flex flex-col items-center justify-center py-20 text-gray-500">
+              <Clock className="animate-spin mb-4" size={36} />
+              <p className="text-sm">טוען פעילויות...</p>
+            </div>
+          ) : sortedDates.length === 0 ? (
             <div className="text-center py-12">
               <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
                 <Clock size={32} className="text-gray-400" />
@@ -96,7 +118,9 @@ export default function RecentActivityModal({ isOpen, onClose, activities }: Pro
                 <div className="flex items-center gap-2 mb-3  top-0 bg-white py-2">
                   <Calendar size={16} className="text-gray-400" />
                   <h3 className="text-sm font-semibold text-gray-900">
-                    {format(new Date(date), "EEEE, d MMMM yyyy", { locale: he })}
+                    {format(new Date(date), "EEEE, d MMMM yyyy", {
+                      locale: he,
+                    })}
                   </h3>
                   <div className="flex-1 h-px bg-gray-200"></div>
                 </div>
@@ -106,7 +130,9 @@ export default function RecentActivityModal({ isOpen, onClose, activities }: Pro
                   {groupedActivities[date].map((activity: any) => (
                     <div
                       key={activity.id}
-                      className={`p-4 rounded-lg border-r-4 transition-all hover:shadow-md ${getActivityColor(activity)}`}
+                      className={`p-4 rounded-lg border-r-4 transition-all hover:shadow-md ${getActivityColor(
+                        activity
+                      )}`}
                     >
                       <div className="flex items-start gap-3">
                         <div className="mt-0.5">
@@ -118,12 +144,16 @@ export default function RecentActivityModal({ isOpen, onClose, activities }: Pro
                           </p>
                           {activity.mainTeacher && (
                             <p className="text-xs text-gray-500 mt-1">
-                              גננת: {activity.mainTeacher.firstName} {activity.mainTeacher.lastName}
+                              גננת: {activity.mainTeacher.firstName}{" "}
+                              {activity.mainTeacher.lastName}
                             </p>
                           )}
                         </div>
                         <span className="text-xs text-gray-400 font-medium whitespace-nowrap">
-                          {format(new Date(activity.updatedAt || activity.date), "HH:mm")}
+                          {format(
+                            new Date(activity.updatedAt || activity.date),
+                            "HH:mm"
+                          )}
                         </span>
                       </div>
                     </div>
@@ -133,7 +163,6 @@ export default function RecentActivityModal({ isOpen, onClose, activities }: Pro
             ))
           )}
         </div>
-
       </div>
     </div>
   );

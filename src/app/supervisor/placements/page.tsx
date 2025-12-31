@@ -158,7 +158,7 @@ export default function DistrictManagementPage() {
           onClick={() => { setActiveTab("ALL_USERS"); loadAllUsers(); }}
           className={`flex-1 py-3 rounded-2xl font-black text-sm transition-all ${activeTab === "ALL_USERS" ? "bg-white text-indigo-600 shadow-sm" : "text-slate-500"}`}
         >
-          כל הצוות
+         ניהול כח אדם
         </button>
         <button
           onClick={() => setActiveTab("INSTITUTIONS")}

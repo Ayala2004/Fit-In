@@ -33,6 +33,9 @@ export default function SupervisorDashboardPage() {
     } catch (e) {
       console.error(e);
     }
+     finally {
+    setLoading(false); 
+  }
   };
 
   const loadFullHistory = async () => {
@@ -406,6 +409,7 @@ export default function SupervisorDashboardPage() {
         isOpen={isActivityModalOpen}
         onClose={() => setIsActivityModalOpen(false)}
         activities={fullHistory}
+        isLoading={loadingHistory}
       />
     </div>
   );

@@ -875,6 +875,7 @@ export async function GET(request: Request) {
 ==============================
 FILE: src/app\api\supervisor\users\[id]\route.ts
 ==============================
+// src/app/api/supervisor/users/[id]/route.ts
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth";
@@ -882,24 +883,26 @@ import { encrypt } from "@/utils/crypto";
 
 export async function PATCH(
   req: Request,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> } // עדכון טיפוס הנתונים ל-Promise
 ) {
   const session = await getSession();
+
   if (!session || !session.roles.includes("SUPERVISOR")) {
     return NextResponse.json({ message: "לא מורשה" }, { status: 401 });
   }
 
   try {
     const body = await req.json();
-    const { id } = params;
+    const { id } = await params; // חובה לעשות await ל-params ב-Next.js 15
 
-    // 2. ניקוי הנתונים (Whitelisting)
-    // אנחנו מוציאים החוצה את כל מה שלא אמור להיכנס ישירות לעדכון של Prisma
+    // 1. הוצאת שדות שאינם שדות פשוטים ב-Database
     const {
       id: _id,
       idNumber,
       instructorId,
-      rotationTeacherId, // השם המדויק מהסכימה (schema.prisma)
+      rotationTeacherId,
+      username,
+      permanentRotationId,
       instructor,
       supervisor,
       rotationTeacher,
@@ -909,32 +912,26 @@ export async function PATCH(
       placementsAsMain,
       placementsAsSub,
       notifications,
+      rotationForManagers,
       _count,
       ...otherFields
     } = body;
 
-    // 3. הכנת אובייקט העדכון
+    // 2. הכנת אובייקט הנתונים לעדכון
     const updateData: any = { ...otherFields };
-    
-    if (rotationTeacherId === "" || !rotationTeacherId) {
-      updateData.rotationTeacherId = null;
-    } else {
-      updateData.rotationTeacherId = rotationTeacherId;
-    }
 
-    // 4. טיפול בתעודת זהות (חייבת להיות מוצפנת לפני השמירה)
+    // 3. טיפול ב-instructorId (MongoDB חייב ObjectId תקין או null)
+    updateData.instructorId = (instructorId === "" || !instructorId) ? null : instructorId;
+
+    // 4. טיפול ב-rotationTeacherId (MongoDB חייב ObjectId תקין או null)
+    updateData.rotationTeacherId = (rotationTeacherId === "" || !rotationTeacherId) ? null : rotationTeacherId;
+
+    // 5. טיפול בתעודת זהות (הצפנה)
     if (idNumber) {
       updateData.idNumber = encrypt(idNumber);
     }
 
-    // 5. טיפול ב-instructorId (MongoDB חייב ObjectId תקין או null)
-    if (instructorId === "" || !instructorId) {
-      updateData.instructorId = null;
-    } else {
-      updateData.instructorId = instructorId;
-    }
-
-    // 6. ביצוע העדכון
+    // 6. ביצוע העדכון בפועל
     const updatedUser = await prisma.user.update({
       where: { id: id },
       data: updateData,
@@ -943,22 +940,12 @@ export async function PATCH(
     return NextResponse.json(updatedUser);
   } catch (error: any) {
     console.error("Prisma Update Error:", error);
-
-    // טיפול בשגיאת ייחודיות (למשל אימייל או ת"ז שכבר קיימים)
     if (error.code === "P2002") {
-      return NextResponse.json(
-        { message: "אימייל או תעודת זהות כבר קיימים במערכת" },
-        { status: 400 }
-      );
+      return NextResponse.json({ message: "אימייל או תעודת זהות כבר קיימים במערכת" }, { status: 400 });
     }
-
-    return NextResponse.json(
-      { message: "שגיאה פנימית בעדכון המשתמש" },
-      { status: 500 }
-    );
+    return NextResponse.json({ message: "שגיאת שרת פנימית בעדכון המשתמש" }, { status: 500 });
   }
 }
-
 ==============================
 FILE: src/app\api\supervisor\users-stats\route.ts
 ==============================
@@ -2162,6 +2149,9 @@ export default function SupervisorDashboardPage() {
     } catch (e) {
       console.error(e);
     }
+     finally {
+    setLoading(false); 
+  }
   };
 
   const loadFullHistory = async () => {
@@ -2535,6 +2525,7 @@ export default function SupervisorDashboardPage() {
         isOpen={isActivityModalOpen}
         onClose={() => setIsActivityModalOpen(false)}
         activities={fullHistory}
+        isLoading={loadingHistory}
       />
     </div>
   );
@@ -2563,437 +2554,259 @@ import {
   MapPin,
   Edit3,
   Settings2,
+  Loader2,
 } from "lucide-react";
 import UserDetailsModal from "@/components/UserDetailsModal";
 
 export default function DistrictManagementPage() {
-  const [activeTab, setActiveTab] = useState<
-    "STAFF" | "INSTITUTIONS" | "ALL_USERS"
-  >("STAFF");
+  // 1. States - כולם ברמה העליונה של הקומפוננטה
+  const [activeTab, setActiveTab] = useState<"STAFF" | "INSTITUTIONS" | "ALL_USERS">("STAFF");
   const [allUsers, setAllUsers] = useState<any[]>([]);
-  const [selectedUserForEdit, setSelectedUserForEdit] = useState<any>(null);
   const [staffData, setStaffData] = useState<any[]>([]);
   const [institutions, setInstitutions] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
 
   // Modals States
+  const [selectedUserForEdit, setSelectedUserForEdit] = useState<any>(null);
   const [isAddTeacherOpen, setIsAddTeacherOpen] = useState(false);
   const [isAddSubstituteOpen, setIsAddSubstituteOpen] = useState(false);
   const [isAddInstitutionOpen, setIsAddInstitutionOpen] = useState(false);
   const [activeInstructor, setActiveInstructor] = useState<any>(null);
   const [selectedPlacement, setSelectedPlacement] = useState<any>(null);
 
+  // 2. פונקציות טעינה
   const loadData = async () => {
-    const [error, setError] = useState<string | null>(null); // הוסיפי State חדש לשגיאות
+    setLoading(true);
+    setError(null);
+    try {
+      const [staffRes, instRes] = await Promise.all([
+        fetch("/api/supervisor/placements"),
+        fetch("/api/supervisor/institutions"),
+      ]);
 
-    const loadData = async () => {
-      console.log("Starting to load data..."); // לוג לבדיקה
-      setLoading(true);
-      setError(null);
-
-      try {
-        const [staffRes, instRes] = await Promise.all([
-          fetch("/api/supervisor/placements"),
-          fetch("/api/supervisor/institutions"),
-        ]);
-
-        console.log("Staff status:", staffRes.status);
-        console.log("Institutions status:", instRes.status);
-
-        if (!staffRes.ok || !instRes.ok) {
-          throw new Error(
-            `שגיאת שרת: פלייסמנטס (${staffRes.status}), מוסדות (${instRes.status})`
-          );
-        }
-
-        const staffJson = await staffRes.json();
-        const instJson = await instRes.json();
-
-        setStaffData(Array.isArray(staffJson) ? staffJson : []);
-        setInstitutions(Array.isArray(instJson) ? instJson : []);
-
-        console.log("Data loaded successfully");
-      } catch (err: any) {
-        console.error("Detailed Load Error:", err);
-        setError(err.message || "תקלה לא ידועה בטעינת הנתונים");
-        setStaffData([]);
-        setInstitutions([]);
-      } finally {
-        setLoading(false); // זה ישחרר את ה"טוען..." בכל מקרה
+      if (!staffRes.ok || !instRes.ok) {
+        throw new Error("שגיאה במשיכת נתונים מהשרת");
       }
-    };
 
-    const filteredStaff = (Array.isArray(staffData) ? staffData : []).filter(
-      (inst) =>
-        `${inst.firstName} ${inst.lastName}`
-          .toLowerCase()
-          .includes(searchTerm.toLowerCase()) ||
-        inst.subordinatesIns?.some((g: any) =>
-          `${g.firstName} ${g.lastName}`
-            .toLowerCase()
-            .includes(searchTerm.toLowerCase())
-        )
-    );
+      const staffJson = await staffRes.json();
+      const instJson = await instRes.json();
 
-    const filteredInstitutions = (
-      Array.isArray(institutions) ? institutions : []
-    ).filter(
-      (inst) =>
-        inst.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        inst.institutionNumber?.includes(searchTerm)
-    );
-
-    const loadAllUsers = async () => {
-      try {
-        const res = await fetch("/api/supervisor/users-stats");
-        const data = await res.json();
-        setAllUsers(Array.isArray(data) ? data : []);
-      } catch (error) {
-        setAllUsers([]);
-      }
-    };
-
-    if (loading) {
-      return (
-        <div className="min-h-screen flex flex-col items-center justify-center font-bold gap-4">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
-          <p>טוען נתוני מחוז...</p>
-        </div>
-      );
+      setStaffData(Array.isArray(staffJson) ? staffJson : []);
+      setInstitutions(Array.isArray(instJson) ? instJson : []);
+    } catch (err: any) {
+      console.error("Load Error:", err);
+      setError(err.message);
+    } finally {
+      setLoading(false);
     }
+  };
 
-    if (error) {
-      return (
-        <div className="min-h-screen flex flex-col items-center justify-center text-red-600 font-bold gap-4">
-          <p>אופס! קרתה שגיאה:</p>
-          <code className="bg-red-50 p-4 rounded border border-red-200">
-            {error}
-          </code>
-          <button onClick={loadData} className="btn-primary">
-            נסה שוב
-          </button>
-        </div>
-      );
+  const loadAllUsers = async () => {
+    try {
+      const res = await fetch("/api/supervisor/users-stats");
+      const data = await res.json();
+      setAllUsers(Array.isArray(data) ? data : []);
+    } catch (error) {
+      setAllUsers([]);
     }
+  };
+
+  // טעינה ראשונית
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  // 3. משתנים מחושבים (סינון) - מחוץ לפונקציות
+  const filteredStaff = (Array.isArray(staffData) ? staffData : []).filter(
+    (inst) =>
+      `${inst.firstName} ${inst.lastName}`.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      inst.subordinatesIns?.some((g: any) =>
+        `${g.firstName} ${g.lastName}`.toLowerCase().includes(searchTerm.toLowerCase())
+      )
+  );
+
+  const filteredInstitutions = (Array.isArray(institutions) ? institutions : []).filter(
+    (inst) =>
+      inst.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      inst.institutionNumber?.includes(searchTerm)
+  );
+
+  // 4. טיפול במצבי טעינה ושגיאה (UI)
+  if (loading) {
     return (
-      <div
-        className="max-w-6xl mx-auto space-y-8 pb-12 animate-in fade-in duration-700"
-        dir="rtl"
-      >
-        {/* Header & Action Buttons */}
-        <div className="flex flex-col md:flex-row justify-between items-center gap-6">
-          <div className="flex items-center gap-4 w-full">
-            <div className="p-3 bg-indigo-600 rounded-2xl text-white shadow-lg shadow-indigo-100">
-              <Settings2 size={28} />
-            </div>
-            <div>
-              <h1 className="text-3xl font-black text-slate-800 tracking-tight">
-                מרכז ניהול מחוז
-              </h1>
-              <p className="text-slate-500 font-medium italic">
-                ניהול כוח אדם, מוסדות והדרכה
-              </p>
-            </div>
-          </div>
-
-          <div className="flex gap-2 w-full md:w-auto p-1 bg-white rounded-2xl shadow-sm border border-slate-100">
-            {/* כפתור 1 */}
-            <div className="relative group">
-              <button
-                onClick={() => setIsAddTeacherOpen(true)}
-                className="p-3 hover:bg-slate-50 rounded-xl text-indigo-600"
-              >
-                <UserPlus size={22} />
-              </button>
-              {/* Tooltip */}
-              <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-max max-w-xs bg-slate-900 text-white text-xs font-medium px-3 py-1 rounded opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity">
-                הוספת צוות ניהול
-              </span>
-            </div>
-
-            {/* כפתור 2 */}
-            <div className="relative group">
-              <button
-                onClick={() => setIsAddSubstituteOpen(true)}
-                className="p-3 hover:bg-slate-50 rounded-xl text-emerald-600"
-              >
-                <SparklesIcon size={22} />
-              </button>
-              <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-max max-w-xs bg-slate-900 text-white text-xs font-medium px-3 py-1 rounded opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity">
-                הוספת צוות מחליף
-              </span>
-            </div>
-
-            {/* כפתור 3 */}
-            <div className="relative group">
-              <button
-                onClick={() => setIsAddInstitutionOpen(true)}
-                className="p-3 hover:bg-slate-50 rounded-xl text-pink-600"
-              >
-                <Plus size={22} />
-              </button>
-              <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-max max-w-xs bg-slate-900 text-white text-xs font-medium px-3 py-1 rounded opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity">
-                הקמת גן חדש
-              </span>
-            </div>
-          </div>
-        </div>
-        {/* Tab Switcher */}
-        <div className="flex gap-4 p-1.5 bg-slate-100 rounded-3xl w-full max-w-md">
-          <button
-            onClick={() => setActiveTab("STAFF")}
-            className={`flex-1 py-3 rounded-2xl font-black text-sm transition-all ${
-              activeTab === "STAFF"
-                ? "bg-white text-indigo-600 shadow-sm"
-                : "text-slate-500 hover:text-slate-700"
-            }`}
-          >
-            צוות הדרכה וגננות
-          </button>
-          <button
-            onClick={() => {
-              setActiveTab("ALL_USERS");
-              loadAllUsers();
-            }}
-            className={`flex-1 py-3 rounded-2xl font-black text-sm transition-all ${
-              activeTab === "ALL_USERS"
-                ? "bg-white text-indigo-600 shadow-sm"
-                : "text-slate-500"
-            }`}
-          >
-            ניהול כל הצוות
-          </button>
-          <button
-            onClick={() => setActiveTab("INSTITUTIONS")}
-            className={`flex-1 py-3 rounded-2xl font-black text-sm transition-all ${
-              activeTab === "INSTITUTIONS"
-                ? "bg-white text-indigo-600 shadow-sm"
-                : "text-slate-500 hover:text-slate-700"
-            }`}
-          >
-            ניהול מוסדות (גנים)
-          </button>
-        </div>
-        {/* Search Bar */}
-        <div className="relative group">
-          <Search
-            className="absolute right-5 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-indigo-500"
-            size={20}
-          />
-          <input
-            type="text"
-            placeholder={
-              activeTab === "STAFF"
-                ? "חיפוש מדריכה או גננת..."
-                : "חיפוש לפי שם גן או מספר מוסד..."
-            }
-            className="w-full pr-14 pl-6 py-4 bg-white border border-slate-100 rounded-[2rem] shadow-sm focus:ring-2 focus:ring-indigo-500 font-bold text-slate-700 transition-all outline-none"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-          />
-        </div>
-        {/* Content - Tab Staff */}
-        {activeTab === "STAFF" && (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {filteredStaff.map((instructor) => (
-              <div
-                key={instructor.id}
-                onClick={() => setActiveInstructor(instructor)}
-                className="group bg-white rounded-[2rem] border border-slate-100 shadow-sm hover:shadow-xl transition-all cursor-pointer overflow-hidden flex flex-col"
-              >
-                <div className="p-8 pb-4">
-                  <div className="px-3 py-1 bg-indigo-50 text-indigo-600 text-[10px] font-black uppercase tracking-widest rounded-lg inline-block mb-4">
-                    מדריכה
-                  </div>
-                  <h3 className="text-xl font-black text-slate-800">
-                    {highlightText(
-                      `${instructor.firstName} ${instructor.lastName}`,
-                      searchTerm
-                    )}
-                  </h3>
-                  <p className="text-slate-400 text-sm mb-6">
-                    {instructor.email}
-                  </p>
-                  <div className="inline-flex items-center gap-3 px-5 py-3 bg-slate-50 rounded-2xl border border-slate-100 w-full font-bold text-slate-700">
-                    <Users size={18} className="text-indigo-500" />{" "}
-                    {instructor.subordinatesIns?.length || 0} גננות אם
-                  </div>
-                </div>
-                <div className="mt-auto p-6 bg-slate-50/50 border-t flex justify-between items-center text-sm font-bold text-slate-500 group-hover:text-indigo-600 transition-colors">
-                  <span>צפייה בפרטים ושיבוץ</span>
-                  <ChevronLeft size={18} />
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {activeTab === "ALL_USERS" && (
-          <div className="bg-white rounded-[2rem] border border-slate-100 overflow-hidden shadow-sm">
-            <table className="w-full text-right">
-              <thead className="bg-slate-50 border-b border-slate-100">
-                <tr>
-                  <th className="p-4 text-xs font-black text-slate-400">
-                    שם מלא
-                  </th>
-                  <th className="p-4 text-xs font-black text-slate-400">
-                    תפקיד
-                  </th>
-                  <th className="p-4 text-xs font-black text-slate-400">ת.ז</th>
-                  <th className="p-4 text-xs font-black text-slate-400">
-                    טלפון
-                  </th>
-                  <th className="p-4 text-xs font-black text-slate-400">
-                    סטטוס
-                  </th>
-                  <th className="p-4 text-xs font-black text-slate-400">
-                    פעולות
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-50">
-                {allUsers
-                  .filter(
-                    (u) =>
-                      `${u.firstName} ${u.lastName}`.includes(searchTerm) ||
-                      u.idNumber.includes(searchTerm)
-                  )
-                  .map((u) => (
-                    <tr
-                      key={u.id}
-                      className="hover:bg-slate-50/50 transition-colors"
-                    >
-                      <td className="p-4 font-bold text-slate-700">
-                        {u.firstName} {u.lastName}
-                      </td>
-                      <td className="p-4">
-                        <div className="flex gap-1">
-                          {u.roles.map((r: any) => (
-                            <span
-                              key={r}
-                              className="text-[10px] bg-slate-100 px-2 py-0.5 rounded-md font-bold text-slate-500"
-                            >
-                              {r === "MANAGER"
-                                ? "אם"
-                                : r === "SUBSTITUTE"
-                                ? "מחליפה"
-                                : r === "INSTRUCTOR"
-                                ? "מדריכה"
-                                : "רוטציה"}
-                            </span>
-                          ))}
-                        </div>
-                      </td>
-                      <td className="p-4 text-sm font-mono text-slate-600">
-                        {u.idNumber}
-                      </td>
-                      <td className="p-4 text-sm text-slate-600">
-                        {u.phoneNumber}
-                      </td>
-                      <td className="p-4">
-                        <span
-                          className={`w-2 h-2 rounded-full inline-block ${
-                            u.isWorking ? "bg-emerald-500" : "bg-red-500"
-                          }`}
-                        />
-                      </td>
-                      <td className="p-4">
-                        <button
-                          onClick={() => setSelectedUserForEdit(u)}
-                          className="text-brand-main font-bold text-xs hover:underline"
-                        >
-                          עריכה
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-        {/* Content - Tab Institutions */}
-        {activeTab === "INSTITUTIONS" && (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {filteredInstitutions.map((inst) => (
-              <div
-                key={inst.id}
-                className="bg-white rounded-[2rem] border border-slate-100 shadow-sm p-8 flex flex-col hover:shadow-lg transition-all relative group"
-              >
-                <button className="absolute top-6 left-6 p-2 bg-slate-50 text-slate-400 rounded-full hover:bg-indigo-50 hover:text-indigo-600 transition-all opacity-0 group-hover:opacity-100 shadow-sm">
-                  <Edit3 size={16} />
-                </button>
-                <div className="w-12 h-12 bg-pink-50 text-pink-600 rounded-2xl flex items-center justify-center mb-6 shadow-sm">
-                  <Building2 size={24} />
-                </div>
-                <h3 className="text-xl font-black text-slate-800 mb-1">
-                  {highlightText(inst.name, searchTerm)}
-                </h3>
-                <p className="text-slate-400 text-xs font-bold uppercase tracking-widest mb-6">
-                  סמל מוסד: {inst.institutionNumber}
-                </p>
-
-                <div className="space-y-3">
-                  <div className="flex items-center gap-3 text-slate-600 text-sm font-medium">
-                    <MapPin size={14} className="text-indigo-500" />{" "}
-                    {inst.address}
-                  </div>
-                  <div className="flex items-center gap-3 text-slate-600 text-sm font-medium">
-                    <Users size={14} className="text-indigo-500" /> גננת:{" "}
-                    {inst.mainManager?.firstName} {inst.mainManager?.lastName}
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-        {/* Modals Container */}
-        <InstructorPlacementsModal
-          isOpen={!!activeInstructor}
-          onClose={() => setActiveInstructor(null)}
-          instructor={activeInstructor}
-          searchTerm={searchTerm}
-          onAssignClick={(p) => setSelectedPlacement(p)}
-        />
-        {selectedPlacement && (
-          <PlacementModal
-            isOpen={!!selectedPlacement}
-            placement={selectedPlacement}
-            onClose={() => setSelectedPlacement(null)}
-            onSuccess={loadData}
-          />
-        )}
-        {selectedUserForEdit && (
-          <UserDetailsModal
-            isOpen={!!selectedUserForEdit}
-            user={selectedUserForEdit}
-            onClose={() => setSelectedUserForEdit(null)}
-            onUpdateSuccess={() => {
-              loadAllUsers();
-              loadData();
-            }}
-          />
-        )}
-        <AddUserModal
-          isOpen={isAddTeacherOpen}
-          onClose={() => setIsAddTeacherOpen(false)}
-          onSuccess={loadData}
-        />
-        <AddSubstituteModal
-          isOpen={isAddSubstituteOpen}
-          onClose={() => setIsAddSubstituteOpen(false)}
-          onSuccess={loadData}
-        />
-        <AddInstitutionModal
-          isOpen={isAddInstitutionOpen}
-          onClose={() => setIsAddInstitutionOpen(false)}
-          onSuccess={loadData}
-        />
+      <div className="min-h-screen flex flex-col items-center justify-center font-bold gap-4">
+        <Loader2 className="animate-spin text-indigo-600" size={48} />
+        <p>טוען נתוני מחוז...</p>
       </div>
     );
-  };
-}
+  }
 
+  if (error) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center text-red-600 font-bold gap-4">
+        <p>אופס! קרתה שגיאה:</p>
+        <code className="bg-red-50 p-4 rounded border border-red-200">{error}</code>
+        <button onClick={loadData} className="px-4 py-2 bg-indigo-600 text-white rounded-lg">נסה שוב</button>
+      </div>
+    );
+  }
+
+  // 5. הרינדור הראשי
+  return (
+    <div className="max-w-6xl mx-auto space-y-8 pb-12 animate-in fade-in duration-700" dir="rtl">
+      {/* Header & Action Buttons */}
+      <div className="flex flex-col md:flex-row justify-between items-center gap-6">
+        <div className="flex items-center gap-4 w-full">
+          <div className="p-3 bg-indigo-600 rounded-2xl text-white shadow-lg shadow-indigo-100">
+            <Settings2 size={28} />
+          </div>
+          <div>
+            <h1 className="text-3xl font-black text-slate-800 tracking-tight">מרכז ניהול מחוז</h1>
+            <p className="text-slate-500 font-medium italic">ניהול כוח אדם, מוסדות והדרכה</p>
+          </div>
+        </div>
+
+        <div className="flex gap-2 w-full md:w-auto p-1 bg-white rounded-2xl shadow-sm border border-slate-100">
+          <button onClick={() => setIsAddTeacherOpen(true)} className="p-3 hover:bg-slate-50 rounded-xl text-indigo-600" title="הוספת צוות ניהול">
+            <UserPlus size={22} />
+          </button>
+          <button onClick={() => setIsAddSubstituteOpen(true)} className="p-3 hover:bg-slate-50 rounded-xl text-emerald-600" title="הוספת צוות מחליף">
+            <SparklesIcon size={22} />
+          </button>
+          <button onClick={() => setIsAddInstitutionOpen(true)} className="p-3 hover:bg-slate-50 rounded-xl text-pink-600" title="הקמת גן חדש">
+            <Plus size={22} />
+          </button>
+        </div>
+      </div>
+
+      {/* Tab Switcher */}
+      <div className="flex gap-4 p-1.5 bg-slate-100 rounded-3xl w-full max-w-md">
+        <button
+          onClick={() => setActiveTab("STAFF")}
+          className={`flex-1 py-3 rounded-2xl font-black text-sm transition-all ${activeTab === "STAFF" ? "bg-white text-indigo-600 shadow-sm" : "text-slate-500 hover:text-slate-700"}`}
+        >
+          צוות הדרכה
+        </button>
+        <button
+          onClick={() => { setActiveTab("ALL_USERS"); loadAllUsers(); }}
+          className={`flex-1 py-3 rounded-2xl font-black text-sm transition-all ${activeTab === "ALL_USERS" ? "bg-white text-indigo-600 shadow-sm" : "text-slate-500"}`}
+        >
+         ניהול כח אדם
+        </button>
+        <button
+          onClick={() => setActiveTab("INSTITUTIONS")}
+          className={`flex-1 py-3 rounded-2xl font-black text-sm transition-all ${activeTab === "INSTITUTIONS" ? "bg-white text-indigo-600 shadow-sm" : "text-slate-500 hover:text-slate-700"}`}
+        >
+          מוסדות
+        </button>
+      </div>
+
+      {/* Search Bar */}
+      <div className="relative group">
+        <Search className="absolute right-5 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
+        <input
+          type="text"
+          placeholder="חיפוש..."
+          className="input-standard pr-14 py-4 rounded-[2rem]"
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+        />
+      </div>
+
+      {/* STAFF TAB */}
+      {activeTab === "STAFF" && (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {filteredStaff.map((instructor) => (
+            <div key={instructor.id} onClick={() => setActiveInstructor(instructor)} className="group bg-white rounded-[2rem] border border-slate-100 shadow-sm hover:shadow-xl transition-all cursor-pointer overflow-hidden flex flex-col">
+              <div className="p-8 pb-4">
+                <div className="px-3 py-1 bg-indigo-50 text-indigo-600 text-[10px] font-black uppercase rounded-lg inline-block mb-4">מדריכה</div>
+                <h3 className="text-xl font-black text-slate-800">{instructor.firstName} {instructor.lastName}</h3>
+                <p className="text-slate-400 text-sm mb-6">{instructor.email}</p>
+                <div className="inline-flex items-center gap-3 px-5 py-3 bg-slate-50 rounded-2xl border border-slate-100 w-full font-bold text-slate-700">
+                  <Users size={18} className="text-indigo-500" /> {instructor.subordinatesIns?.length || 0} גננות אם
+                </div>
+              </div>
+              <div className="mt-auto p-6 bg-slate-50/50 border-t flex justify-between items-center text-sm font-bold text-slate-500 group-hover:text-indigo-600 transition-colors">
+                <span>צפייה בפרטים ושיבוץ</span>
+                <ChevronLeft size={18} />
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* ALL USERS TAB */}
+      {activeTab === "ALL_USERS" && (
+        <div className="bg-white rounded-[2rem] border border-slate-100 overflow-hidden shadow-sm">
+          <table className="w-full text-right">
+            <thead className="bg-slate-50 border-b border-slate-100 text-xs font-black text-slate-400">
+              <tr>
+                <th className="p-4">שם מלא</th>
+                <th className="p-4">תפקיד</th>
+                <th className="p-4">ת.ז</th>
+                <th className="p-4">טלפון</th>
+                <th className="p-4">סטטוס</th>
+                <th className="p-4">פעולות</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-50">
+              {allUsers.filter(u => `${u.firstName} ${u.lastName}`.includes(searchTerm) || u.idNumber.includes(searchTerm)).map((u) => (
+                <tr key={u.id} className="hover:bg-slate-50/50 transition-colors">
+                  <td className="p-4 font-bold text-slate-700">{u.firstName} {u.lastName}</td>
+                  <td className="p-4 flex gap-1">
+                    {u.roles.map((r: any) => (
+                      <span key={r} className="text-[10px] bg-slate-100 px-2 py-0.5 rounded-md font-bold text-slate-500">
+                        {r === "MANAGER" ? "אם" : r === "SUBSTITUTE" ? "מחליפה" : r === "INSTRUCTOR" ? "מדריכה" : "רוטציה"}
+                      </span>
+                    ))}
+                  </td>
+                  <td className="p-4 text-sm font-mono text-slate-600">{u.idNumber}</td>
+                  <td className="p-4 text-sm text-slate-600">{u.phoneNumber}</td>
+                  <td className="p-4">
+                    <span className={`w-2 h-2 rounded-full inline-block ${u.isWorking ? "bg-emerald-500" : "bg-red-500"}`} />
+                  </td>
+                  <td className="p-4">
+                    <button onClick={() => setSelectedUserForEdit(u)} className="text-indigo-600 font-bold text-xs hover:underline">עריכה</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* INSTITUTIONS TAB */}
+      {activeTab === "INSTITUTIONS" && (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {filteredInstitutions.map((inst) => (
+            <div key={inst.id} className="bg-white rounded-[2rem] border border-slate-100 shadow-sm p-8 flex flex-col hover:shadow-lg transition-all relative group">
+              <div className="w-12 h-12 bg-pink-50 text-pink-600 rounded-2xl flex items-center justify-center mb-6 shadow-sm"><Building2 size={24} /></div>
+              <h3 className="text-xl font-black text-slate-800 mb-1">{inst.name}</h3>
+              <p className="text-slate-400 text-xs font-bold uppercase mb-6">סמל: {inst.institutionNumber}</p>
+              <div className="space-y-3">
+                <div className="flex items-center gap-3 text-slate-600 text-sm font-medium"><MapPin size={14} className="text-indigo-500" /> {inst.address}</div>
+                <div className="flex items-center gap-3 text-slate-600 text-sm font-medium"><Users size={14} className="text-indigo-500" /> גננת: {inst.mainManager?.firstName} {inst.mainManager?.lastName}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Modals */}
+      {activeInstructor && (
+        <InstructorPlacementsModal isOpen={!!activeInstructor} onClose={() => setActiveInstructor(null)} instructor={activeInstructor} searchTerm={searchTerm} onAssignClick={(p) => setSelectedPlacement(p)} />
+      )}
+      {selectedUserForEdit && (
+        <UserDetailsModal isOpen={!!selectedUserForEdit} user={selectedUserForEdit} onClose={() => setSelectedUserForEdit(null)} onUpdateSuccess={() => { loadAllUsers(); loadData(); }} />
+      )}
+      <AddUserModal isOpen={isAddTeacherOpen} onClose={() => setIsAddTeacherOpen(false)} onSuccess={loadData} />
+      <AddSubstituteModal isOpen={isAddSubstituteOpen} onClose={() => setIsAddSubstituteOpen(false)} onSuccess={loadData} />
+      <AddInstitutionModal isOpen={isAddInstitutionOpen} onClose={() => setIsAddInstitutionOpen(false)} onSuccess={loadData} />
+    </div>
+  );
+}
 ==============================
 FILE: src/app\supervisor\statistics\page.tsx
 ==============================
@@ -5235,7 +5048,7 @@ FILE: src/components\RecentActivityModal.tsx
 ==============================
 "use client";
 
-import { X, Clock, CheckCircle, XCircle, UserCheck, Calendar } from "lucide-react";
+import { X, Clock, CheckCircle, XCircle, Calendar } from "lucide-react";
 import { format } from "date-fns";
 import { he } from "date-fns/locale";
 
@@ -5243,14 +5056,23 @@ interface Props {
   isOpen: boolean;
   onClose: () => void;
   activities: any[];
+  isLoading: boolean;
 }
 
-export default function RecentActivityModal({ isOpen, onClose, activities }: Props) {
+export default function RecentActivityModal({
+  isOpen,
+  onClose,
+  activities,
+  isLoading,
+}: Props) {
   if (!isOpen) return null;
 
   // קיבוץ לפי תאריכים
   const groupedActivities = activities.reduce((acc: any, activity: any) => {
-    const date = format(new Date(activity.updatedAt || activity.date), "yyyy-MM-dd");
+    const date = format(
+      new Date(activity.updatedAt || activity.date),
+      "yyyy-MM-dd"
+    );
     if (!acc[date]) {
       acc[date] = [];
     }
@@ -5258,8 +5080,8 @@ export default function RecentActivityModal({ isOpen, onClose, activities }: Pro
     return acc;
   }, {});
 
-  const sortedDates = Object.keys(groupedActivities).sort((a, b) => 
-    new Date(b).getTime() - new Date(a).getTime()
+  const sortedDates = Object.keys(groupedActivities).sort(
+    (a, b) => new Date(b).getTime() - new Date(a).getTime()
   );
 
   const getActivityIcon = (activity: any) => {
@@ -5293,9 +5115,11 @@ export default function RecentActivityModal({ isOpen, onClose, activities }: Pro
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm" dir="rtl">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
+      dir="rtl"
+    >
       <div className="bg-white w-full max-w-3xl rounded-xl shadow-2xl flex flex-col max-h-[85vh]">
-        
         {/* Header */}
         <div className="p-6 border-b border-gray-200 flex justify-between items-center">
           <div className="flex items-center gap-3">
@@ -5303,12 +5127,18 @@ export default function RecentActivityModal({ isOpen, onClose, activities }: Pro
               <Clock size={20} className="text-gray-700" />
             </div>
             <div>
-              <h2 className="text-xl font-semibold text-gray-900">עדכונים אחרונים</h2>
-              <p className="text-sm text-gray-500 mt-0.5">{activities.length} פעילויות במערכת</p>
+              <h2 className="text-xl font-semibold text-gray-900">
+                עדכונים אחרונים
+              </h2>
+              {!isLoading && (
+                <p className="text-sm text-gray-500 mt-0.5">
+                  {activities.length} פעילויות במערכת
+                </p>
+              )}
             </div>
           </div>
-          <button 
-            onClick={onClose} 
+          <button
+            onClick={onClose}
             className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
           >
             <X size={20} className="text-gray-500" />
@@ -5317,7 +5147,12 @@ export default function RecentActivityModal({ isOpen, onClose, activities }: Pro
 
         {/* Content */}
         <div className="overflow-y-auto p-6 space-y-6">
-          {sortedDates.length === 0 ? (
+          {isLoading ? (
+            <div className="flex flex-col items-center justify-center py-20 text-gray-500">
+              <Clock className="animate-spin mb-4" size={36} />
+              <p className="text-sm">טוען פעילויות...</p>
+            </div>
+          ) : sortedDates.length === 0 ? (
             <div className="text-center py-12">
               <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
                 <Clock size={32} className="text-gray-400" />
@@ -5331,7 +5166,9 @@ export default function RecentActivityModal({ isOpen, onClose, activities }: Pro
                 <div className="flex items-center gap-2 mb-3  top-0 bg-white py-2">
                   <Calendar size={16} className="text-gray-400" />
                   <h3 className="text-sm font-semibold text-gray-900">
-                    {format(new Date(date), "EEEE, d MMMM yyyy", { locale: he })}
+                    {format(new Date(date), "EEEE, d MMMM yyyy", {
+                      locale: he,
+                    })}
                   </h3>
                   <div className="flex-1 h-px bg-gray-200"></div>
                 </div>
@@ -5341,7 +5178,9 @@ export default function RecentActivityModal({ isOpen, onClose, activities }: Pro
                   {groupedActivities[date].map((activity: any) => (
                     <div
                       key={activity.id}
-                      className={`p-4 rounded-lg border-r-4 transition-all hover:shadow-md ${getActivityColor(activity)}`}
+                      className={`p-4 rounded-lg border-r-4 transition-all hover:shadow-md ${getActivityColor(
+                        activity
+                      )}`}
                     >
                       <div className="flex items-start gap-3">
                         <div className="mt-0.5">
@@ -5353,12 +5192,16 @@ export default function RecentActivityModal({ isOpen, onClose, activities }: Pro
                           </p>
                           {activity.mainTeacher && (
                             <p className="text-xs text-gray-500 mt-1">
-                              גננת: {activity.mainTeacher.firstName} {activity.mainTeacher.lastName}
+                              גננת: {activity.mainTeacher.firstName}{" "}
+                              {activity.mainTeacher.lastName}
                             </p>
                           )}
                         </div>
                         <span className="text-xs text-gray-400 font-medium whitespace-nowrap">
-                          {format(new Date(activity.updatedAt || activity.date), "HH:mm")}
+                          {format(
+                            new Date(activity.updatedAt || activity.date),
+                            "HH:mm"
+                          )}
                         </span>
                       </div>
                     </div>
@@ -5368,11 +5211,11 @@ export default function RecentActivityModal({ isOpen, onClose, activities }: Pro
             ))
           )}
         </div>
-
       </div>
     </div>
   );
 }
+
 ==============================
 FILE: src/components\UserDetailsModal.tsx
 ==============================
@@ -5484,27 +5327,37 @@ export default function UserDetailsModal({
     }));
   };
 
-  const handleUpdate = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    try {
-      const res = await fetch(`/api/supervisor/users/${user.id}`, {
-        method: "PATCH",
-        body: JSON.stringify(formData),
-        headers: { "Content-Type": "application/json" },
-      });
-      if (res.ok) {
-        onUpdateSuccess();
-        onClose();
-      } else {
-        alert("שגיאה בעדכון הנתונים");
-      }
-    } catch (err) {
-      alert("שגיאת תקשורת");
-    } finally {
-      setLoading(false);
+const handleUpdate = async (e: React.FormEvent) => {
+  e.preventDefault();
+  setLoading(true);
+  try {
+    // הכנת הנתונים למשלוח - וודאי שכל שדות ה-ID מנוקים
+    const payload = {
+      ...formData,
+      // המרת תאריך לידה חזרה לפורמט ISO שהשרת מצפה לו
+      dateOfBirth: new Date(user.dateOfBirth).toISOString(),
+    };
+
+    const res = await fetch(`/api/supervisor/users/${user.id}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload), // משלוח ה-payload הנקי
+      headers: { "Content-Type": "application/json" },
+    });
+
+    if (res.ok) {
+      onUpdateSuccess();
+      onClose();
+    } else {
+      const errorData = await res.json();
+      alert(errorData.message || "שגיאה בעדכון הנתונים");
     }
-  };
+  } catch (err) {
+    console.error("Update error:", err);
+    alert("שגיאת תקשורת עם השרת");
+  } finally {
+    setLoading(false);
+  }
+};
 
   if (!isOpen) return null;
 

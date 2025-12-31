@@ -106,27 +106,37 @@ export default function UserDetailsModal({
     }));
   };
 
-  const handleUpdate = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    try {
-      const res = await fetch(`/api/supervisor/users/${user.id}`, {
-        method: "PATCH",
-        body: JSON.stringify(formData),
-        headers: { "Content-Type": "application/json" },
-      });
-      if (res.ok) {
-        onUpdateSuccess();
-        onClose();
-      } else {
-        alert("שגיאה בעדכון הנתונים");
-      }
-    } catch (err) {
-      alert("שגיאת תקשורת");
-    } finally {
-      setLoading(false);
+const handleUpdate = async (e: React.FormEvent) => {
+  e.preventDefault();
+  setLoading(true);
+  try {
+    // הכנת הנתונים למשלוח - וודאי שכל שדות ה-ID מנוקים
+    const payload = {
+      ...formData,
+      // המרת תאריך לידה חזרה לפורמט ISO שהשרת מצפה לו
+      dateOfBirth: new Date(user.dateOfBirth).toISOString(),
+    };
+
+    const res = await fetch(`/api/supervisor/users/${user.id}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload), // משלוח ה-payload הנקי
+      headers: { "Content-Type": "application/json" },
+    });
+
+    if (res.ok) {
+      onUpdateSuccess();
+      onClose();
+    } else {
+      const errorData = await res.json();
+      alert(errorData.message || "שגיאה בעדכון הנתונים");
     }
-  };
+  } catch (err) {
+    console.error("Update error:", err);
+    alert("שגיאת תקשורת עם השרת");
+  } finally {
+    setLoading(false);
+  }
+};
 
   if (!isOpen) return null;
 
