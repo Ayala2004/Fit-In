@@ -20,18 +20,25 @@ import {
   Edit3,
   Settings2,
   Loader2,
+  User2Icon,
+  PlusCircle,
 } from "lucide-react";
 import UserDetailsModal from "@/components/UserDetailsModal";
+import EditInstitutionModal from "@/components/EditInstitutionModal";
 
 export default function DistrictManagementPage() {
-  // 1. States - כולם ברמה העליונה של הקומפוננטה
-  const [activeTab, setActiveTab] = useState<"STAFF" | "INSTITUTIONS" | "ALL_USERS">("STAFF");
+  const [activeTab, setActiveTab] = useState<
+    "STAFF" | "INSTITUTIONS" | "ALL_USERS"
+  >("STAFF");
   const [allUsers, setAllUsers] = useState<any[]>([]);
   const [staffData, setStaffData] = useState<any[]>([]);
   const [institutions, setInstitutions] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
+  const [selectedRoleFilter, setSelectedRoleFilter] = useState<string>("ALL");
+  const [selectedInstitutionForEdit, setSelectedInstitutionForEdit] =
+    useState<any>(null);
 
   // Modals States
   const [selectedUserForEdit, setSelectedUserForEdit] = useState<any>(null);
@@ -83,16 +90,71 @@ export default function DistrictManagementPage() {
     loadData();
   }, []);
 
+  const filteredAndSortedUsers = allUsers
+    .filter((u) => {
+      const fullName = `${u.firstName} ${u.lastName}`.toLowerCase();
+      const matchesSearch =
+        fullName.includes(searchTerm.toLowerCase()) ||
+        u.idNumber.includes(searchTerm);
+      const matchesRole =
+        selectedRoleFilter === "ALL" || u.roles.includes(selectedRoleFilter);
+      return matchesSearch && matchesRole;
+    })
+    .sort((a, b) => {
+      // אם נבחר "הכל", נקבץ לפי תפקיד לפי סדר חשיבות
+      if (selectedRoleFilter === "ALL") {
+        const rolePriority: any = {
+          INSTRUCTOR: 1,
+          MANAGER: 2,
+          ROTATION: 3,
+          SUBSTITUTE: 4,
+        };
+        // לוקחים את התפקיד הראשון של כל משתמשת לצורך המיון
+        const priorityA = rolePriority[a.roles[0]] || 5;
+        const priorityB = rolePriority[b.roles[0]] || 5;
+
+        if (priorityA !== priorityB) return priorityA - priorityB;
+      }
+      // בתוך אותו תפקיד (או אם מסונן), מיין לפי שם פרטי
+      return a.firstName.localeCompare(b.firstName, "he");
+    });
+
+  const roleFilters = [
+    { id: "ALL", label: "כל הצוות", color: "bg-slate-100 text-slate-600" },
+    {
+      id: "INSTRUCTOR",
+      label: "מדריכות",
+      color: "bg-purple-100 text-purple-600",
+    },
+    { id: "MANAGER", label: "גננות אם", color: "bg-pink-50 text-pink-400" },
+    {
+      id: "ROTATION",
+      label: "גננות רוטציה",
+      color: "bg-emerald-100 text-emerald-600",
+    },
+    {
+      id: "SUBSTITUTE",
+      label: "גננות מחליפות",
+      color: "bg-sky-100 text-sky-600",
+    },
+  ];
+
   // 3. משתנים מחושבים (סינון) - מחוץ לפונקציות
   const filteredStaff = (Array.isArray(staffData) ? staffData : []).filter(
     (inst) =>
-      `${inst.firstName} ${inst.lastName}`.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      `${inst.firstName} ${inst.lastName}`
+        .toLowerCase()
+        .includes(searchTerm.toLowerCase()) ||
       inst.subordinatesIns?.some((g: any) =>
-        `${g.firstName} ${g.lastName}`.toLowerCase().includes(searchTerm.toLowerCase())
+        `${g.firstName} ${g.lastName}`
+          .toLowerCase()
+          .includes(searchTerm.toLowerCase())
       )
   );
 
-  const filteredInstitutions = (Array.isArray(institutions) ? institutions : []).filter(
+  const filteredInstitutions = (
+    Array.isArray(institutions) ? institutions : []
+  ).filter(
     (inst) =>
       inst.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       inst.institutionNumber?.includes(searchTerm)
@@ -112,15 +174,25 @@ export default function DistrictManagementPage() {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center text-red-600 font-bold gap-4">
         <p>אופס! קרתה שגיאה:</p>
-        <code className="bg-red-50 p-4 rounded border border-red-200">{error}</code>
-        <button onClick={loadData} className="px-4 py-2 bg-indigo-600 text-white rounded-lg">נסה שוב</button>
+        <code className="bg-red-50 p-4 rounded border border-red-200">
+          {error}
+        </code>
+        <button
+          onClick={loadData}
+          className="px-4 py-2 bg-indigo-600 text-white rounded-lg"
+        >
+          נסה שוב
+        </button>
       </div>
     );
   }
 
   // 5. הרינדור הראשי
   return (
-    <div className="max-w-6xl mx-auto space-y-8 pb-12 animate-in fade-in duration-700" dir="rtl">
+    <div
+      className="max-w-6xl mx-auto space-y-8 pb-12 animate-in fade-in duration-700"
+      dir="rtl"
+    >
       {/* Header & Action Buttons */}
       <div className="flex flex-col md:flex-row justify-between items-center gap-6">
         <div className="flex items-center gap-4 w-full">
@@ -128,19 +200,35 @@ export default function DistrictManagementPage() {
             <Settings2 size={28} />
           </div>
           <div>
-            <h1 className="text-3xl font-black text-slate-800 tracking-tight">מרכז ניהול מחוז</h1>
-            <p className="text-slate-500 font-medium italic">ניהול כוח אדם, מוסדות והדרכה</p>
+            <h1 className="text-3xl font-black text-slate-800 tracking-tight">
+              מרכז ניהול מחוז
+            </h1>
+            <p className="text-slate-500 font-medium italic">
+              ניהול כוח אדם, מוסדות והדרכה
+            </p>
           </div>
         </div>
 
         <div className="flex gap-2 w-full md:w-auto p-1 bg-white rounded-2xl shadow-sm border border-slate-100">
-          <button onClick={() => setIsAddTeacherOpen(true)} className="p-3 hover:bg-slate-50 rounded-xl text-indigo-600" title="הוספת צוות ניהול">
+          <button
+            onClick={() => setIsAddTeacherOpen(true)}
+            className="p-3 hover:bg-slate-50 rounded-xl text-indigo-600"
+            title="הוספת צוות ניהול"
+          >
             <UserPlus size={22} />
           </button>
-          <button onClick={() => setIsAddSubstituteOpen(true)} className="p-3 hover:bg-slate-50 rounded-xl text-emerald-600" title="הוספת צוות מחליף">
-            <SparklesIcon size={22} />
+          <button
+            onClick={() => setIsAddSubstituteOpen(true)}
+            className="p-3 hover:bg-slate-50 rounded-xl text-emerald-600"
+            title="הוספת צוות מחליף"
+          >
+            <PlusCircle size={22} />
           </button>
-          <button onClick={() => setIsAddInstitutionOpen(true)} className="p-3 hover:bg-slate-50 rounded-xl text-pink-600" title="הקמת גן חדש">
+          <button
+            onClick={() => setIsAddInstitutionOpen(true)}
+            className="p-3 hover:bg-slate-50 rounded-xl text-pink-600"
+            title="הקמת גן חדש"
+          >
             <Plus size={22} />
           </button>
         </div>
@@ -150,19 +238,34 @@ export default function DistrictManagementPage() {
       <div className="flex gap-4 p-1.5 bg-slate-100 rounded-3xl w-full max-w-md">
         <button
           onClick={() => setActiveTab("STAFF")}
-          className={`flex-1 py-3 rounded-2xl font-black text-sm transition-all ${activeTab === "STAFF" ? "bg-white text-indigo-600 shadow-sm" : "text-slate-500 hover:text-slate-700"}`}
+          className={`flex-1 py-3 rounded-2xl font-black text-sm transition-all ${
+            activeTab === "STAFF"
+              ? "bg-white text-indigo-600 shadow-sm"
+              : "text-slate-500 hover:text-slate-700"
+          }`}
         >
           צוות הדרכה
         </button>
         <button
-          onClick={() => { setActiveTab("ALL_USERS"); loadAllUsers(); }}
-          className={`flex-1 py-3 rounded-2xl font-black text-sm transition-all ${activeTab === "ALL_USERS" ? "bg-white text-indigo-600 shadow-sm" : "text-slate-500"}`}
+          onClick={() => {
+            setActiveTab("ALL_USERS");
+            loadAllUsers();
+          }}
+          className={`flex-1 py-3 rounded-2xl font-black text-sm transition-all ${
+            activeTab === "ALL_USERS"
+              ? "bg-white text-indigo-600 shadow-sm"
+              : "text-slate-500"
+          }`}
         >
-         ניהול כח אדם
+          ניהול כח אדם
         </button>
         <button
           onClick={() => setActiveTab("INSTITUTIONS")}
-          className={`flex-1 py-3 rounded-2xl font-black text-sm transition-all ${activeTab === "INSTITUTIONS" ? "bg-white text-indigo-600 shadow-sm" : "text-slate-500 hover:text-slate-700"}`}
+          className={`flex-1 py-3 rounded-2xl font-black text-sm transition-all ${
+            activeTab === "INSTITUTIONS"
+              ? "bg-white text-indigo-600 shadow-sm"
+              : "text-slate-500 hover:text-slate-700"
+          }`}
         >
           מוסדות
         </button>
@@ -170,7 +273,10 @@ export default function DistrictManagementPage() {
 
       {/* Search Bar */}
       <div className="relative group">
-        <Search className="absolute right-5 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
+        <Search
+          className="absolute right-5 top-1/2 -translate-y-1/2 text-slate-400"
+          size={20}
+        />
         <input
           type="text"
           placeholder="חיפוש..."
@@ -184,13 +290,24 @@ export default function DistrictManagementPage() {
       {activeTab === "STAFF" && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {filteredStaff.map((instructor) => (
-            <div key={instructor.id} onClick={() => setActiveInstructor(instructor)} className="group bg-white rounded-[2rem] border border-slate-100 shadow-sm hover:shadow-xl transition-all cursor-pointer overflow-hidden flex flex-col">
+            <div
+              key={instructor.id}
+              onClick={() => setActiveInstructor(instructor)}
+              className="group bg-white rounded-[2rem] border border-slate-100 shadow-sm hover:shadow-xl transition-all cursor-pointer overflow-hidden flex flex-col"
+            >
               <div className="p-8 pb-4">
-                <div className="px-3 py-1 bg-indigo-50 text-indigo-600 text-[10px] font-black uppercase rounded-lg inline-block mb-4">מדריכה</div>
-                <h3 className="text-xl font-black text-slate-800">{instructor.firstName} {instructor.lastName}</h3>
-                <p className="text-slate-400 text-sm mb-6">{instructor.email}</p>
+                <div className="px-3 py-1 bg-indigo-50 text-indigo-600 text-[10px] font-black uppercase rounded-lg inline-block mb-4">
+                  מדריכה
+                </div>
+                <h3 className="text-xl font-black text-slate-800">
+                  {instructor.firstName} {instructor.lastName}
+                </h3>
+                <p className="text-slate-400 text-sm mb-6">
+                  {instructor.email}
+                </p>
                 <div className="inline-flex items-center gap-3 px-5 py-3 bg-slate-50 rounded-2xl border border-slate-100 w-full font-bold text-slate-700">
-                  <Users size={18} className="text-indigo-500" /> {instructor.subordinatesIns?.length || 0} גננות אם
+                  <Users size={18} className="text-indigo-500" />{" "}
+                  {instructor.subordinatesIns?.length || 0} גננות אם
                 </div>
               </div>
               <div className="mt-auto p-6 bg-slate-50/50 border-t flex justify-between items-center text-sm font-bold text-slate-500 group-hover:text-indigo-600 transition-colors">
@@ -204,41 +321,128 @@ export default function DistrictManagementPage() {
 
       {/* ALL USERS TAB */}
       {activeTab === "ALL_USERS" && (
-        <div className="bg-white rounded-[2rem] border border-slate-100 overflow-hidden shadow-sm">
-          <table className="w-full text-right">
-            <thead className="bg-slate-50 border-b border-slate-100 text-xs font-black text-slate-400">
-              <tr>
-                <th className="p-4">שם מלא</th>
-                <th className="p-4">תפקיד</th>
-                <th className="p-4">ת.ז</th>
-                <th className="p-4">טלפון</th>
-                <th className="p-4">סטטוס</th>
-                <th className="p-4">פעולות</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-50">
-              {allUsers.filter(u => `${u.firstName} ${u.lastName}`.includes(searchTerm) || u.idNumber.includes(searchTerm)).map((u) => (
-                <tr key={u.id} className="hover:bg-slate-50/50 transition-colors">
-                  <td className="p-4 font-bold text-slate-700">{u.firstName} {u.lastName}</td>
-                  <td className="p-4 flex gap-1">
-                    {u.roles.map((r: any) => (
-                      <span key={r} className="text-[10px] bg-slate-100 px-2 py-0.5 rounded-md font-bold text-slate-500">
-                        {r === "MANAGER" ? "אם" : r === "SUBSTITUTE" ? "מחליפה" : r === "INSTRUCTOR" ? "מדריכה" : "רוטציה"}
-                      </span>
-                    ))}
-                  </td>
-                  <td className="p-4 text-sm font-mono text-slate-600">{u.idNumber}</td>
-                  <td className="p-4 text-sm text-slate-600">{u.phoneNumber}</td>
-                  <td className="p-4">
-                    <span className={`w-2 h-2 rounded-full inline-block ${u.isWorking ? "bg-emerald-500" : "bg-red-500"}`} />
-                  </td>
-                  <td className="p-4">
-                    <button onClick={() => setSelectedUserForEdit(u)} className="text-indigo-600 font-bold text-xs hover:underline">עריכה</button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="space-y-4">
+          {/* כפתורי סינון תפקידים */}
+          <div className="flex flex-wrap gap-2 mb-4 bg-white p-3 rounded-2xl border border-slate-100 shadow-sm">
+            <span className="text-xs font-black text-slate-400 w-full mb-1 mr-2">
+              סנני לפי תפקיד:
+            </span>
+            {roleFilters.map((filter) => (
+              <button
+                key={filter.id}
+                onClick={() => setSelectedRoleFilter(filter.id)}
+                className={`px-4 py-2 rounded-xl text-xs font-black transition-all ${
+                  selectedRoleFilter === filter.id
+                    ? `${filter.color} ring-2 ring-offset-1 ring-current`
+                    : "bg-slate-50 text-slate-400 hover:bg-slate-100"
+                }`}
+              >
+                {filter.label}
+              </button>
+            ))}
+          </div>
+
+          {/* הטבלה */}
+          <div className="bg-white rounded-[2rem] border border-slate-100 overflow-hidden shadow-sm">
+            <div className="overflow-x-auto">
+              <table className="w-full text-right">
+                <thead className="bg-slate-50 border-b border-slate-100 text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                  <tr>
+                    <th className="p-5">שם מלא</th>
+                    <th className="p-5">תפקיד</th>
+                    <th className="p-5">ת.ז</th>
+                    <th className="p-5">טלפון</th>
+                    <th className="p-5">סטטוס</th>
+                    <th className="p-5 text-center">פעולות</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-50">
+                  {filteredAndSortedUsers.length > 0 ? (
+                    filteredAndSortedUsers.map((u) => (
+                      <tr
+                        key={u.id}
+                        className="hover:bg-slate-50/50 transition-colors group"
+                      >
+                        <td className="p-5 font-bold text-slate-700">
+                          {highlightText(
+                            `${u.firstName} ${u.lastName}`,
+                            searchTerm
+                          )}
+                        </td>
+                        <td className="p-5">
+                          <div className="flex flex-wrap gap-1">
+                            {u.roles.map((r: any) => (
+                              <span
+                                key={r}
+                                className={`text-[10px] px-2 py-0.5 rounded-md font-black ${
+                                  r === "MANAGER"
+                                    ? "bg-pink-50 text-pink-400"
+                                    : r === "INSTRUCTOR"
+                                    ? "bg-purple-100 text-purple-600"
+                                    : r === "ROTATION"
+                                    ? "bg-emerald-50 text-emerald-600"
+                                    : "bg-sky-100 text-sky-600"
+                                }`}
+                              >
+                                {r === "MANAGER"
+                                  ? "גננת אם"
+                                  : r === "SUBSTITUTE"
+                                  ? "מחליפה"
+                                  : r === "INSTRUCTOR"
+                                  ? "מדריכה"
+                                  : "רוטציה"}
+                              </span>
+                            ))}
+                          </div>
+                        </td>
+                        <td className="p-5 text-sm font-mono text-slate-500">
+                          {u.idNumber}
+                        </td>
+                        <td
+                          className="p-5 text-sm text-slate-600 font-medium"
+                          dir="ltr"
+                        >
+                          {u.phoneNumber}
+                        </td>
+                        <td className="p-5">
+                          <div className="flex items-center gap-2">
+                            <span
+                              className={`w-2 h-2 rounded-full ${
+                                u.isWorking
+                                  ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]"
+                                  : "bg-red-500"
+                              }`}
+                            />
+                            <span className="text-[10px] font-bold text-slate-400">
+                              {u.isWorking ? "פעילה" : "לא פעילה"}
+                            </span>
+                          </div>
+                        </td>
+                        <td className="p-5 text-center">
+                          <button
+                            onClick={() => setSelectedUserForEdit(u)}
+                            className="p-2 bg-indigo-50 text-slate-600 rounded-lg hover:bg-indigo-600 hover:text-white transition-all shadow-sm"
+                            title="עריכת פרטים"
+                          >
+                            <Edit3 size={14} />
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td
+                        colSpan={6}
+                        className="p-20 text-center text-slate-400 italic font-medium"
+                      >
+                        לא נמצאו משתמשות התואמות לסינון הנבחר
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
       )}
 
@@ -246,13 +450,36 @@ export default function DistrictManagementPage() {
       {activeTab === "INSTITUTIONS" && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {filteredInstitutions.map((inst) => (
-            <div key={inst.id} className="bg-white rounded-[2rem] border border-slate-100 shadow-sm p-8 flex flex-col hover:shadow-lg transition-all relative group">
-              <div className="w-12 h-12 bg-pink-50 text-pink-600 rounded-2xl flex items-center justify-center mb-6 shadow-sm"><Building2 size={24} /></div>
-              <h3 className="text-xl font-black text-slate-800 mb-1">{inst.name}</h3>
-              <p className="text-slate-400 text-xs font-bold uppercase mb-6">סמל: {inst.institutionNumber}</p>
+            <div
+              key={inst.id}
+              className="bg-white rounded-4xl border border-slate-100 shadow-sm p-8 flex flex-col hover:shadow-lg transition-all relative group"
+            >
+              {/* כפתור עריכה בפינה */}
+              <button
+                onClick={() => setSelectedInstitutionForEdit(inst)}
+                className="absolute top-6 left-6  opacity-100 p-2 bg-indigo-50 text-slate-600 rounded-lg hover:bg-indigo-600 hover:text-white transition-all shadow-sm"
+              >
+                <Edit3 size={18} />
+              </button>
+
+              <div className="w-12 h-12 bg-pink-50 text-pink-600 rounded-2xl flex items-center justify-center mb-6 shadow-sm">
+                <Building2 size={24} />
+              </div>
+              <h3 className="text-xl font-black text-slate-800 mb-1">
+                {inst.name}
+              </h3>
+              <p className="text-slate-400 text-xs font-bold uppercase mb-6">
+                סמל מוסד: {inst.institutionNumber}
+              </p>
               <div className="space-y-3">
-                <div className="flex items-center gap-3 text-slate-600 text-sm font-medium"><MapPin size={14} className="text-indigo-500" /> {inst.address}</div>
-                <div className="flex items-center gap-3 text-slate-600 text-sm font-medium"><Users size={14} className="text-indigo-500" /> גננת: {inst.mainManager?.firstName} {inst.mainManager?.lastName}</div>
+                <div className="flex items-center gap-3 text-slate-600 text-sm font-medium">
+                  <MapPin size={14} className="text-indigo-500" />{" "}
+                  {inst.address}
+                </div>
+                <div className="flex items-center gap-3 text-slate-600 text-sm font-medium">
+                  <Users size={14} className="text-indigo-500" /> גננת:{" "}
+                  {inst.mainManager?.firstName} {inst.mainManager?.lastName}
+                </div>
               </div>
             </div>
           ))}
@@ -261,14 +488,48 @@ export default function DistrictManagementPage() {
 
       {/* Modals */}
       {activeInstructor && (
-        <InstructorPlacementsModal isOpen={!!activeInstructor} onClose={() => setActiveInstructor(null)} instructor={activeInstructor} searchTerm={searchTerm} onAssignClick={(p) => setSelectedPlacement(p)} />
+        <InstructorPlacementsModal
+          isOpen={!!activeInstructor}
+          onClose={() => setActiveInstructor(null)}
+          instructor={activeInstructor}
+          searchTerm={searchTerm}
+          onAssignClick={(p) => setSelectedPlacement(p)}
+        />
       )}
       {selectedUserForEdit && (
-        <UserDetailsModal isOpen={!!selectedUserForEdit} user={selectedUserForEdit} onClose={() => setSelectedUserForEdit(null)} onUpdateSuccess={() => { loadAllUsers(); loadData(); }} />
+        <UserDetailsModal
+          isOpen={!!selectedUserForEdit}
+          user={selectedUserForEdit}
+          onClose={() => setSelectedUserForEdit(null)}
+          onUpdateSuccess={() => {
+            loadAllUsers();
+            loadData();
+          }}
+        />
       )}
-      <AddUserModal isOpen={isAddTeacherOpen} onClose={() => setIsAddTeacherOpen(false)} onSuccess={loadData} />
-      <AddSubstituteModal isOpen={isAddSubstituteOpen} onClose={() => setIsAddSubstituteOpen(false)} onSuccess={loadData} />
-      <AddInstitutionModal isOpen={isAddInstitutionOpen} onClose={() => setIsAddInstitutionOpen(false)} onSuccess={loadData} />
+      <AddUserModal
+        isOpen={isAddTeacherOpen}
+        onClose={() => setIsAddTeacherOpen(false)}
+        onSuccess={loadData}
+      />
+      <AddSubstituteModal
+        isOpen={isAddSubstituteOpen}
+        onClose={() => setIsAddSubstituteOpen(false)}
+        onSuccess={loadData}
+      />
+      <AddInstitutionModal
+        isOpen={isAddInstitutionOpen}
+        onClose={() => setIsAddInstitutionOpen(false)}
+        onSuccess={loadData}
+      />
+      {selectedInstitutionForEdit && (
+        <EditInstitutionModal
+          isOpen={!!selectedInstitutionForEdit}
+          institution={selectedInstitutionForEdit}
+          onClose={() => setSelectedInstitutionForEdit(null)}
+          onSuccess={loadData}
+        />
+      )}
     </div>
   );
 }

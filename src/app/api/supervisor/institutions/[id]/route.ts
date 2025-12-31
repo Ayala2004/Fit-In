@@ -3,7 +3,11 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { getSession } from '@/lib/auth';
 
-export async function PATCH(req: Request, { params }: { params: { id: string } }) {
+// שימי לב לשינוי בטיפוס של params: הוא עכשיו Promise
+export async function PATCH(
+  req: Request, 
+  { params }: { params: Promise<{ id: string }> } 
+) {
   const session = await getSession();
   
   // בדיקת אבטחה
@@ -13,7 +17,14 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
 
   try {
     const body = await req.json();
-    const { id } = params;
+    
+    // התיקון הקריטי: חייבים לעשות await ל-params ב-Next.js 15
+    const resolvedParams = await params;
+    const id = resolvedParams.id;
+
+    if (!id) {
+      return NextResponse.json({ message: "מזהה מוסד חסר" }, { status: 400 });
+    }
 
     const updatedInstitution = await prisma.institution.update({
       where: { id: id },
@@ -21,8 +32,11 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
     });
 
     return NextResponse.json(updatedInstitution);
-  } catch (error) {
+  } catch (error: any) {
     console.error("Update Institution Error:", error);
-    return NextResponse.json({ message: "שגיאה בעדכון פרטי המוסד" }, { status: 500 });
+    return NextResponse.json(
+      { message: "שגיאה בעדכון פרטי המוסד", error: error.message }, 
+      { status: 500 }
+    );
   }
 }

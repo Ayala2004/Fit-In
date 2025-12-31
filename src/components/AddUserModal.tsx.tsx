@@ -426,34 +426,7 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }: any) {
                         size={16}
                       />
                     </div>
-                    <div className="space-y-3 p-6 bg-indigo-50/50 rounded-[2rem] border border-indigo-100">
-                      <label className="text-sm font-black text-indigo-900 flex items-center gap-2">
-                        <Calendar size={16} /> ימי חופש קבועים (לא ימי עבודה):
-                      </label>
-                      <div className="flex flex-wrap gap-2">
-                        {[
-                          { id: "SUNDAY", label: "א'" },
-                          { id: "MONDAY", label: "ב'" },
-                          { id: "TUESDAY", label: "ג'" },
-                          { id: "WEDNESDAY", label: "ד'" },
-                          { id: "THURSDAY", label: "ה'" },
-                          { id: "FRIDAY", label: "ו'" },
-                        ].map((day) => (
-                          <button
-                            key={day.id}
-                            type="button"
-                            onClick={() => toggleFreeDay(day.id)}
-                            className={`w-12 h-12 rounded-2xl font-black text-sm transition-all border-2 ${
-                              freeDays.includes(day.id)
-                                ? "bg-indigo-600 text-white border-indigo-600 shadow-lg shadow-indigo-200"
-                                : "bg-white text-slate-400 border-slate-100 hover:border-indigo-200 shadow-sm"
-                            }`}
-                          >
-                            {day.label}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
+
                   </div>
                 )}
               </div>

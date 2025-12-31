@@ -18,6 +18,7 @@ import {
   Power,
   UserCheck,
   UserMinus,
+  ChevronDown,
 } from "lucide-react";
 
 export default function UserDetailsModal({
@@ -29,6 +30,7 @@ export default function UserDetailsModal({
   const [loading, setLoading] = useState(false);
   const [instructors, setInstructors] = useState<any[]>([]);
   const [rotations, setRotations] = useState<any[]>([]);
+  const [isRoleOpen, setIsRoleOpen] = useState(false);
   const [formData, setFormData] = useState({
     firstName: user.firstName || "",
     lastName: user.lastName || "",
@@ -48,6 +50,35 @@ export default function UserDetailsModal({
     ],
     rotationTeacherId: user.rotationTeacherId || "",
   });
+
+  const ALLOWED_ROLE_COMBINATIONS = [
+    { id: "MANAGER_ONLY", label: "גננת אם בלבד", roles: ["MANAGER"] },
+    { id: "INSTRUCTOR_ONLY", label: "מדריכה בלבד", roles: ["INSTRUCTOR"] },
+    {
+      id: "MANAGER_INSTRUCTOR",
+      label: "גננת אם וגם מדריכה",
+      roles: ["MANAGER", "INSTRUCTOR"],
+    },
+    { id: "SUBSTITUTE_ONLY", label: "מחליפה בלבד", roles: ["SUBSTITUTE"] },
+    { id: "ROTATION_ONLY", label: "רוטציה בלבד", roles: ["ROTATION"] },
+  ];
+
+  const getCurrentComboId = () => {
+    const currentRoles = formData.roles;
+    const combo = ALLOWED_ROLE_COMBINATIONS.find(
+      (c) =>
+        c.roles.length === currentRoles.length &&
+        c.roles.every((r) => currentRoles.includes(r))
+    );
+    return combo ? combo.id : null;
+  };
+
+  const handleComboSelect = (roles: string[]) => {
+    setFormData((prev: any) => ({
+      ...prev,
+      roles: roles,
+    }));
+  };
 
   // שליפת מדריכות עבור שיוך לגננת אם
   useEffect(() => {
@@ -106,43 +137,43 @@ export default function UserDetailsModal({
     }));
   };
 
-const handleUpdate = async (e: React.FormEvent) => {
-  e.preventDefault();
-  setLoading(true);
-  try {
-    // הכנת הנתונים למשלוח - וודאי שכל שדות ה-ID מנוקים
-    const payload = {
-      ...formData,
-      // המרת תאריך לידה חזרה לפורמט ISO שהשרת מצפה לו
-      dateOfBirth: new Date(user.dateOfBirth).toISOString(),
-    };
+  const handleUpdate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    try {
+      // הכנת הנתונים למשלוח - וודאי שכל שדות ה-ID מנוקים
+      const payload = {
+        ...formData,
+        // המרת תאריך לידה חזרה לפורמט ISO שהשרת מצפה לו
+        dateOfBirth: new Date(user.dateOfBirth).toISOString(),
+      };
 
-    const res = await fetch(`/api/supervisor/users/${user.id}`, {
-      method: "PATCH",
-      body: JSON.stringify(payload), // משלוח ה-payload הנקי
-      headers: { "Content-Type": "application/json" },
-    });
+      const res = await fetch(`/api/supervisor/users/${user.id}`, {
+        method: "PATCH",
+        body: JSON.stringify(payload), // משלוח ה-payload הנקי
+        headers: { "Content-Type": "application/json" },
+      });
 
-    if (res.ok) {
-      onUpdateSuccess();
-      onClose();
-    } else {
-      const errorData = await res.json();
-      alert(errorData.message || "שגיאה בעדכון הנתונים");
+      if (res.ok) {
+        onUpdateSuccess();
+        onClose();
+      } else {
+        const errorData = await res.json();
+        alert(errorData.message || "שגיאה בעדכון הנתונים");
+      }
+    } catch (err) {
+      console.error("Update error:", err);
+      alert("שגיאת תקשורת עם השרת");
+    } finally {
+      setLoading(false);
     }
-  } catch (err) {
-    console.error("Update error:", err);
-    alert("שגיאת תקשורת עם השרת");
-  } finally {
-    setLoading(false);
-  }
-};
+  };
 
   if (!isOpen) return null;
 
   return (
     <div
-      className="fixed inset-0 z-[150] bg-slate-900/60 backdrop-blur-sm p-4 flex items-center justify-center animate-in fade-in duration-300"
+      className="fixed inset-0 z-150 bg-slate-900/60 backdrop-blur-sm p-4 flex items-center justify-center animate-in fade-in duration-300"
       dir="rtl"
     >
       <div className="bg-white w-full max-w-3xl rounded-[2.5rem] shadow-2xl flex flex-col max-h-[95vh] border border-slate-100 overflow-hidden">
@@ -237,34 +268,110 @@ const handleUpdate = async (e: React.FormEvent) => {
             </div>
           </section>
 
-          {/* 2. ניהול תפקידים וסטטוס פעילות */}
+          {/*  ניהול תפקידים ויום חופשי */}
           <section className="grid grid-cols-1 md:grid-cols-2 gap-8">
             <div className="space-y-4">
-              <h4 className="font-black text-slate-700 flex items-center gap-2 text-lg border-b pb-2">
-                <Shield size={20} className="text-indigo-500" /> תפקידים במערכת
-              </h4>
-              <div className="grid grid-cols-2 gap-2">
-                {Object.keys(roleLabels).map((role) => (
-                  <button
-                    key={role}
-                    type="button"
-                    onClick={() => toggleRole(role)}
-                    className={`p-3 rounded-xl border-2 font-bold text-xs transition-all ${
-                      formData.roles.includes(role)
-                        ? "border-indigo-600 bg-indigo-50 text-indigo-700 shadow-sm"
-                        : "border-slate-100 text-slate-400 hover:border-slate-200"
+              <div className="border-b pb-2">
+                <h4 className="font-black text-slate-700 flex items-center gap-2 text-lg">
+                  <Shield size={20} className="text-indigo-500" /> הגדרת תפקיד
+                </h4>
+                <p className="text-[13px] text-slate-400 font-medium italic">
+                  * בלחיצה על החץ תפתח רשימה של תפקידים אפשריים
+                </p>
+              </div>
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setIsRoleOpen((v) => !v)}
+                  className="w-full p-3 rounded-xl border-2 border-slate-200 flex items-center justify-between font-bold text-sm text-slate-700 bg-white hover:border-indigo-400 transition"
+                >
+                  <span>
+                    {ALLOWED_ROLE_COMBINATIONS.find(
+                      (c) => c.id === getCurrentComboId()
+                    )?.label || "בחרי תפקיד"}
+                  </span>
+                  <ChevronDown
+                    size={18}
+                    className={`transition-transform ${
+                      isRoleOpen ? "rotate-180" : ""
                     }`}
-                  >
-                    {roleLabels[role]}
-                  </button>
-                ))}
+                  />
+                </button>
+
+                {isRoleOpen && (
+                  <div className="absolute z-20 mt-2 w-full bg-white border border-slate-200 rounded-xl shadow-lg overflow-hidden">
+                    {ALLOWED_ROLE_COMBINATIONS.map((combo) => {
+                      const isSelected = getCurrentComboId() === combo.id;
+
+                      return (
+                        <button
+                          key={combo.id}
+                          type="button"
+                          onClick={() => {
+                            handleComboSelect(combo.roles);
+                            setIsRoleOpen(false);
+                          }}
+                          className={`w-full p-3 text-right flex items-center justify-between text-sm font-bold transition ${
+                            isSelected
+                              ? "bg-indigo-50 text-indigo-700"
+                              : "hover:bg-slate-50 text-slate-600"
+                          }`}
+                        >
+                          {combo.label}
+                          {isSelected && (
+                            <CheckCircle2
+                              size={16}
+                              className="text-indigo-600"
+                            />
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             </div>
+            <div className="space-y-4">
+              <div className="border-b pb-2">
+                <h4 className="font-black text-slate-700 flex items-center gap-2 text-lg ">
+                  <Clock size={20} className="text-indigo-500" /> ימי עבודה /
+                  חופש
+                </h4>
+                <p className="text-[13px] text-slate-400 font-medium italic">
+                  * ימים המסומנים באדום נחשבים ל"יום חופשי" קבוע במערכת.
+                </p>
+              </div>
+              <div className="grid grrid-cols-1 sm:grid-cols-2 md:grid-cols-6 gap-2">
+                {weekDays.map((day) => {
+                  const isActive = formData.workDays.includes(day.id);
+                  return (
+                    <button
+                      key={day.id}
+                      type="button"
+                      onClick={() => toggleWorkDay(day.id)}
+                      className={`w-14 h-14 rounded-2xl border-2 flex flex-col items-center justify-center transition-all ${
+                        isActive
+                          ? "bg-white border-slate-200 text-slate-700 hover:border-indigo-400"
+                          : "bg-red-50 border-red-500 text-red-700 shadow-sm"
+                      }`}
+                    >
+                      <span className="text-lg font-black">{day.label}</span>
+                      <span className="text-[8px] font-bold uppercase">
+                        {isActive ? "עבודה" : "חופש"}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </section>
 
+          <section>
             <div className="space-y-4">
               <h4 className="font-black text-slate-700 flex items-center gap-2 text-lg border-b pb-2">
                 <Power size={20} className="text-indigo-500" /> סטטוס עבודה
               </h4>
+              {/* כפתור סטטוס עבודה נשאר אותו דבר */}
               <button
                 type="button"
                 onClick={() =>
@@ -285,38 +392,6 @@ const handleUpdate = async (e: React.FormEvent) => {
                 {formData.isWorking ? <UserCheck /> : <UserMinus />}
               </button>
             </div>
-          </section>
-
-          {/* 3. ימים חופשיים (workDays) */}
-          <section className="space-y-4">
-            <h4 className="font-black text-slate-700 flex items-center gap-2 text-lg border-b pb-2">
-              <Clock size={20} className="text-indigo-500" /> ימי עבודה / חופש
-            </h4>
-            <div className="flex flex-wrap gap-2">
-              {weekDays.map((day) => {
-                const isActive = formData.workDays.includes(day.id);
-                return (
-                  <button
-                    key={day.id}
-                    type="button"
-                    onClick={() => toggleWorkDay(day.id)}
-                    className={`w-14 h-14 rounded-2xl border-2 flex flex-col items-center justify-center transition-all ${
-                      isActive
-                        ? "bg-white border-slate-200 text-slate-700 hover:border-indigo-400"
-                        : "bg-red-50 border-red-500 text-red-700 shadow-sm"
-                    }`}
-                  >
-                    <span className="text-lg font-black">{day.label}</span>
-                    <span className="text-[8px] font-bold uppercase">
-                      {isActive ? "עבודה" : "חופש"}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-            <p className="text-[10px] text-slate-400 font-medium italic">
-              * ימים המסומנים באדום נחשבים ל"יום חופשי" קבוע במערכת.
-            </p>
           </section>
 
           {/* 4. שיוך מדריכה (רק אם גננת אם) */}
@@ -365,7 +440,7 @@ const handleUpdate = async (e: React.FormEvent) => {
           )}
 
           {/* Footer Actions */}
-          <div className="pt-6 flex gap-4 sticky bottom-0 bg-white border-t border-slate-50 mt-auto">
+          <div className="pt-6 flex gap-4  bottom-0 bg-white border-t border-slate-50 mt-auto">
             <button
               type="submit"
               disabled={loading}
