@@ -22,7 +22,44 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }: any) {
   const [instructors, setInstructors] = useState<any[]>([]);
   const [selectedRoles, setSelectedRoles] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
-  const [freeDays, setFreeDays] = useState<string[]>([]); // שינוי למערך
+  const [freeDays, setFreeDays] = useState<string[]>([]);
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [idError, setIdError] = useState("");
+
+  const checkIsraeliID = (id: string) => {
+    const trimmedId = String(id).trim();
+
+    // 1. בדיקה אם הוזנו רק מספרים
+    if (isNaN(Number(trimmedId))) {
+      return { isValid: false, message: "תעודת זהות חייבת להכיל ספרות בלבד" };
+    }
+
+    // 2. בדיקת אורך (חייב להיות בדיוק 9)
+    if (trimmedId.length !== 9) {
+      return {
+        isValid: false,
+        message: "תעודת זהות חייבת להכיל 9 ספרות בדיוק",
+      };
+    }
+
+    // 3. בדיקה מתמטית (ספרת ביקורת)
+    let sum = 0;
+    for (let i = 0; i < 9; i++) {
+      let digit = Number(trimmedId[i]);
+      let step = digit * ((i % 2) + 1);
+      if (step > 9) step -= 9;
+      sum += step;
+    }
+
+    if (sum % 10 !== 0) {
+      return {
+        isValid: false,
+        message: "מספר תעודת הזהות אינו תקין (ספרת ביקורת שגויה)",
+      };
+    }
+
+    return { isValid: true, message: "" };
+  };
 
   const toggleFreeDay = (day: string) => {
     setFreeDays((prev) =>
@@ -51,21 +88,17 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }: any) {
     setLoading(true);
 
     try {
+      e.preventDefault();
+      setIdError("");
       const formData = new FormData(e.target);
+      const idNumber = formData.get("idNumber") as string;
+      const idValidation = checkIsraeliID(idNumber);
+      const data = Object.fromEntries(formData.entries()) as any;
+      const newErrors: Record<string, string> = {};
       const formProps = Object.fromEntries(formData.entries()) as Record<
         string,
         string
       >;
-
-      const allWeekDays = [
-        "SUNDAY",
-        "MONDAY",
-        "TUESDAY",
-        "WEDNESDAY",
-        "THURSDAY",
-        "FRIDAY",
-      ];
-
       const payload = {
         ...formProps,
         roles: selectedRoles,
@@ -79,6 +112,23 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }: any) {
         ].filter((d) => !freeDays.includes(d)),
         dateOfBirth: new Date(formProps.dateOfBirth as string).toISOString(),
       };
+
+      if (!idValidation.isValid) {
+        setIdError(idValidation.message); // הצגת ההודעה המתאימה שביקשת
+        return; // עצירת השליחה לשרת
+      }
+
+      // בדיקת טלפון (10 ספרות, מתחיל ב-0)
+      const phoneRegex = /^0\d{9}$/;
+      if (!phoneRegex.test(data.phoneNumber)) {
+        newErrors.phoneNumber = "מספר טלפון חייב להכיל 10 ספרות ולהתחיל ב-0";
+      }
+
+      // אם יש שגיאות, אל תמשיך
+      if (Object.keys(newErrors).length > 0) {
+        setErrors(newErrors);
+        return;
+      }
 
       const res = await fetch("/api/supervisor/register", {
         method: "POST",
@@ -312,14 +362,28 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }: any) {
                     <input
                       name="idNumber"
                       required
-                      className="w-full pr-10 pl-4 py-3 bg-slate-50 border-none rounded-xl focus:ring-2 focus:ring-indigo-500 font-medium"
+                      className={`w-full pr-10 pl-4 py-3 bg-slate-50 border-none rounded-xl focus:ring-2 font-medium ${
+                        idError
+                          ? "ring-2 ring-red-500 bg-red-50"
+                          : "focus:ring-indigo-500"
+                      }`}
                       placeholder="9 ספרות"
+                      onChange={() => setIdError("")} // העלמת השגיאה כשהיא מתחילה לתקן
                     />
                     <CreditCard
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400"
+                      className={`absolute right-3 top-1/2 -translate-y-1/2 ${
+                        idError ? "text-red-500" : "text-slate-400"
+                      }`}
                       size={16}
                     />
                   </div>
+
+                  {/* הצגת הודעת השגיאה הספציפית במידה ויש */}
+                  {idError && (
+                    <p className="text-red-500 text-[11px] font-black mr-2 animate-in fade-in slide-in-from-top-1">
+                      {idError}
+                    </p>
+                  )}
                 </div>
                 <div className="space-y-2">
                   <label className="text-xs font-bold text-slate-500 mr-2">
@@ -329,10 +393,19 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }: any) {
                     <input
                       name="phoneNumber"
                       required
-                      className="w-full pr-10 pl-4 py-3 bg-slate-50 border-none rounded-xl focus:ring-2 focus:ring-indigo-500 font-medium text-left"
-                      placeholder="050-0000000"
+                      className={`w-full pr-10 pl-4 py-3 bg-slate-50 border-none rounded-xl focus:ring-2 focus:ring-indigo-500 font-medium text-left${
+                        errors.phoneNumber
+                          ? "border-red-500 ring-1 ring-red-500"
+                          : ""
+                      }`}
+                      placeholder="05********"
                       dir="ltr"
                     />
+                    {errors.phoneNumber && (
+                      <p className="text-red-500 text-[10px] mt-1 font-bold">
+                        {errors.phoneNumber}
+                      </p>
+                    )}
                     <Phone
                       className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400"
                       size={16}
@@ -426,7 +499,6 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }: any) {
                         size={16}
                       />
                     </div>
-
                   </div>
                 )}
               </div>

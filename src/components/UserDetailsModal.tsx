@@ -3,23 +3,18 @@
 import { useState, useEffect } from "react";
 import {
   X,
-  MapPin,
-  Phone,
-  Mail,
   Award,
   Shield,
   Save,
   CheckCircle2,
-  GraduationCap,
-  Calendar,
   Clock,
   User as UserIcon,
-  CreditCard,
   Power,
   UserCheck,
   UserMinus,
   ChevronDown,
 } from "lucide-react";
+import ValidatedField from "./ValidatedField";
 
 export default function UserDetailsModal({
   user,
@@ -98,13 +93,6 @@ export default function UserDetailsModal({
     }
   }, [isOpen]);
 
-  const roleLabels: any = {
-    MANAGER: "גננת אם",
-    INSTRUCTOR: "מדריכה",
-    SUBSTITUTE: "גננת מחליפה",
-    ROTATION: "גננת רוטציה",
-  };
-
   const weekDays = [
     { id: "SUNDAY", label: "א'" },
     { id: "MONDAY", label: "ב'" },
@@ -119,14 +107,6 @@ export default function UserDetailsModal({
     setFormData((prev) => ({ ...prev, [name]: value }));
   };
 
-  const toggleRole = (role: string) => {
-    setFormData((prev: any) => ({
-      ...prev,
-      roles: prev.roles.includes(role)
-        ? prev.roles.filter((r: string) => r !== role)
-        : [...prev.roles, role],
-    }));
-  };
 
   const toggleWorkDay = (dayId: string) => {
     setFormData((prev: any) => ({
@@ -170,7 +150,6 @@ export default function UserDetailsModal({
   };
 
   if (!isOpen) return null;
-
   return (
     <div
       className="fixed inset-0 z-150 bg-slate-900/60 backdrop-blur-sm p-4 flex items-center justify-center animate-in fade-in duration-300"
@@ -230,41 +209,25 @@ export default function UserDetailsModal({
                   className="input-standard"
                 />
               </div>
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-500 mr-2 flex items-center gap-1">
-                  <CreditCard size={14} /> תעודת זהות
-                </label>
-                <input
-                  name="idNumber"
-                  value={formData.idNumber}
-                  onChange={handleInputChange}
-                  className="input-standard"
-                />
-              </div>
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-500 mr-2 flex items-center gap-1">
-                  <Phone size={14} /> טלפון
-                </label>
-                <input
-                  name="phoneNumber"
-                  value={formData.phoneNumber}
-                  onChange={handleInputChange}
-                  className="input-standard text-left"
-                  dir="ltr"
-                />
-              </div>
-              <div className="space-y-1 col-span-full">
-                <label className="text-xs font-bold text-slate-500 mr-2 flex items-center gap-1">
-                  <Mail size={14} /> אימייל (שם משתמש)
-                </label>
-                <input
-                  name="email"
-                  value={formData.email}
-                  onChange={handleInputChange}
-                  className="input-standard text-left"
-                  dir="ltr"
-                />
-              </div>
+              <ValidatedField
+                name="idNumber"
+                label="תעודת זהות"
+                value={formData.idNumber}
+                onChange={handleInputChange}
+              />
+              <ValidatedField
+                name="phoneNumber"
+                label="מספר טלפון"
+                value={formData.phoneNumber}
+                onChange={handleInputChange}
+              />
+              <ValidatedField
+                name="email"
+                label="אימייל (שם משתמש)"
+                value={formData.email}
+                onChange={handleInputChange}
+                placeholder="name@email.com"
+              />
             </div>
           </section>
 
