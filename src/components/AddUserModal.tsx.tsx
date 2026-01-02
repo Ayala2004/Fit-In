@@ -8,57 +8,31 @@ import {
   Calendar,
   CreditCard,
   Lock,
-  UserCheck,
   Shield,
   GraduationCap,
   Building,
   Info,
   CheckCircle2,
   AlertCircle,
-  Sparkles,
+  Award,
 } from "lucide-react";
+import ValidatedField from "./ValidatedField";
+import { validations } from "@/utils/validations";
 
 export default function AddUserModal({ isOpen, onClose, onSuccess }: any) {
   const [instructors, setInstructors] = useState<any[]>([]);
   const [selectedRoles, setSelectedRoles] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [freeDays, setFreeDays] = useState<string[]>([]);
-  const [errors, setErrors] = useState<Record<string, string>>({});
-  const [idError, setIdError] = useState("");
+  const [formData, setFormData] = useState({
+    idNumber: "",
+    phoneNumber: "",
+    email: "",
+  });
 
-  const checkIsraeliID = (id: string) => {
-    const trimmedId = String(id).trim();
-
-    // 1. בדיקה אם הוזנו רק מספרים
-    if (isNaN(Number(trimmedId))) {
-      return { isValid: false, message: "תעודת זהות חייבת להכיל ספרות בלבד" };
-    }
-
-    // 2. בדיקת אורך (חייב להיות בדיוק 9)
-    if (trimmedId.length !== 9) {
-      return {
-        isValid: false,
-        message: "תעודת זהות חייבת להכיל 9 ספרות בדיוק",
-      };
-    }
-
-    // 3. בדיקה מתמטית (ספרת ביקורת)
-    let sum = 0;
-    for (let i = 0; i < 9; i++) {
-      let digit = Number(trimmedId[i]);
-      let step = digit * ((i % 2) + 1);
-      if (step > 9) step -= 9;
-      sum += step;
-    }
-
-    if (sum % 10 !== 0) {
-      return {
-        isValid: false,
-        message: "מספר תעודת הזהות אינו תקין (ספרת ביקורת שגויה)",
-      };
-    }
-
-    return { isValid: true, message: "" };
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const { name, value } = e.target;
+    setFormData((prev) => ({ ...prev, [name]: value }));
   };
 
   const toggleFreeDay = (day: string) => {
@@ -77,7 +51,6 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }: any) {
   }, [isOpen]);
 
   const handleRoleChange = (role: string) => {
-    // בגלל שלפעמים מדריכה היא גם גננת אם, נאפשר בחירה מרובה
     setSelectedRoles((prev) =>
       prev.includes(role) ? prev.filter((r) => r !== role) : [...prev, role]
     );
@@ -86,21 +59,27 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }: any) {
   const handleSubmit = async (e: any) => {
     e.preventDefault();
     setLoading(true);
+    const isIdValid = validations.idNumber(formData.idNumber) === "";
+    const isPhoneValid = validations.phoneNumber(formData.phoneNumber) === "";
+    const isEmailValid = validations.email(formData.email) === "";
+
+    if (!isIdValid || !isPhoneValid || !isEmailValid) {
+      alert(
+        "לא ניתן לשמור: אחד או יותר מהשדות (ת״ז, טלפון, אימייל) אינם תקינים."
+      );
+      setLoading(false);
+      return;
+    }
 
     try {
-      e.preventDefault();
-      setIdError("");
       const formData = new FormData(e.target);
-      const idNumber = formData.get("idNumber") as string;
-      const idValidation = checkIsraeliID(idNumber);
-      const data = Object.fromEntries(formData.entries()) as any;
-      const newErrors: Record<string, string> = {};
       const formProps = Object.fromEntries(formData.entries()) as Record<
         string,
         string
       >;
       const payload = {
         ...formProps,
+        ...formData,
         roles: selectedRoles,
         workDays: [
           "SUNDAY",
@@ -112,23 +91,6 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }: any) {
         ].filter((d) => !freeDays.includes(d)),
         dateOfBirth: new Date(formProps.dateOfBirth as string).toISOString(),
       };
-
-      if (!idValidation.isValid) {
-        setIdError(idValidation.message); // הצגת ההודעה המתאימה שביקשת
-        return; // עצירת השליחה לשרת
-      }
-
-      // בדיקת טלפון (10 ספרות, מתחיל ב-0)
-      const phoneRegex = /^0\d{9}$/;
-      if (!phoneRegex.test(data.phoneNumber)) {
-        newErrors.phoneNumber = "מספר טלפון חייב להכיל 10 ספרות ולהתחיל ב-0";
-      }
-
-      // אם יש שגיאות, אל תמשיך
-      if (Object.keys(newErrors).length > 0) {
-        setErrors(newErrors);
-        return;
-      }
 
       const res = await fetch("/api/supervisor/register", {
         method: "POST",
@@ -152,19 +114,6 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }: any) {
     }
   };
 
-  //  פונקציית עזר לחישוב ימי עבודה
-  const calculateWorkDays = (selectedFreeDay: string) => {
-    const allWeekDays = [
-      "SUNDAY",
-      "MONDAY",
-      "TUESDAY",
-      "WEDNESDAY",
-      "THURSDAY",
-      "FRIDAY",
-    ];
-    return allWeekDays.filter((day) => day !== selectedFreeDay);
-  };
-
   if (!isOpen) return null;
 
   const isManager = selectedRoles.includes("MANAGER");
@@ -176,7 +125,7 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }: any) {
       dir="rtl"
     >
       <div className="bg-white w-full max-w-2xl rounded-[2.5rem] shadow-2xl my-auto overflow-hidden flex flex-col max-h-[95vh] border border-slate-100">
-        {/* Header - סגנון כהה ויוקרתי */}
+        {/* Header */}
         <div className="p-8 bg-slate-900 text-white relative overflow-hidden shrink-0">
           <div className="absolute top-0 left-0 w-full h-full opacity-10 pointer-events-none">
             <div className="absolute -top-10 -right-10 w-40 h-40 bg-indigo-500 rounded-full blur-3xl"></div>
@@ -309,13 +258,14 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }: any) {
               </p>
             </div>
           ) : (
-            <div className="space-y-6 animate-in slide-in-from-top-4 duration-500">
-              <div className="flex items-center gap-2 text-indigo-600 font-black text-xs uppercase tracking-widest pb-2 border-b border-slate-50">
-                <User size={14} /> פרטי זהות ויצירת קשר
-              </div>
+            <div className="animate-in slide-in-from-top-4 duration-500">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* כותרת */}
+                <div className="md:col-span-2 flex items-center gap-2 text-indigo-600 font-black text-xs uppercase tracking-widest pb-2 border-b border-slate-100">
+                  <User size={14} /> פרטי זהות ויצירת קשר
+                </div>
 
-              {/* שורת שם */}
-              <div className="grid grid-cols-2 gap-4">
+                {/* שם פרטי */}
                 <div className="space-y-2">
                   <label className="text-xs font-bold text-slate-500 mr-2">
                     שם פרטי
@@ -333,6 +283,8 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }: any) {
                     />
                   </div>
                 </div>
+
+                {/* שם משפחה */}
                 <div className="space-y-2">
                   <label className="text-xs font-bold text-slate-500 mr-2">
                     שם משפחה
@@ -350,91 +302,38 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }: any) {
                     />
                   </div>
                 </div>
-              </div>
 
-              {/* שורת קשר */}
-              <div className="grid grid-cols-2 gap-4">
+                {/* תעודת זהות */}
                 <div className="space-y-2">
-                  <label className="text-xs font-bold text-slate-500 mr-2">
-                    מספר תעודת זהות
-                  </label>
-                  <div className="relative">
-                    <input
-                      name="idNumber"
-                      required
-                      className={`w-full pr-10 pl-4 py-3 bg-slate-50 border-none rounded-xl focus:ring-2 font-medium ${
-                        idError
-                          ? "ring-2 ring-red-500 bg-red-50"
-                          : "focus:ring-indigo-500"
-                      }`}
-                      placeholder="9 ספרות"
-                      onChange={() => setIdError("")} // העלמת השגיאה כשהיא מתחילה לתקן
-                    />
-                    <CreditCard
-                      className={`absolute right-3 top-1/2 -translate-y-1/2 ${
-                        idError ? "text-red-500" : "text-slate-400"
-                      }`}
-                      size={16}
-                    />
-                  </div>
+                  <ValidatedField
+                    name="idNumber"
+                    label="תעודת זהות"
+                    value={formData.idNumber}
+                    onChange={handleInputChange}
+                  />
+                </div>
 
-                  {/* הצגת הודעת השגיאה הספציפית במידה ויש */}
-                  {idError && (
-                    <p className="text-red-500 text-[11px] font-black mr-2 animate-in fade-in slide-in-from-top-1">
-                      {idError}
-                    </p>
-                  )}
-                </div>
+                {/* טלפון */}
                 <div className="space-y-2">
-                  <label className="text-xs font-bold text-slate-500 mr-2">
-                    מספר טלפון
-                  </label>
-                  <div className="relative">
-                    <input
-                      name="phoneNumber"
-                      required
-                      className={`w-full pr-10 pl-4 py-3 bg-slate-50 border-none rounded-xl focus:ring-2 focus:ring-indigo-500 font-medium text-left${
-                        errors.phoneNumber
-                          ? "border-red-500 ring-1 ring-red-500"
-                          : ""
-                      }`}
-                      placeholder="05********"
-                      dir="ltr"
-                    />
-                    {errors.phoneNumber && (
-                      <p className="text-red-500 text-[10px] mt-1 font-bold">
-                        {errors.phoneNumber}
-                      </p>
-                    )}
-                    <Phone
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400"
-                      size={16}
-                    />
-                  </div>
+                  <ValidatedField
+                    name="phoneNumber"
+                    label="מספר טלפון"
+                    value={formData.phoneNumber}
+                    onChange={handleInputChange}
+                  />
                 </div>
-              </div>
 
-              {/* שורת אימייל וסיסמה */}
-              <div className="grid grid-cols-2 gap-4">
+                {/* אימייל */}
                 <div className="space-y-2">
-                  <label className="text-xs font-bold text-slate-500 mr-2">
-                    אימייל (ישמש להתחברות)
-                  </label>
-                  <div className="relative">
-                    <input
-                      name="email"
-                      type="email"
-                      required
-                      className="w-full pr-10 pl-4 py-3 bg-slate-50 border-none rounded-xl focus:ring-2 focus:ring-indigo-500 font-medium text-left"
-                      placeholder="name@email.com"
-                      dir="ltr"
-                    />
-                    <Mail
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400"
-                      size={16}
-                    />
-                  </div>
+                  <ValidatedField
+                    name="email"
+                    label="כתובת אימייל"
+                    value={formData.email}
+                    onChange={handleInputChange}
+                  />
                 </div>
+
+                {/* סיסמה */}
                 <div className="space-y-2">
                   <label className="text-xs font-bold text-slate-500 mr-2">
                     סיסמה זמנית
@@ -454,11 +353,9 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }: any) {
                     />
                   </div>
                 </div>
-              </div>
 
-              {/* שורת תאריך לידה ומדריכה */}
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
+                {/* תאריך לידה */}
+                <div className={`space-y-2 ${!isManager&&"col-span-2"}`}>
                   <label className="text-xs font-bold text-slate-500 mr-2">
                     תאריך לידה
                   </label>
@@ -476,6 +373,7 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }: any) {
                   </div>
                 </div>
 
+                {/* מדריכה מלווה - רק אם MANAGER */}
                 {isManager && (
                   <div className="space-y-2">
                     <label className="text-xs font-bold text-slate-500 mr-2">
