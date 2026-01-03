@@ -13,6 +13,8 @@ import {
   UserCheck,
   UserMinus,
   ChevronDown,
+  PersonStanding,
+  RefreshCcw,
 } from "lucide-react";
 import FormInput from "./FormInput";
 
@@ -26,6 +28,10 @@ export default function UserEditModal({
   const [instructors, setInstructors] = useState<any[]>([]);
   const [rotations, setRotations] = useState<any[]>([]);
   const [isRoleOpen, setIsRoleOpen] = useState(false);
+  const [rotationData, setRotationData] = useState<Record<string, string>>({});
+  const [isInstructorOpen, setIsInstructorOpen] = useState(false);
+  const [openRotationDay, setOpenRotationDay] = useState<string | null>(null);
+
   const [formData, setFormData] = useState({
     firstName: user.firstName || "",
     lastName: user.lastName || "",
@@ -59,38 +65,6 @@ export default function UserEditModal({
     { id: "ROTATION_ONLY", label: "רוטציה בלבד", roles: ["ROTATION"] },
   ];
 
-  const getCurrentComboId = () => {
-    const currentRoles = formData.roles;
-    const combo = ALLOWED_ROLE_COMBINATIONS.find(
-      (c) =>
-        c.roles.length === currentRoles.length &&
-        c.roles.every((r) => currentRoles.includes(r))
-    );
-    return combo ? combo.id : null;
-  };
-
-  const handleComboSelect = (roles: string[]) => {
-    setFormData((prev: any) => ({ ...prev, roles }));
-  };
-
-  useEffect(() => {
-    if (isOpen) {
-      fetch("/api/supervisor/instructors")
-        .then((res) => res.json())
-        .then((data) => setInstructors(Array.isArray(data) ? data : []))
-        .catch((err) => console.error("Error fetching instructors:", err));
-
-      fetch("/api/supervisor/users-stats")
-        .then((res) => res.json())
-        .then((data) => {
-          const onlyRotations = data.filter((u: any) =>
-            u.roles.includes("ROTATION")
-          );
-          setRotations(onlyRotations);
-        });
-    }
-  }, [isOpen]);
-
   const weekDays = [
     { id: "SUNDAY", label: "א'" },
     { id: "MONDAY", label: "ב'" },
@@ -99,6 +73,42 @@ export default function UserEditModal({
     { id: "THURSDAY", label: "ה'" },
     { id: "FRIDAY", label: "ו'" },
   ];
+
+useEffect(() => {
+  if (!isOpen || !user) return;
+
+  // טעינת מדריכות
+  fetch("/api/supervisor/instructors")
+    .then((res) => res.json())
+    .then((data) => setInstructors(Array.isArray(data) ? data : []));
+
+  // טעינת גננות רוטציה
+  fetch("/api/supervisor/users-stats")
+    .then((res) => res.json())
+    .then((data) => {
+      setRotations(data.filter((u: any) => u.roles.includes("ROTATION")));
+    });
+
+  // ⬅️ אתחול נכון של rotationData מתוך הנתון של המשתמשת
+  const mapping: Record<string, string> = {};
+  if (user.fixedRotationsAsManager?.length) {
+    user.fixedRotationsAsManager.forEach((r: any) => {
+      mapping[r.day] = r.rotationTeacherId;
+    });
+  }
+
+  setRotationData(mapping);
+}, [user, isOpen]);
+
+
+  const getCurrentComboId = () => {
+    const combo = ALLOWED_ROLE_COMBINATIONS.find(
+      (c) =>
+        c.roles.length === formData.roles.length &&
+        c.roles.every((r) => formData.roles.includes(r))
+    );
+    return combo ? combo.id : null;
+  };
 
   const handleInputChange = (e: any) => {
     const { name, value } = e.target;
@@ -117,10 +127,26 @@ export default function UserEditModal({
   const handleUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
+
     try {
+      // 1. יצירת עותק נקי של נתוני הרוטציה
+      const cleanedRotationData = { ...rotationData };
+
+      // 2. טיפול באופציית REMOVE:
+      // אנחנו עוברים על כל הימים, ואם נבחר REMOVE, נהפוך אותו לערך ריק
+      // כדי שהשרת ידע לא ליצור את השיבוץ הזה מחדש
+      Object.keys(cleanedRotationData).forEach((day) => {
+        if (cleanedRotationData[day] === "REMOVE") {
+          cleanedRotationData[day] = "";
+        }
+      });
+
       const payload = {
         ...formData,
-        dateOfBirth: new Date(formData.dateOfBirth).toISOString(),
+        rotationData: cleanedRotationData, // שולחים את הנתונים המנוקים
+        dateOfBirth: formData.dateOfBirth
+          ? new Date(formData.dateOfBirth).toISOString()
+          : null,
       };
 
       const res = await fetch(`/api/supervisor/users/${user.id}`, {
@@ -143,8 +169,34 @@ export default function UserEditModal({
       setLoading(false);
     }
   };
+  const handleComboSelect = (roles: string[]) => {
+    setFormData((prev: any) => ({ ...prev, roles }));
+  };
 
   if (!isOpen) return null;
+  // פונקציית עזר להצגת שם הרוטציה הנוכחית אם יש
+  const getRotationLabel = (
+    dayId: string,
+    availableRotationsForThisDay: any[],
+    existingRotation: any
+  ) => {
+    const selectedId = rotationData[dayId];
+
+    if (selectedId === "REMOVE") return "❌ הסרת שיבוץ";
+
+    if (selectedId) {
+      const selected = availableRotationsForThisDay.find(
+        (r) => r.id === selectedId
+      );
+      if (selected) return `${selected.firstName} ${selected.lastName}`;
+    }
+
+    if (existingRotation) {
+      return `נוכחית: ${existingRotation.rotationTeacher.firstName} ${existingRotation.rotationTeacher.lastName}`;
+    }
+
+    return "-- בחרי גננת פנויה --";
+  };
 
   return (
     <div
@@ -222,23 +274,17 @@ export default function UserEditModal({
             </div>
           </section>
 
-          {/* ניהול תפקידים ויום חופשי */}
+          {/* הגדרת תפקידים */}
           <section className="grid grid-cols-1 md:grid-cols-2 gap-8">
-            {/* הגדרת תפקיד */}
             <div className="space-y-4">
-              <div className="border-b pb-2">
-                <h4 className="font-black text-slate-700 flex items-center gap-2 text-lg">
-                  <Shield size={20} className="text-indigo-500" /> הגדרת תפקיד
-                </h4>
-                <p className="text-[13px] text-slate-400 font-medium italic">
-                  * בלחיצה על החץ תפתח רשימה של תפקידים אפשריים
-                </p>
-              </div>
-              <div className="relative">
+              <h4 className="font-black text-slate-700 flex items-center gap-2 text-lg border-b pb-2">
+                <Shield size={20} className="text-indigo-500" /> הגדרת תפקיד
+              </h4>
+              <div className="relative dropdown">
                 <button
                   type="button"
-                  onClick={() => setIsRoleOpen((v) => !v)}
-                  className="w-full p-3 rounded-xl border-2 border-slate-200 flex items-center justify-between font-bold text-sm text-slate-700 bg-white hover:border-indigo-400 transition"
+                  onClick={() => setIsRoleOpen(!isRoleOpen)}
+                  className="w-full p-3 rounded-xl border-2 flex items-center justify-between font-bold text-sm bg-white"
                 >
                   <span>
                     {ALLOWED_ROLE_COMBINATIONS.find(
@@ -247,12 +293,11 @@ export default function UserEditModal({
                   </span>
                   <ChevronDown
                     size={18}
-                    className={`transition-transform ${isRoleOpen ? "rotate-180" : ""}`}
+                    className={isRoleOpen ? "rotate-180" : ""}
                   />
                 </button>
-
                 {isRoleOpen && (
-                  <div className="absolute z-20 mt-2 w-full bg-white border border-slate-200 rounded-xl shadow-lg overflow-hidden">
+                  <div className="absolute z-20 mt-2 w-full bg-white border rounded-xl shadow-lg overflow-hidden">
                     {ALLOWED_ROLE_COMBINATIONS.map((combo) => {
                       const isSelected = getCurrentComboId() === combo.id;
                       return (
@@ -264,11 +309,18 @@ export default function UserEditModal({
                             setIsRoleOpen(false);
                           }}
                           className={`w-full p-3 text-right flex items-center justify-between text-sm font-bold transition ${
-                            isSelected ? "bg-indigo-50 text-indigo-700" : "hover:bg-slate-50 text-slate-600"
+                            isSelected
+                              ? "bg-indigo-50 text-indigo-700"
+                              : "hover:bg-slate-50 text-slate-600"
                           }`}
                         >
                           {combo.label}
-                          {isSelected && <CheckCircle2 size={16} className="text-indigo-600" />}
+                          {isSelected && (
+                            <CheckCircle2
+                              size={16}
+                              className="text-indigo-600"
+                            />
+                          )}
                         </button>
                       );
                     })}
@@ -277,16 +329,11 @@ export default function UserEditModal({
               </div>
             </div>
 
-            {/* ימי עבודה */}
+            {/* ימי עבודה / חופש */}
             <div className="space-y-4">
-              <div className="border-b pb-2">
-                <h4 className="font-black text-slate-700 flex items-center gap-2 text-lg">
-                  <Clock size={20} className="text-indigo-500" /> ימי עבודה / חופש
-                </h4>
-                <p className="text-[13px] text-slate-400 font-medium italic">
-                  * ימים המסומנים באדום נחשבים ל"יום חופשי" קבוע במערכת.
-                </p>
-              </div>
+              <h4 className="font-black text-slate-700 flex items-center gap-2 text-lg border-b pb-2">
+                <Clock size={20} className="text-indigo-500" /> ימי עבודה / חופש
+              </h4>
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-6 gap-2">
                 {weekDays.map((day) => {
                   const isActive = formData.workDays.includes(day.id);
@@ -314,82 +361,263 @@ export default function UserEditModal({
 
           {/* סטטוס עבודה */}
           <section>
-            <div className="space-y-4">
-              <h4 className="font-black text-slate-700 flex items-center gap-2 text-lg border-b pb-2">
-                <Power size={20} className="text-indigo-500" /> סטטוס עבודה
-              </h4>
-              <button
-                type="button"
-                onClick={() =>
-                  setFormData((prev) => ({ ...prev, isWorking: !prev.isWorking }))
-                }
-                className={`w-full p-4 rounded-2xl border-2 flex items-center justify-between transition-all ${
-                  formData.isWorking
-                    ? "border-emerald-500 bg-emerald-50 text-emerald-700"
-                    : "border-red-500 bg-red-50 text-red-700"
-                }`}
-              >
-                <span className="font-black">
-                  {formData.isWorking ? "עובדת פעילה" : "מושבתת / לא פעילה"}
-                </span>
-                {formData.isWorking ? <UserCheck /> : <UserMinus />}
-              </button>
-            </div>
+            <h4 className="font-black text-slate-700 flex items-center gap-2 text-lg border-b pb-2">
+              <Power size={20} className="text-indigo-500" /> סטטוס עבודה
+            </h4>
+            <button
+              type="button"
+              onClick={() =>
+                setFormData((prev) => ({ ...prev, isWorking: !prev.isWorking }))
+              }
+              className={`w-full p-4 mt-2 rounded-2xl border-2 flex items-center justify-between transition-all ${
+                formData.isWorking
+                  ? "border-emerald-500 bg-emerald-50 text-emerald-700"
+                  : "border-red-500 bg-red-50 text-red-700"
+              }`}
+            >
+              <span className="font-black">
+                {formData.isWorking ? "עובדת פעילה" : "מושבתת / לא פעילה"}
+              </span>
+              {formData.isWorking ? <UserCheck /> : <UserMinus />}
+            </button>
           </section>
 
           {/* שיוך מדריכה / רוטציה */}
           {formData.roles.includes("MANAGER") && (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-500 mr-2">
-                  מדריכה מלווה
-                </label>
-                <select
-                  name="instructorId"
-                  value={formData.instructorId || ""}
-                  onChange={handleInputChange}
-                  className="input-standard"
-                >
-                  <option value="">בחרי מדריכה...</option>
-                  {instructors.map((ins) => (
-                    <option key={ins.id} value={ins.id}>
-                      {ins.firstName} {ins.lastName}
-                    </option>
-                  ))}
-                </select>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-start">
+              {/* עמודה ימנית: מדריכה מלווה */}
+              <div className="space-y-4">
+                <div className="space-y-1">
+                  <h4 className="font-black text-slate-700 flex items-center gap-2 text-lg border-b pb-2">
+                    <PersonStanding size={20} className="text-indigo-500" />{" "}
+                    מדריכה מלווה
+                  </h4>
+                  <p className="text-[11px] text-slate-400 font-medium mb-2">
+                    המדריכה האחראית על גננת האם
+                  </p>
+
+                  <div className="relative dropdown">
+                    <button
+                      type="button"
+                      onClick={() => setIsInstructorOpen(!isInstructorOpen)}
+                      className="w-full p-3 rounded-xl border-2 flex items-center justify-between font-bold text-sm bg-white"
+                    >
+                      <span>
+                        {instructors.find((i) => i.id === formData.instructorId)
+                          ? `${
+                              instructors.find(
+                                (i) => i.id === formData.instructorId
+                              )?.firstName
+                            } ${
+                              instructors.find(
+                                (i) => i.id === formData.instructorId
+                              )?.lastName
+                            }`
+                          : "בחרי מדריכה..."}
+                      </span>
+                      <ChevronDown
+                        size={18}
+                        className={isInstructorOpen ? "rotate-180" : ""}
+                      />
+                    </button>
+
+                    {isInstructorOpen && (
+                      <div className="absolute z-20 mt-2 w-full bg-white border rounded-xl shadow-lg overflow-hidden max-h-64 overflow-y-auto">
+                        {instructors.map((ins) => {
+                          const isSelected = ins.id === formData.instructorId;
+
+                          return (
+                            <button
+                              key={ins.id}
+                              type="button"
+                              onClick={() => {
+                                handleInputChange({
+                                  target: {
+                                    name: "instructorId",
+                                    value: ins.id,
+                                  },
+                                });
+                                setIsInstructorOpen(false);
+                              }}
+                              className={`w-full p-3 text-right flex items-center justify-between text-sm font-bold transition ${
+                                isSelected
+                                  ? "bg-indigo-50 text-indigo-700"
+                                  : "hover:bg-slate-50 text-slate-600"
+                              }`}
+                            >
+                              {ins.firstName} {ins.lastName}
+                              {isSelected && (
+                                <CheckCircle2
+                                  size={16}
+                                  className="text-indigo-600"
+                                />
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
 
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-500 mr-2">
-                  גננת רוטציה קבועה (אופציונלי)
-                </label>
-                <select
-                  name="rotationTeacherId"
-                  value={formData.rotationTeacherId || ""}
-                  onChange={handleInputChange}
-                  className="input-standard border-emerald-200 focus:border-emerald-500"
-                >
-                  <option value="">ללא רוטציה קבועה</option>
-                  {rotations.map((rot) => (
-                    <option key={rot.id} value={rot.id}>
-                      {rot.firstName} {rot.lastName}
-                    </option>
-                  ))}
-                </select>
+              {/* עמודה שמאלית: הגדרת רוטציה קבועה */}
+              <div className="space-y-4">
+                <div className="space-y-1">
+                  <h4 className="font-black text-slate-700 flex items-center gap-2 text-lg border-b pb-2">
+                    <RefreshCcw size={20} className="text-indigo-500" />{" "}
+                  </h4>
+                  <p className="text-[11px] text-slate-400 font-medium mb-2">
+                    שיבוץ גננת קבועה לימים שבהם גננת האם ביום חופשי.
+                  </p>
+
+                  <div className="grid grid-cols-1 gap-3 mt-4">
+                    {weekDays.map((day) => {
+                      // 1. האם זה יום חופשי של גננת האם? (יום שלא נבחר ב-workDays)
+                      const isFreeDay = !formData.workDays.includes(day.id);
+                      if (!isFreeDay) return null;
+
+                      // 2. מציאת גננת הרוטציה הנוכחית שמשובצת ביום הזה ב-DB
+                      const existingRotation =
+                        user.fixedRotationsAsManager?.find(
+                          (r: any) => r.day === day.id
+                        );
+
+                      // 3. סינון רשימת הגננות עבור היום הספציפי הזה
+                      const availableRotationsForThisDay = rotations.filter(
+                        (rt) => {
+                          // האם הגננת תפוסה ביום הזה בגן *אחר*?
+                          const isBusyElsewhere =
+                            rt.fixedRotationsAsRotation?.some(
+                              (assignment: any) =>
+                                assignment.day === day.id &&
+                                assignment.managerId !== user.id
+                            );
+                          return !isBusyElsewhere;
+                        }
+                      );
+
+                      return (
+                        <div
+                          key={day.id}
+                          className="flex flex-col gap-2 p-3 bg-white rounded-2xl border border-indigo-50 shadow-sm"
+                        >
+                          <div className="flex justify-between items-center px-1">
+                            <span className="text-xs font-black text-indigo-600 uppercase">
+                              יום {day.label}
+                            </span>
+                            {existingRotation && !rotationData[day.id] && (
+                              <span className="text-[10px] bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full font-bold">
+                                שיבוץ פעיל
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="relative dropdown">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setOpenRotationDay(
+                                  openRotationDay === day.id ? null : day.id
+                                )
+                              }
+                              className={`w-full p-2.5 rounded-xl border-2 flex items-center justify-between text-xs font-bold transition ${
+                                rotationData[day.id] || existingRotation
+                                  ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                                  : "bg-slate-50 text-slate-700"
+                              }`}
+                            >
+                              <span>
+                                {getRotationLabel(
+                                  day.id,
+                                  availableRotationsForThisDay,
+                                  existingRotation
+                                )}
+                              </span>
+
+                              <ChevronDown
+                                size={14}
+                                className={
+                                  openRotationDay === day.id ? "rotate-180" : ""
+                                }
+                              />
+                            </button>
+
+                            {openRotationDay === day.id && (
+                              <div className="absolute z-20 mt-2 w-full bg-white border rounded-xl shadow-lg overflow-hidden max-h-64 overflow-y-auto">
+                                {availableRotationsForThisDay.map((rt) => {
+                                  const isSelected =
+                                    rotationData[day.id] === rt.id;
+
+                                  return (
+                                    <button
+                                      key={rt.id}
+                                      type="button"
+                                      onClick={() => {
+                                        setRotationData({
+                                          ...rotationData,
+                                          [day.id]: rt.id,
+                                        });
+                                        setOpenRotationDay(null);
+                                      }}
+                                      className={`w-full p-3 text-right flex items-center justify-between text-sm font-bold transition ${
+                                        isSelected
+                                          ? "bg-indigo-50 text-indigo-700"
+                                          : "hover:bg-slate-50 text-slate-600"
+                                      }`}
+                                    >
+                                      {rt.firstName} {rt.lastName}
+                                      {isSelected && (
+                                        <CheckCircle2
+                                          size={14}
+                                          className="text-indigo-600"
+                                        />
+                                      )}
+                                    </button>
+                                  );
+                                })}
+
+                                {existingRotation && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setRotationData({
+                                        ...rotationData,
+                                        [day.id]: "REMOVE",
+                                      });
+                                      setOpenRotationDay(null);
+                                    }}
+                                    className="w-full p-3 text-right flex items-center justify-between text-sm font-bold text-red-600 hover:bg-red-50 transition"
+                                  >
+                                    ❌ הסרת גננת רוטציה ביום זה
+                                  </button>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
               </div>
             </div>
           )}
 
           {/* Footer */}
-          <div className="pt-6 flex gap-4 bottom-0 bg-white border-t border-slate-50 mt-auto">
+          <div className="pt-6 flex gap-4 mt-auto bottom-0 bg-white border-t border-slate-50">
             <button
               type="submit"
               disabled={loading}
-              className="flex-[2] py-4 bg-indigo-600 text-white rounded-2xl font-black shadow-lg shadow-indigo-100 hover:bg-indigo-700 transition-all active:scale-95 flex items-center justify-center gap-2"
+              className="flex-[2] py-4 bg-indigo-600 text-white rounded-2xl font-black shadow-lg hover:bg-indigo-700 transition-all flex items-center justify-center gap-2"
             >
-              {loading ? "מעדכן..." : <>
-                <Save size={20} /> שמירת כל השינויים
-              </>}
+              {loading ? (
+                "מעדכן..."
+              ) : (
+                <>
+                  <Save size={20} /> שמירת כל השינויים
+                </>
+              )}
             </button>
             <button
               type="button"

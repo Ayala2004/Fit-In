@@ -1,4 +1,3 @@
-// src/app/api/supervisor/users/[id]/route.ts
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth";
@@ -6,7 +5,7 @@ import { encrypt } from "@/utils/crypto";
 
 export async function PATCH(
   req: Request,
-  { params }: { params: Promise<{ id: string }> } // עדכון טיפוס הנתונים ל-Promise
+  { params }: { params: Promise<{ id: string }> }
 ) {
   const session = await getSession();
 
@@ -16,56 +15,85 @@ export async function PATCH(
 
   try {
     const body = await req.json();
-    const { id } = await params; // חובה לעשות await ל-params ב-Next.js 15
+    const { id } = await params;
 
-    // 1. הוצאת שדות שאינם שדות פשוטים ב-Database
+    // 1. פירוק השדות - אנחנו מוציאים כל מה שהוא לא שדה פשוט ב-User
     const {
-      id: _id,
+      rotationData,
       idNumber,
       instructorId,
-      rotationTeacherId,
-      username,
-      permanentRotationId,
       instructor,
       supervisor,
-      rotationTeacher,
       mainManagedInstitutions,
       managedInstitutions,
       instructedInstitutions,
       placementsAsMain,
       placementsAsSub,
       notifications,
-      rotationForManagers,
+      fixedRotationsAsManager,
+      fixedRotationsAsRotation,
       _count,
-      ...otherFields
+      id: _id, // מוודאים שלא מעדכנים את ה-ID עצמו
+      ...restOfFields
     } = body;
 
-    // 2. הכנת אובייקט הנתונים לעדכון
-    const updateData: any = { ...otherFields };
+    // 2. הכנת אובייקט הנתונים לעדכון (רק שדות פשוטים)
+    const updateData: any = {
+      firstName: restOfFields.firstName,
+      lastName: restOfFields.lastName,
+      email: restOfFields.email,
+      phoneNumber: restOfFields.phoneNumber,
+      roles: restOfFields.roles,
+      workDays: restOfFields.workDays,
+      isWorking: restOfFields.isWorking,
+      instructorId: instructorId || null,
+    };
 
-    // 3. טיפול ב-instructorId (MongoDB חייב ObjectId תקין או null)
-    updateData.instructorId = (instructorId === "" || !instructorId) ? null : instructorId;
+    // עדכון תאריך לידה אם קיים
+    if (restOfFields.dateOfBirth) {
+      updateData.dateOfBirth = new Date(restOfFields.dateOfBirth);
+    }
 
-    // 4. טיפול ב-rotationTeacherId (MongoDB חייב ObjectId תקין או null)
-    updateData.rotationTeacherId = (rotationTeacherId === "" || !rotationTeacherId) ? null : rotationTeacherId;
-
-    // 5. טיפול בתעודת זהות (הצפנה)
-    if (idNumber) {
+    // הצפנת ת"ז אם נשלחה חדשה
+    if (idNumber && idNumber.length > 5) {
       updateData.idNumber = encrypt(idNumber);
     }
 
-    // 6. ביצוע העדכון בפועל
+    // 3. ביצוע העדכון בטבלת User
     const updatedUser = await prisma.user.update({
       where: { id: id },
       data: updateData,
     });
 
+    // 4. עדכון טבלת FixedRotation (רק אם היא MANAGER ושלחנו נתוני רוטציה)
+    if (updatedUser.roles.includes("MANAGER") && rotationData) {
+      // מחיקה של כל הרוטציות הקודמות של המשתמשת הזו
+      await prisma.fixedRotation.deleteMany({
+        where: { managerId: id }
+      });
+
+      // יצירת הרוטציות החדשות
+      const rotationsToCreate = Object.entries(rotationData)
+        .filter(([_, teacherId]) => teacherId && teacherId !== "")
+        .map(([day, teacherId]) => ({
+          managerId: id,
+          day: day as any,
+          rotationTeacherId: teacherId as string,
+        }));
+
+      if (rotationsToCreate.length > 0) {
+        await prisma.fixedRotation.createMany({
+          data: rotationsToCreate
+        });
+      }
+    }
+
     return NextResponse.json(updatedUser);
   } catch (error: any) {
-    console.error("Prisma Update Error:", error);
-    if (error.code === "P2002") {
-      return NextResponse.json({ message: "אימייל או תעודת זהות כבר קיימים במערכת" }, { status: 400 });
-    }
-    return NextResponse.json({ message: "שגיאת שרת פנימית בעדכון המשתמש" }, { status: 500 });
+    console.error("Prisma Update Error Details:", error);
+    return NextResponse.json(
+      { message: "שגיאת שרת פנימית בעדכון", details: error.message },
+      { status: 500 }
+    );
   }
 }

@@ -33,6 +33,20 @@ enum Day {
   SATURDAY
 }
 
+
+
+// 1. המודל שמנהל את הקשר בין יום, גננת אם וגננת משלימה
+model FixedRotation {
+  id                String   @id @default(auto()) @map("_id") @db.ObjectId
+  day               Day
+  managerId         String   @db.ObjectId
+  manager           User     @relation("ManagerToRotation", fields: [managerId], references: [id])
+  rotationTeacherId String   @db.ObjectId
+  rotationTeacher   User     @relation("RotationToManager", fields: [rotationTeacherId], references: [id])
+
+  @@unique([managerId, day])
+}
+
 model User {
   id          String   @id @default(auto()) @map("_id") @db.ObjectId
   password    String
@@ -48,27 +62,21 @@ model User {
   address     String?
   workDays    Day[]
 
-  // קשרים לבוסים
+  // קשרים לניהול
   supervisorId    String?  @db.ObjectId
   instructorId    String?  @db.ObjectId
-
   supervisor      User?    @relation("UserSupervisor", fields: [supervisorId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   instructor      User?    @relation("UserInstructor", fields: [instructorId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  
   subordinatesSup User[]   @relation("UserSupervisor")
   subordinatesIns User[]   @relation("UserInstructor")
 
-  // --- חדש: רוטציה קבועה ---
-  // גננת אם יכולה להחזיק גננת רוטציה קבועה אחת
-  rotationTeacherId String? @db.ObjectId
-  rotationTeacher   User?   @relation("PermanentRotation", fields: [rotationTeacherId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  
-  // גננת רוטציה יכולה להיות משויכת לכמה גננות אם (בימים שונים)
-  rotationForManagers User[] @relation("PermanentRotation")
-  // -----------------------
+  // --- המבנה המקצועי לרוטציה (ללא כפילות) ---
+  fixedRotationsAsManager  FixedRotation[] @relation("ManagerToRotation")
+  fixedRotationsAsRotation FixedRotation[] @relation("RotationToManager")
+  // ------------------------------------------
 
-  managedInstitutions    Institution[] @relation("InstitutionManager")
-  instructedInstitutions Institution[] @relation("InstitutionInstructor")
+  managedInstitutions     Institution[] @relation("InstitutionManager")
+  instructedInstitutions  Institution[] @relation("InstitutionInstructor")
   mainManagedInstitutions Institution[] @relation("InstitutionMainManager")
 
   institutionId String?      @db.ObjectId
@@ -78,6 +86,8 @@ model User {
   placementsAsSub  Placement[] @relation("SubstituteTeacher")
   notifications    Notification[]
 }
+
+// ... שאר המודלים (Placement, Institution, Notification) ללא שינוי
 
 model Institution {
   id                String  @id @default(auto()) @map("_id") @db.ObjectId

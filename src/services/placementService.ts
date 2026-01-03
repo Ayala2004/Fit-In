@@ -4,7 +4,16 @@ import {
   db_notifyMultipleUsers,
 } from "./notificationService";
 import { Day } from "@prisma/client";
-import { addMonths, endOfMonth, startOfDay, endOfDay, addDays } from "date-fns";
+import { addMonths,  startOfDay, endOfDay, addDays } from "date-fns";
+
+const isSameDate = (date1: Date, date2: Date) => {
+  return (
+    date1.getFullYear() === date2.getFullYear() &&
+    date1.getMonth() === date2.getMonth() &&
+    date1.getDate() === date2.getDate()
+  );
+};
+
 
 /**
  * שליפת נתונים ללוח הבקרה של המפקחת
@@ -178,10 +187,17 @@ const getDayEnum = (date: Date): Day => {
 /**
  * יצירת שיבוץ חדש
  */
+  
+  // בדיקה מי אמורה להיות בגן ביום הזה לפי הלו"ז הקבוע
+
+/**
+ * יצירת דיווח היעדרות/שיבוץ חדש
+ * תומך בדיווח של גננת אם, גננת רוטציה, או מפקחת (רטרואקטיבי)
+ */
 export async function db_createPlacement(data: {
   date: Date;
   institutionId: string;
-  mainTeacherId: string;
+  mainTeacherId: string; 
   substituteId?: string | null;
   notes?: string;
   creatorRoles: string[];
@@ -189,56 +205,38 @@ export async function db_createPlacement(data: {
 }) {
   const targetDate = startOfDay(new Date(data.date));
   const today = startOfDay(new Date());
-  if (targetDate.getDay() === 6) {
-    throw new Error("לא ניתן לדווח על היעדרות ביום שבת");
-  }
-  const isManager = (data.creatorRoles ?? []).some((role) =>
-    ["SUPERVISOR", "INSTRUCTOR"].includes(role)
-  );
+  
+  // 1. בדיקות בסיסיות
+  if (targetDate.getDay() === 6) throw new Error("לא ניתן לדווח בשבת");
 
+  const isManager = (data.creatorRoles ?? []).some(r => ["SUPERVISOR", "INSTRUCTOR"].includes(r));
   const isRetroactive = targetDate < today;
 
   if (isRetroactive && !isManager) {
-    throw new Error("רק מפקחת או מדריכה יכולות לדווח על היעדרות רטרואקטיבית");
+    throw new Error("רק מפקחת או מדריכה יכולות לדווח על העבר");
   }
 
-  let finalStatus: "OPEN" | "ASSIGNED" | "CANCELLED" = "OPEN";
-  if (isRetroactive) {
-    if (data.status === "ASSIGNED" || data.status === "CANCELLED") {
-      finalStatus = data.status;
-    } else {
-      throw new Error("בדיווח רטרואקטיבי יש לבחור סטטוס ASSIGNED או CANCELLED");
-    }
-  } else {
-    finalStatus = isManager ? data.status || "OPEN" : "OPEN";
-  }
-
-  const existingReport = await prisma.placement.findFirst({
-    where: {
-      institutionId: data.institutionId,
-      date: targetDate,
-    },
+  // 2. מניעת כפילות
+  const existing = await prisma.placement.findFirst({
+    where: { institutionId: data.institutionId, date: targetDate }
   });
-if (existingReport) {
-    // הוספת לוגיקה: אם המפקחת מנסה ליצור דיווח על משהו שכבר סגור או משובץ
-    if (existingReport.status === "CANCELLED") {
-      throw new Error("הגן כבר הוגדר כסגור לתאריך זה.");
-    }
-    if (existingReport.status === "ASSIGNED") {
-      throw new Error("כבר קיימת מחליפה משובצת לגן זה.");
-    }
-    throw new Error("כבר קיים דיווח פעיל לגן זה בתאריך שנבחר");
-}
+  if (existing) throw new Error("כבר קיים דיווח פעיל ליום זה בגן זה");
 
-  const diffInDays =
-    (targetDate.getTime() - today.getTime()) / (1000 * 3600 * 24);
+  // 3. קביעת סטטוס ועדיפות
+  let finalStatus = data.status || "OPEN";
+  if (isRetroactive && finalStatus === "OPEN") {
+    throw new Error("בדיווח על העבר יש לבחור סטטוס סופי");
+  }
+
+  const diffInDays = (targetDate.getTime() - today.getTime()) / (1000 * 3600 * 24);
   const priority = !isRetroactive && diffInDays <= 2 ? "URGENT" : "NORMAL";
 
+  // 4. יצירת הרשומה
   const newPlacement = await prisma.placement.create({
     data: {
       date: targetDate,
       institutionId: data.institutionId,
-      mainTeacherId: data.mainTeacherId,
+      mainTeacherId: data.mainTeacherId, // מי שנעדרת בפועל
       substituteId: data.substituteId,
       notes: data.notes,
       status: finalStatus,
@@ -246,44 +244,38 @@ if (existingReport) {
     },
     include: {
       institution: true,
-      mainTeacher: { select: { firstName: true, lastName: true } },
-      substitute: { select: { firstName: true, lastName: true } }, // כדאי להוסיף include גם למחליפה כאן
+      mainTeacher: { select: { firstName: true, lastName: true, supervisorId: true } },
+      substitute: { select: { firstName: true, lastName: true } },
     },
   });
 
+  // 5. התראות (רק לדיווחים עתידיים פתוחים)
   if (!isRetroactive && finalStatus === "OPEN") {
     const { institution, mainTeacher } = newPlacement;
-    const teacherName = `${mainTeacher.firstName} ${mainTeacher.lastName}`;
-    const notificationType =
-      priority === "URGENT" ? "URGENT_CALL" : "STATUS_UPDATE";
+    const notificationType = priority === "URGENT" ? "URGENT_CALL" : "STATUS_UPDATE";
 
     await db_createNotification({
       userId: institution.supervisorId,
-      title: `דיווח היעדרות: ${institution.name}`,
-      message: `גננת האם ${teacherName} דיווחה על היעדרות ל-${targetDate.toLocaleDateString(
-        "he-IL"
-      )}`,
+      title: `היעדרות בגן ${institution.name}`,
+      message: `הגננת ${mainTeacher.firstName} לא תגיע ביום ${targetDate.toLocaleDateString("he-IL")}`,
       type: notificationType,
     });
 
-    const availableTeachers = await prisma.user.findMany({
+    const available = await prisma.user.findMany({
       where: {
         isWorking: true,
         roles: { hasSome: ["SUBSTITUTE", "ROTATION"] },
         workDays: { has: getDayEnum(targetDate) },
         placementsAsSub: { none: { date: targetDate, status: "ASSIGNED" } },
       },
-      select: { id: true },
+      select: { id: true }
     });
 
-    const teacherIds = availableTeachers.map((t) => t.id);
-    if (teacherIds.length > 0) {
+    if (available.length > 0) {
       await db_notifyMultipleUsers(
-        teacherIds,
-        priority === "URGENT" ? "קריאה דחופה לשיבוץ!" : "הזדמנות לשיבוץ חדש",
-        `דרושה מחליפה לגן ${
-          institution.name
-        } בתאריך ${targetDate.toLocaleDateString("he-IL")}`,
+        available.map(u => u.id),
+        priority === "URGENT" ? "קריאה דחופה!" : "הצעה להחלפה",
+        `דרושה מחליפה לגן ${institution.name}`,
         notificationType
       );
     }
@@ -359,7 +351,8 @@ export async function db_updatePlacementStatus(params: {
  * לוח שנה
  */
 /**
- * שליפת נתונים מורחבת ללוח השנה
+
+ * שליפת נתונים ללוח השנה הכוללת רוטציות קבועות ודיווחים ידניים
  */
 export async function db_getCalendarData(
   month: number,
@@ -367,20 +360,80 @@ export async function db_getCalendarData(
   supervisorId: string
 ) {
   const startDate = new Date(year, month - 1, 1);
-  const endDate = new Date(year, month, 0);
+  const endDate = new Date(year, month, 0, 23, 59, 59);
 
-  return await prisma.placement.findMany({
+  // 1. שליפת כל הדיווחים הידניים (החריגות) של המחוז לחודש הזה
+  const manualPlacements = await prisma.placement.findMany({
     where: {
       date: { gte: startDate, lte: endDate },
-      institution: { supervisorId: supervisorId }, // סינון לפי המפקחת הרלוונטית
+      institution: { supervisorId: supervisorId },
     },
     include: {
-      institution: { select: { name: true } },
-      mainTeacher: { select: { id: true, firstName: true, lastName: true } },
+      institution: { select: { name: true, id: true } },
+      mainTeacher: { select: { id: true, firstName: true, lastName: true, roles: true } },
       substitute: { select: { id: true, firstName: true, lastName: true } },
     },
-    orderBy: { date: "asc" },
   });
+
+  // 2. שליפת כל המוסדות והרוטציות הקבועות שלהם מראש
+const institutions = await prisma.institution.findMany({
+    where: { supervisorId: supervisorId },
+    include: {
+      // כאן אנחנו מוודאים שאנחנו מושכים את גננת האם ואת הרוטציות שלה
+      mainManager: {
+        include: {
+          fixedRotationsAsManager: {
+            include: { rotationTeacher: true }
+          }
+        }
+      }
+    }
+  });
+
+  const calendarDays: any[] = [];
+
+  // 3. לולאה על הימים - הכל מחושב בזיכרון (מהיר מאוד)
+  for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
+    const currentDate = new Date(d);
+    const dayName = getDayEnum(currentDate);
+
+    for (const inst of institutions) {
+      // בדיקה: האם יש חריגה (Placement) רשומה ב-DB ליום הזה ולגן הזה?
+      const override = manualPlacements.find(p => 
+        p.institutionId === inst.id && isSameDate(new Date(p.date), currentDate)
+      );
+
+      if (override) {
+        // יש חריגה! (למשל: הרוטציה חולה, או הגננת אם החליפה יום)
+        calendarDays.push({
+          ...override,
+          isOverride: true // דגל לפרונט
+        });
+      } else {
+        // אין חריגה ידנית - נבדוק מה הלו"ז הקבוע
+        const rotation = inst.mainManager.fixedRotationsAsManager.find(r => r.day === dayName);
+
+        if (rotation) {
+          // זה יום רוטציה קבוע - הגננת היא גננת הרוטציה
+          calendarDays.push({
+            id: `fixed-${inst.id}-${currentDate.getTime()}`,
+            date: new Date(currentDate),
+            status: "ASSIGNED", 
+            institution: { name: inst.name, id: inst.id },
+            mainTeacher: rotation.rotationTeacher, // הגננת ש"אמורה" להיות שם היא הרוטציה
+            substitute: null,
+            notes: "רוטציה קבועה",
+            isFixed: true 
+          });
+        } else {
+          // יום רגיל - גננת האם נמצאת (לא מוסיפים ללוח אלא אם את רוצה להציג הכל)
+          // בדרך כלל בלוח שנה של היעדרויות נציג רק ימים עם "אירוע" (רוטציה או חריגה)
+        }
+      }
+    }
+  }
+
+  return calendarDays;
 }
 
 /**

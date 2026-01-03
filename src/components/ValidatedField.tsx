@@ -1,6 +1,6 @@
 "use client";
 import React, { useState } from "react";
-import { CreditCard, Phone, Mail, AlertCircle } from "lucide-react";
+import { CreditCard, Phone, Mail } from "lucide-react";
 import { validations } from "@/utils/validations";
 
 interface ValidatedFieldProps {
@@ -77,10 +77,9 @@ export default function ValidatedField({
           {icons[name]}
         </div>
 
-        {/* אייקון שגיאה שמאלי */}
         {error && (
           <div className="absolute left-3 top-1/2 -translate-y-1/2 text-red-500 animate-pulse">
-            <AlertCircle size={18} />
+           
           </div>
         )}
       </div>

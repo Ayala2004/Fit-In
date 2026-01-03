@@ -40,13 +40,13 @@ type FieldConfig = BaseConfig | ValidatedConfig;
 const CONFIG: Record<FieldKind, FieldConfig> = {
   firstName: {
     label: "שם פרטי",
-    placeholder: "ישראל",
+    placeholder: "שם פרטי",
     icon: User,
     name: "firstName",
   },
   lastName: {
     label: "שם משפחה",
-    placeholder: "כהן",
+    placeholder: "שם משפחה",
     icon: User,
     name: "lastName",
   },

@@ -200,8 +200,8 @@ export default function AddSubstituteModal({
             />
           </div>
 
-          {/* לו"ז רוטציה */}
-          {role === "ROTATION" && (
+          {/*כרגע מוותרת על ימי חופשה לרוטציה */}
+          {/* {role === "ROTATION" && (
             <div className="space-y-4 animate-in slide-in-from-top-4">
               <div className="flex items-center gap-2 text-emerald-600 font-black text-xs uppercase border-b pb-2">
                 <Calendar size={14} /> הגדרת ימי עבודה
@@ -241,7 +241,7 @@ export default function AddSubstituteModal({
                 </div>
               ))}
             </div>
-          )}
+          )} */}
 
           {role === "SUBSTITUTE" && (
             <div className="p-6 bg-amber-50 rounded-2xl border border-amber-100 flex gap-4">

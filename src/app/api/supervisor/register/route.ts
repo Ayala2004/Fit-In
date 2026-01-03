@@ -43,6 +43,7 @@ export async function POST(req: Request) {
     const newUser = await db_registerUser(userData);
     return NextResponse.json({ message: "המשתמש נוצר בהצלחה", user: newUser });
   } catch (error: any) {
+    console.error("Registration Error:", error.message);
     return NextResponse.json({ message: error.message }, { status: 400 });
   }
 }

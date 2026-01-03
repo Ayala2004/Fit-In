@@ -36,6 +36,20 @@ enum Day {
   SATURDAY
 }
 
+
+
+// 1. המודל שמנהל את הקשר בין יום, גננת אם וגננת משלימה
+model FixedRotation {
+  id                String   @id @default(auto()) @map("_id") @db.ObjectId
+  day               Day
+  managerId         String   @db.ObjectId
+  manager           User     @relation("ManagerToRotation", fields: [managerId], references: [id])
+  rotationTeacherId String   @db.ObjectId
+  rotationTeacher   User     @relation("RotationToManager", fields: [rotationTeacherId], references: [id])
+
+  @@unique([managerId, day])
+}
+
 model User {
   id          String   @id @default(auto()) @map("_id") @db.ObjectId
   password    String
@@ -51,27 +65,21 @@ model User {
   address     String?
   workDays    Day[]
 
-  // קשרים לבוסים
+  // קשרים לניהול
   supervisorId    String?  @db.ObjectId
   instructorId    String?  @db.ObjectId
-
   supervisor      User?    @relation("UserSupervisor", fields: [supervisorId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   instructor      User?    @relation("UserInstructor", fields: [instructorId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  
   subordinatesSup User[]   @relation("UserSupervisor")
   subordinatesIns User[]   @relation("UserInstructor")
 
-  // --- חדש: רוטציה קבועה ---
-  // גננת אם יכולה להחזיק גננת רוטציה קבועה אחת
-  rotationTeacherId String? @db.ObjectId
-  rotationTeacher   User?   @relation("PermanentRotation", fields: [rotationTeacherId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  
-  // גננת רוטציה יכולה להיות משויכת לכמה גננות אם (בימים שונים)
-  rotationForManagers User[] @relation("PermanentRotation")
-  // -----------------------
+  // --- המבנה המקצועי לרוטציה (ללא כפילות) ---
+  fixedRotationsAsManager  FixedRotation[] @relation("ManagerToRotation")
+  fixedRotationsAsRotation FixedRotation[] @relation("RotationToManager")
+  // ------------------------------------------
 
-  managedInstitutions    Institution[] @relation("InstitutionManager")
-  instructedInstitutions Institution[] @relation("InstitutionInstructor")
+  managedInstitutions     Institution[] @relation("InstitutionManager")
+  instructedInstitutions  Institution[] @relation("InstitutionInstructor")
   mainManagedInstitutions Institution[] @relation("InstitutionMainManager")
 
   institutionId String?      @db.ObjectId
@@ -81,6 +89,8 @@ model User {
   placementsAsSub  Placement[] @relation("SubstituteTeacher")
   notifications    Notification[]
 }
+
+// ... שאר המודלים (Placement, Institution, Notification) ללא שינוי
 
 model Institution {
   id                String  @id @default(auto()) @map("_id") @db.ObjectId
@@ -747,28 +757,56 @@ export async function PATCH(request: Request) {
 ==============================
 FILE: src/app\api\supervisor\register\route.ts
 ==============================
-import { NextResponse } from 'next/server';
-import { db_registerUser } from '@/services/authService';
-import { getSession } from '@/lib/auth'; // ייבוא הסשן
+import { NextResponse } from "next/server";
+import { db_registerUser } from "@/services/authService";
+import { getSession } from "@/lib/auth";
+import { promises as dns } from "dns";
+
+async function isEmailDomainValid(email: string) {
+  try {
+    const domain = email.split("@")[1];
+    const mxRecords = await dns.resolveMx(domain);
+    return mxRecords && mxRecords.length > 0;
+  } catch (error) {
+    return false;
+  }
+}
 
 export async function POST(req: Request) {
   try {
     const session = await getSession();
-    if (!session) return NextResponse.json({ message: "לא מורשה" }, { status: 401 });
+    if (!session)
+      return NextResponse.json({ message: "לא מורשה" }, { status: 401 });
 
     const body = await req.json();
-    
+    const isRealEmail = await isEmailDomainValid(body.email);
+    if (!isRealEmail) {
+      return NextResponse.json(
+        { message: "נראה ששרת האימייל הזה לא קיים. בדקי שוב את הכתובת." },
+        { status: 400 }
+      );
+    }
+
+    // 2. בדיקת ת"ז וטלפון בשרת (ליתר ביטחון)
+    if (body.idNumber.length !== 9 || !/^0\d{9}$/.test(body.phoneNumber)) {
+      return NextResponse.json(
+        { message: "נתוני זהות או טלפון לא תקינים" },
+        { status: 400 }
+      );
+    }
     const userData = {
       ...body,
       supervisorId: session.id, // הצמדת המפקחת המחוברת למשתמש החדש
     };
 
     const newUser = await db_registerUser(userData);
-    return NextResponse.json({ message: 'המשתמש נוצר בהצלחה', user: newUser });
+    return NextResponse.json({ message: "המשתמש נוצר בהצלחה", user: newUser });
   } catch (error: any) {
+    console.error("Registration Error:", error.message);
     return NextResponse.json({ message: error.message }, { status: 400 });
   }
 }
+
 ==============================
 FILE: src/app\api\supervisor\stats\route.ts
 ==============================
@@ -889,7 +927,6 @@ export async function GET(request: Request) {
 ==============================
 FILE: src/app\api\supervisor\users\[id]\route.ts
 ==============================
-// src/app/api/supervisor/users/[id]/route.ts
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth";
@@ -897,7 +934,7 @@ import { encrypt } from "@/utils/crypto";
 
 export async function PATCH(
   req: Request,
-  { params }: { params: Promise<{ id: string }> } // עדכון טיפוס הנתונים ל-Promise
+  { params }: { params: Promise<{ id: string }> }
 ) {
   const session = await getSession();
 
@@ -907,57 +944,86 @@ export async function PATCH(
 
   try {
     const body = await req.json();
-    const { id } = await params; // חובה לעשות await ל-params ב-Next.js 15
+    const { id } = await params;
 
-    // 1. הוצאת שדות שאינם שדות פשוטים ב-Database
+    // 1. פירוק השדות - אנחנו מוציאים כל מה שהוא לא שדה פשוט ב-User
     const {
-      id: _id,
+      rotationData,
       idNumber,
       instructorId,
-      rotationTeacherId,
-      username,
-      permanentRotationId,
       instructor,
       supervisor,
-      rotationTeacher,
       mainManagedInstitutions,
       managedInstitutions,
       instructedInstitutions,
       placementsAsMain,
       placementsAsSub,
       notifications,
-      rotationForManagers,
+      fixedRotationsAsManager,
+      fixedRotationsAsRotation,
       _count,
-      ...otherFields
+      id: _id, // מוודאים שלא מעדכנים את ה-ID עצמו
+      ...restOfFields
     } = body;
 
-    // 2. הכנת אובייקט הנתונים לעדכון
-    const updateData: any = { ...otherFields };
+    // 2. הכנת אובייקט הנתונים לעדכון (רק שדות פשוטים)
+    const updateData: any = {
+      firstName: restOfFields.firstName,
+      lastName: restOfFields.lastName,
+      email: restOfFields.email,
+      phoneNumber: restOfFields.phoneNumber,
+      roles: restOfFields.roles,
+      workDays: restOfFields.workDays,
+      isWorking: restOfFields.isWorking,
+      instructorId: instructorId || null,
+    };
 
-    // 3. טיפול ב-instructorId (MongoDB חייב ObjectId תקין או null)
-    updateData.instructorId = (instructorId === "" || !instructorId) ? null : instructorId;
+    // עדכון תאריך לידה אם קיים
+    if (restOfFields.dateOfBirth) {
+      updateData.dateOfBirth = new Date(restOfFields.dateOfBirth);
+    }
 
-    // 4. טיפול ב-rotationTeacherId (MongoDB חייב ObjectId תקין או null)
-    updateData.rotationTeacherId = (rotationTeacherId === "" || !rotationTeacherId) ? null : rotationTeacherId;
-
-    // 5. טיפול בתעודת זהות (הצפנה)
-    if (idNumber) {
+    // הצפנת ת"ז אם נשלחה חדשה
+    if (idNumber && idNumber.length > 5) {
       updateData.idNumber = encrypt(idNumber);
     }
 
-    // 6. ביצוע העדכון בפועל
+    // 3. ביצוע העדכון בטבלת User
     const updatedUser = await prisma.user.update({
       where: { id: id },
       data: updateData,
     });
 
+    // 4. עדכון טבלת FixedRotation (רק אם היא MANAGER ושלחנו נתוני רוטציה)
+    if (updatedUser.roles.includes("MANAGER") && rotationData) {
+      // מחיקה של כל הרוטציות הקודמות של המשתמשת הזו
+      await prisma.fixedRotation.deleteMany({
+        where: { managerId: id }
+      });
+
+      // יצירת הרוטציות החדשות
+      const rotationsToCreate = Object.entries(rotationData)
+        .filter(([_, teacherId]) => teacherId && teacherId !== "")
+        .map(([day, teacherId]) => ({
+          managerId: id,
+          day: day as any,
+          rotationTeacherId: teacherId as string,
+        }));
+
+      if (rotationsToCreate.length > 0) {
+        await prisma.fixedRotation.createMany({
+          data: rotationsToCreate
+        });
+      }
+    }
+
     return NextResponse.json(updatedUser);
   } catch (error: any) {
-    console.error("Prisma Update Error:", error);
-    if (error.code === "P2002") {
-      return NextResponse.json({ message: "אימייל או תעודת זהות כבר קיימים במערכת" }, { status: 400 });
-    }
-    return NextResponse.json({ message: "שגיאת שרת פנימית בעדכון המשתמש" }, { status: 500 });
+    console.error("Prisma Update Error Details:", error);
+    return NextResponse.json(
+      { message: "שגיאת שרת פנימית בעדכון", details: error.message },
+      { status: 500 }
+    );
   }
 }
 ==============================
@@ -2555,7 +2621,7 @@ import { highlightText } from "@/lib/utils/formatters";
 import AddInstitutionModal from "@/components/AddInstitutionModal";
 import AddUserModal from "@/components/AddUserModal.tsx";
 import AddSubstituteModal from "@/components/AddSubstituteModal";
-import InstructorPlacementsModal from "@/components/InstructorPlacementsModal";
+import InstructorPlacementsModal from "@/components/InstructorCardModal";
 import PlacementModal from "@/components/PlacementModal";
 import {
   Search,
@@ -2572,7 +2638,7 @@ import {
   User2Icon,
   PlusCircle,
 } from "lucide-react";
-import UserDetailsModal from "@/components/UserDetailsModal";
+import UserEditModal from "@/components/UserEditModal";
 import EditInstitutionModal from "@/components/EditInstitutionModal";
 
 export default function DistrictManagementPage() {
@@ -3046,7 +3112,7 @@ export default function DistrictManagementPage() {
         />
       )}
       {selectedUserForEdit && (
-        <UserDetailsModal
+        <UserEditModal
           isOpen={!!selectedUserForEdit}
           user={selectedUserForEdit}
           onClose={() => setSelectedUserForEdit(null)}
@@ -3096,7 +3162,7 @@ import {
   User,
   Info,
 } from "lucide-react";
-import UserDetailsModal from "@/components/UserDetailsModal";
+import UserEditModal from "@/components/UserEditModal";
 
 export default function StatisticsPage() {
   const [stats, setStats] = useState<any>(null);
@@ -3304,7 +3370,7 @@ const fetchStats = async () => {
         </>
       )}
       {isDetailsOpen && selectedUser && (
-        <UserDetailsModal
+        <UserEditModal
           user={selectedUser}
           isOpen={isDetailsOpen}
           onClose={() => {
@@ -3854,7 +3920,16 @@ FILE: src/components\AddPlacementModal.tsx
 ==============================
 "use client";
 import { useState, useEffect } from "react";
-import { User, Home, X, Check, Clock, UserPlus, AlertCircle } from "lucide-react";
+import {
+  User,
+  Home,
+  X,
+  Check,
+  Clock,
+  UserPlus,
+  AlertCircle,
+  GraduationCap,
+} from "lucide-react";
 
 interface Teacher {
   id: string;
@@ -3871,13 +3946,17 @@ interface Props {
   user: { id: string; roles: string[] };
 }
 
-export default function AddPlacementModal({ isOpen, onClose, date, refreshData, user }: Props) {
+export default function AddPlacementModal({
+  isOpen,
+  onClose,
+  date,
+  refreshData,
+  user,
+}: Props) {
   const [data, setData] = useState<{ managers: Teacher[]; substitutes: Teacher[] }>({ managers: [], substitutes: [] });
   const [selectedManagerId, setSelectedManagerId] = useState("");
   const [selectedSubId, setSelectedSubId] = useState("");
-  
-  // מצבים: 'pending' (ממתין), 'assign' (שיבוץ), 'closed' (גן סגור)
-  const [mode, setMode] = useState<'pending' | 'assign' | 'closed'>('pending');
+  const [mode, setMode] = useState<"pending" | "assign" | "closed">("pending");
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -3890,9 +3969,8 @@ export default function AddPlacementModal({ isOpen, onClose, date, refreshData, 
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-
     if (!selectedManagerId) return alert("חובה לבחור גננת אם");
-    if (mode === 'assign' && !selectedSubId) return alert("חובה לבחור גננת מחליפה");
+    if (mode === "assign" && !selectedSubId) return alert("חובה לבחור גננת מחליפה");
 
     setLoading(true);
     const manager = data.managers.find((m) => m.id === selectedManagerId);
@@ -3901,10 +3979,10 @@ export default function AddPlacementModal({ isOpen, onClose, date, refreshData, 
       date: date.toISOString(),
       mainTeacherId: selectedManagerId,
       institutionId: manager?.mainManagedInstitutions?.[0]?.id,
-      substituteId: mode === 'assign' ? selectedSubId : null,
-      status: mode === 'closed' ? "CANCELLED" : mode === 'assign' ? "ASSIGNED" : "OPEN",
+      substituteId: mode === "assign" ? selectedSubId : null,
+      status: mode === "closed" ? "CANCELLED" : mode === "assign" ? "ASSIGNED" : "OPEN",
       creatorRoles: user.roles,
-      notes: mode === 'closed' ? "הגן נסגר על ידי הפיקוח" : "",
+      notes: mode === "closed" ? "הגן נסגר על ידי הפיקוח" : "",
     };
 
     try {
@@ -3914,156 +3992,133 @@ export default function AddPlacementModal({ isOpen, onClose, date, refreshData, 
         body: JSON.stringify(payload),
       });
 
-      if (res.ok) {
-        refreshData();
-        onClose();
-        resetForm();
-      } else {
-        const err = await res.json();
-        alert(err.message || "שגיאה בשמירת השיבוץ");
-      }
-    } catch {
-      alert("שגיאת תקשורת עם השרת");
+      if (!res.ok) throw new Error((await res.json()).message);
+      refreshData();
+      onClose();
+      setSelectedManagerId("");
+      setSelectedSubId("");
+      setMode("pending");
+    } catch (e: any) {
+      alert(e.message || "שגיאה בשמירה");
     } finally {
       setLoading(false);
     }
   };
 
-  const resetForm = () => {
-    setSelectedManagerId("");
-    setSelectedSubId("");
-    setMode('pending');
-  };
-
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-[110] p-4" dir="rtl">
-      <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden border border-slate-100 animate-in fade-in zoom-in-95 duration-200">
-        
+    <div className="fixed inset-0 z-[110] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4" dir="rtl">
+      <div className="bg-white w-full max-w-md rounded-[2.5rem] shadow-2xl overflow-hidden border border-slate-100 animate-in fade-in zoom-in-95 duration-200">
+
         {/* Header */}
-        <div className="bg-indigo-600 p-6 text-white flex justify-between items-center">
-          <div>
-            <h2 className="text-xl font-bold">הוספת דיווח חדש</h2>
-            <p className="text-indigo-100 text-sm opacity-90">
-              {new Date(date).toLocaleString("IL-he")}
-            </p>
+        <div className="p-8 bg-slate-900 text-white relative">
+          <div className="flex justify-between items-center">
+            <div>
+              <h2 className="text-2xl font-black">הוספת דיווח</h2>
+              <p className="text-slate-400 text-sm mt-1">
+                {new Date(date).toLocaleString("IL-he")}
+              </p>
+            </div>
+            <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-full">
+              <X size={22} />
+            </button>
           </div>
-          <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-full transition-colors">
-            <X size={24} />
-          </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-6 space-y-5">
-          {/* 1. בחירת גננת אם */}
-          <div>
-            <label className="block text-sm font-bold text-slate-700 mb-2 flex items-center gap-2">
-              <User size={16} className="text-indigo-500" /> גננת אם (נעדרת):
-            </label>
-            <select
-              className="w-full p-3 rounded-xl border-2 border-slate-100 focus:border-indigo-500 outline-none bg-slate-50 transition-all font-medium"
-              value={selectedManagerId}
-              onChange={(e) => setSelectedManagerId(e.target.value)}
-              required
-            >
-              <option value="">-- בחרי גננת אם --</option>
-              {data.managers.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.firstName} {m.lastName} ({m.mainManagedInstitutions?.[0]?.name || 'ללא גן'})
-                </option>
-              ))}
-            </select>
-          </div>
+        <form onSubmit={handleSubmit} className="p-8 space-y-6">
 
-          {/* 2. בחירת סוג הדיווח */}
+          {/* גננת אם */}
           <div className="space-y-2">
-             <label className="block text-sm font-bold text-slate-700 mb-2 flex items-center gap-2">
-              <AlertCircle size={16} className="text-indigo-500" /> מה תרצי לבצע?
-            </label>
-            <div className="grid grid-cols-3 gap-2 p-1 bg-slate-100 rounded-2xl">
-              <button
-                type="button"
-                onClick={() => setMode('pending')}
-                className={`flex flex-col items-center gap-1 p-3 rounded-xl text-[11px] font-bold transition-all ${
-                  mode === 'pending' ? "bg-white shadow-sm text-indigo-600" : "text-slate-500 hover:text-slate-700"
-                }`}
+            <label className="text-xs font-bold text-slate-500 mr-2">גננת אם (נעדרת)</label>
+            <div className="relative">
+              <select
+                value={selectedManagerId}
+                onChange={(e) => setSelectedManagerId(e.target.value)}
+                className="w-full pr-10 pl-4 py-3 bg-slate-50 border-none rounded-xl focus:ring-2 focus:ring-indigo-500 font-medium appearance-none"
               >
-                <Clock size={18} /> דיווח בלבד
-              </button>
-              <button
-                type="button"
-                onClick={() => setMode('assign')}
-                className={`flex flex-col items-center gap-1 p-3 rounded-xl text-[11px] font-bold transition-all ${
-                  mode === 'assign' ? "bg-white shadow-sm text-emerald-600" : "text-slate-500 hover:text-slate-700"
-                }`}
-              >
-                <UserPlus size={18} /> שיבוץ מחליפה
-              </button>
-              <button
-                type="button"
-                onClick={() => setMode('closed')}
-                className={`flex flex-col items-center gap-1 p-3 rounded-xl text-[11px] font-bold transition-all ${
-                  mode === 'closed' ? "bg-white shadow-sm text-red-600" : "text-slate-500 hover:text-slate-700"
-                }`}
-              >
-                <Home size={18} /> סגירת גן
-              </button>
+                <option value="">בחרי גננת…</option>
+                {data.managers.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.firstName} {m.lastName} ({m.mainManagedInstitutions?.[0]?.name || "ללא גן"})
+                  </option>
+                ))}
+              </select>
+              <GraduationCap className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
             </div>
           </div>
 
-          {/* 3. שדות דינמיים לפי המצב */}
-          <div className="min-h-[80px] flex items-end">
-            {mode === 'assign' && (
-              <div className="w-full animate-in slide-in-from-top-2 duration-300">
-                <label className="block text-sm font-bold text-slate-700 mb-2">בחירת גננת מחליפה:</label>
-                <select
-                  className="w-full p-3 rounded-xl border-2 border-emerald-100 focus:border-emerald-500 outline-none bg-emerald-50/30 transition-all font-medium"
-                  value={selectedSubId}
-                  onChange={(e) => setSelectedSubId(e.target.value)}
-                  required
+          {/* מצב */}
+          <div className="space-y-2">
+            <label className="text-xs font-bold text-slate-500 mr-2">סוג דיווח</label>
+            <div className="grid grid-cols-3 gap-2 bg-slate-100 p-1 rounded-2xl">
+              {[
+                { key: "pending", label: "דיווח", icon: Clock },
+                { key: "assign", label: "שיבוץ", icon: UserPlus },
+                { key: "closed", label: "סגירה", icon: Home },
+              ].map(({ key, label, icon: Icon }) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => setMode(key as any)}
+                  className={`flex flex-col items-center gap-1 p-3 rounded-xl text-[11px] font-bold transition-all ${
+                    mode === key ? "bg-white shadow text-indigo-600" : "text-slate-500"
+                  }`}
                 >
-                  <option value="">-- בחרי מחליפה פנויה --</option>
-                  {data.substitutes.map((s) => (
-                    <option key={s.id} value={s.id}>{s.firstName} {s.lastName}</option>
-                  ))}
-                </select>
-              </div>
-            )}
-
-            {mode === 'pending' && (
-              <div className="w-full p-4 bg-amber-50 rounded-xl border border-amber-100 animate-in fade-in duration-300">
-                <p className="text-amber-800 text-xs font-medium flex items-center gap-2">
-                  <Clock size={14} /> הדיווח יישמר במצב "ממתין" ויופיע בדאשבורד כקריאה פתוחה.
-                </p>
-              </div>
-            )}
-
-            {mode === 'closed' && (
-              <div className="w-full p-4 bg-red-50 rounded-xl border border-red-100 animate-in fade-in duration-300">
-                <p className="text-red-800 text-xs font-medium flex items-center gap-2">
-                  <Check size={14} /> הגן יסומן כסגור ולא יחפשו עבורו מחליפה להיום.
-                </p>
-              </div>
-            )}
+                  <Icon size={18} />
+                  {label}
+                </button>
+              ))}
+            </div>
           </div>
 
-          {/* Footer Buttons */}
-          <div className="flex gap-3 pt-4">
-             <button
+          {/* שדות דינמיים */}
+          {mode === "assign" && (
+            <div className="space-y-2 animate-in slide-in-from-top-2">
+              <label className="text-xs font-bold text-slate-500 mr-2">גננת מחליפה</label>
+              <div className="relative">
+                <select
+                  value={selectedSubId}
+                  onChange={(e) => setSelectedSubId(e.target.value)}
+                  className="w-full pr-10 pl-4 py-3 bg-emerald-50 border-none rounded-xl focus:ring-2 focus:ring-emerald-500 font-medium appearance-none"
+                >
+                  <option value="">בחרי מחליפה…</option>
+                  {data.substitutes.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.firstName} {s.lastName}
+                    </option>
+                  ))}
+                </select>
+                <UserPlus className="absolute right-3 top-1/2 -translate-y-1/2 text-emerald-400" size={16} />
+              </div>
+            </div>
+          )}
+
+          {mode === "pending" && (
+            <div className="p-4 bg-amber-50 border border-amber-100 rounded-xl text-xs text-amber-800 flex gap-2 items-center">
+              <Clock size={14} /> יישמר במצב ממתין.
+            </div>
+          )}
+
+          {mode === "closed" && (
+            <div className="p-4 bg-red-50 border border-red-100 rounded-xl text-xs text-red-800 flex gap-2 items-center">
+              <Check size={14} /> הגן יסומן כסגור.
+            </div>
+          )}
+
+          {/* Footer */}
+          <div className="flex gap-4 pt-4">
+            <button
               type="submit"
               disabled={loading}
-              className={`flex-[2] p-4 rounded-2xl font-bold text-white shadow-lg transition-all active:scale-95 ${
-                mode === 'closed' ? "bg-red-600 hover:bg-red-700 shadow-red-100" : 
-                mode === 'assign' ? "bg-emerald-600 hover:bg-emerald-700 shadow-emerald-100" :
-                "bg-indigo-600 hover:bg-indigo-700 shadow-indigo-100"
-              }`}
+              className="flex-[2] py-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl font-black shadow-lg shadow-indigo-100 active:scale-95 transition"
             >
-              {loading ? "מעבד..." : "אישור וביצוע"}
+              {loading ? "שומר..." : "אישור"}
             </button>
             <button
               type="button"
               onClick={onClose}
-              className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-600 p-4 rounded-2xl font-bold transition-colors"
+              className="flex-1 py-4 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-2xl font-bold"
             >
               ביטול
             </button>
@@ -4073,173 +4128,277 @@ export default function AddPlacementModal({ isOpen, onClose, date, refreshData, 
     </div>
   );
 }
+
 ==============================
 FILE: src/components\AddSubstituteModal.tsx
 ==============================
 "use client";
 import { useState, useEffect } from "react";
-import { X, Search, Sparkles, UserCheck, Clock, MapPin, Info, Calendar } from "lucide-react";
+import { X, UserCheck, Clock, Info, Calendar } from "lucide-react";
+import FormInput from "./FormInput";
+import { validations } from "@/utils/validations";
 
-export default function AddSubstituteModal({ isOpen, onClose, onSuccess }: any) {
+export default function AddSubstituteModal({
+  isOpen,
+  onClose,
+  onSuccess,
+}: any) {
   const [role, setRole] = useState<"SUBSTITUTE" | "ROTATION">("SUBSTITUTE");
   const [institutions, setInstitutions] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
-  const [instSearch, setInstSearch] = useState("");
+
+  const [formDataState, setFormDataState] = useState({
+    firstName: "",
+    lastName: "",
+    idNumber: "",
+    phoneNumber: "",
+    email: "",
+    password: "",
+    dateOfBirth: "",
+  });
 
   const [schedule, setSchedule] = useState<any>({
-    SUNDAY: { active: true, instId: "", name: "" },
-    MONDAY: { active: true, instId: "", name: "" },
-    TUESDAY: { active: true, instId: "", name: "" },
-    WEDNESDAY: { active: true, instId: "", name: "" },
-    THURSDAY: { active: true, instId: "", name: "" },
-    FRIDAY: { active: true, instId: "", name: "" },
+    SUNDAY: { active: true, instId: "" },
+    MONDAY: { active: true, instId: "" },
+    TUESDAY: { active: true, instId: "" },
+    WEDNESDAY: { active: true, instId: "" },
+    THURSDAY: { active: true, instId: "" },
+    FRIDAY: { active: true, instId: "" },
   });
 
   useEffect(() => {
     if (isOpen) {
       fetch("/api/test?type=allInstitutions")
-        .then(res => res.json())
-        .then(data => setInstitutions(Array.isArray(data) ? data : []));
+        .then((res) => res.json())
+        .then((data) => setInstitutions(Array.isArray(data) ? data : []));
     }
   }, [isOpen]);
 
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const { name, value } = e.target;
+    setFormDataState((prev) => ({ ...prev, [name]: value }));
+  };
+
   const handleSubmit = async (e: any) => {
     e.preventDefault();
-    setLoading(true);
-    const formData = new FormData(e.target);
-    const formProps = Object.fromEntries(formData);
 
-    const activeDays = Object.keys(schedule).filter(day => schedule[day].active);
+    const isIdValid = validations.idNumber(formDataState.idNumber) === "";
+    const isPhoneValid =
+      validations.phoneNumber(formDataState.phoneNumber) === "";
+    const isEmailValid = validations.email(formDataState.email) === "";
+
+    if (!isIdValid || !isPhoneValid || !isEmailValid) {
+      alert("נא לתקן את השגיאות בטופס");
+      return;
+    }
+
+    if (!formDataState.dateOfBirth) {
+      alert("נא להזין תאריך לידה");
+      return;
+    }
+
+    setLoading(true);
+
+    const activeDays = Object.keys(schedule).filter(
+      (day) => schedule[day].active
+    );
 
     const payload = {
-      ...formProps,
+      ...formDataState,
+      dateOfBirth: new Date(formDataState.dateOfBirth).toISOString(),
       roles: [role],
       isWorking: true,
-      dateOfBirth: new Date(formProps.dateOfBirth as string).toISOString(),
-      workDays: role === "SUBSTITUTE" ? ["SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"] : activeDays,
-      notes: role === "ROTATION" ? JSON.stringify(schedule) : "גננת מחליפה מחוזית",
+      workDays:
+        role === "SUBSTITUTE"
+          ? ["SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"]
+          : activeDays,
     };
 
-    const res = await fetch("/api/supervisor/register", {
-      method: "POST",
-      body: JSON.stringify(payload),
-      headers: { "Content-Type": "application/json" },
-    });
+    try {
+      const res = await fetch("/api/supervisor/register", {
+        method: "POST",
+        body: JSON.stringify(payload),
+        headers: { "Content-Type": "application/json" },
+      });
 
-    if (res.ok) {
+      if (!res.ok) throw new Error((await res.json()).message);
       onSuccess();
       onClose();
-    } else {
-      const err = await res.json();
+      setFormDataState({
+        firstName: "",
+        lastName: "",
+        idNumber: "",
+        phoneNumber: "",
+        email: "",
+        password: "",
+        dateOfBirth: "",
+      });
+    } catch (err: any) {
       alert(err.message || "שגיאה ברישום");
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[150] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 overflow-y-auto" dir="rtl">
-      <div className="bg-white w-full max-w-3xl rounded-[2.5rem] shadow-2xl overflow-hidden flex flex-col max-h-[95vh]">
-        
+    <div
+      className="fixed inset-0 z-[150] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4"
+      dir="rtl"
+    >
+      <div className="bg-white w-full max-w-3xl rounded-[2.5rem] shadow-2xl overflow-hidden flex flex-col max-h-[95vh] border border-slate-100">
         {/* Header */}
-        <div className="p-8 bg-emerald-600 text-white relative">
+        <div className="p-8 bg-emerald-600 text-white relative shrink-0">
           <h2 className="text-2xl font-black">הוספת צוות מחליף</h2>
-          <p className="opacity-90 text-sm">גננת מחליפה (קריאות מזדמנות) או רוטציה (לו"ז קבוע)</p>
-          <button onClick={onClose} className="absolute top-6 left-6 p-2 hover:bg-white/10 rounded-full"><X size={24} /></button>
+          <p className="opacity-90 text-sm font-medium">
+            רישום גננת מחליפה או רוטציה
+          </p>
+          <button
+            onClick={onClose}
+            className="absolute top-6 left-6 p-2 hover:bg-white/10 rounded-full"
+          >
+            <X size={24} />
+          </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-8 space-y-8 custom-calendar-scroll text-right">
-          
-          {/* בחירת תפקיד - בלעדי */}
+        <form
+          onSubmit={handleSubmit}
+          className="flex-1 overflow-y-auto p-8 space-y-8"
+        >
+          {/* בחירת תפקיד */}
           <div className="grid grid-cols-2 gap-4 p-1.5 bg-slate-100 rounded-2xl">
-            <button type="button" onClick={() => setRole("SUBSTITUTE")} className={`p-4 rounded-xl font-black text-sm flex items-center justify-center gap-2 transition-all ${role === "SUBSTITUTE" ? "bg-white text-emerald-600 shadow-sm" : "text-slate-500"}`}>
+            <button
+              type="button"
+              onClick={() => setRole("SUBSTITUTE")}
+              className={`p-4 rounded-xl font-black flex items-center justify-center gap-2 ${
+                role === "SUBSTITUTE"
+                  ? "bg-white text-emerald-600 shadow-sm"
+                  : "text-slate-500"
+              }`}
+            >
               <UserCheck size={18} /> גננת מחליפה
             </button>
-            <button type="button" onClick={() => setRole("ROTATION")} className={`p-4 rounded-xl font-black text-sm flex items-center justify-center gap-2 transition-all ${role === "ROTATION" ? "bg-white text-emerald-600 shadow-sm" : "text-slate-500"}`}>
+            <button
+              type="button"
+              onClick={() => setRole("ROTATION")}
+              className={`p-4 rounded-xl font-black flex items-center justify-center gap-2 ${
+                role === "ROTATION"
+                  ? "bg-white text-emerald-600 shadow-sm"
+                  : "text-slate-500"
+              }`}
+            >
               <Clock size={18} /> גננת רוטציה
             </button>
           </div>
 
           {/* פרטים אישיים */}
-          <div className="grid grid-cols-2 gap-4">
-            <input name="firstName" required placeholder="שם פרטי" className="p-3 bg-slate-50 rounded-xl border-none font-bold" />
-            <input name="lastName" required placeholder="שם משפחה" className="p-3 bg-slate-50 rounded-xl border-none font-bold" />
-            <input name="idNumber" required placeholder="תעודת זהות" className="p-3 bg-slate-50 rounded-xl border-none font-bold" />
-            <input name="phoneNumber" required placeholder="טלפון" className="p-3 bg-slate-50 rounded-xl border-none font-bold" />
-            <input name="email" type="email" required placeholder="אימייל" className="p-3 bg-slate-50 rounded-xl border-none font-bold col-span-2" />
-            <input name="password" type="password" required placeholder="סיסמה להתחברות" className="p-3 bg-slate-50 rounded-xl border-none font-bold col-span-2" />
-            <div className="col-span-2 space-y-1">
-              <label className="text-[10px] font-black text-slate-400 mr-2 uppercase tracking-widest text-right block">תאריך לידה</label>
-              <input name="dateOfBirth" type="date" required className="w-full p-3 bg-slate-50 rounded-xl border-none font-bold" />
-            </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <FormInput
+              kind="firstName"
+              value={formDataState.firstName}
+              onChange={handleInputChange}
+            />
+            <FormInput
+              kind="lastName"
+              value={formDataState.lastName}
+              onChange={handleInputChange}
+            />
+
+            <FormInput
+              kind="idNumber"
+              value={formDataState.idNumber}
+              onChange={handleInputChange}
+            />
+            <FormInput
+              kind="phone"
+              value={formDataState.phoneNumber}
+              onChange={handleInputChange}
+            />
+            <FormInput
+              kind="email"
+              value={formDataState.email}
+              onChange={handleInputChange}
+            />
+
+            <FormInput
+              kind="password"
+              value={formDataState.password}
+              onChange={handleInputChange}
+            />
+            <FormInput
+              kind="dateOfBirth"
+              value={formDataState.dateOfBirth}
+              onChange={handleInputChange}
+              className="md:col-span-2"
+            />
           </div>
 
           {/* לו"ז רוטציה */}
           {role === "ROTATION" && (
             <div className="space-y-4 animate-in slide-in-from-top-4">
-              <div className="flex items-center gap-2 text-emerald-600 font-black text-xs uppercase tracking-widest border-b pb-2">
-                <Calendar size={14} /> הגדרת ימי עבודה וגנים קבועים
-              </div>
-              
-              <div className="relative group">
-                <Search className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
-                <input 
-                  type="text" 
-                  placeholder="חיפוש מהיר של גן..." 
-                  className="w-full pr-10 p-2 bg-slate-100 rounded-xl text-xs focus:ring-1 focus:ring-emerald-500 outline-none"
-                  value={instSearch}
-                  onChange={(e) => setInstSearch(e.target.value)}
-                />
+              <div className="flex items-center gap-2 text-emerald-600 font-black text-xs uppercase border-b pb-2">
+                <Calendar size={14} /> הגדרת ימי עבודה
               </div>
 
-              <div className="grid gap-3">
-                {Object.keys(schedule).map((day) => (
-                  <div key={day} className={`flex items-center gap-4 p-3 rounded-2xl border ${schedule[day].active ? "bg-white border-emerald-100 shadow-sm" : "bg-slate-50 border-slate-100 opacity-60"}`}>
-                    <button
-                      type="button"
-                      onClick={() => setSchedule({...schedule, [day]: {...schedule[day], active: !schedule[day].active}})}
-                      className={`w-24 py-2 rounded-lg text-[10px] font-black transition-all ${schedule[day].active ? "bg-emerald-600 text-white" : "bg-slate-200 text-slate-400"}`}
-                    >
-                      {day}
-                    </button>
-                    
-                    <select
-                      disabled={!schedule[day].active}
-                      className="flex-1 bg-transparent border-none font-bold text-sm text-slate-600 outline-none disabled:opacity-30"
-                      value={schedule[day].instId}
-                      onChange={(e) => setSchedule({...schedule, [day]: {...schedule[day], instId: e.target.value}})}
-                    >
-                      <option value="">{schedule[day].active ? "בחרי גן..." : "לא עובדת ביום זה"}</option>
-                      {institutions
-                        .filter(i => i.name.includes(instSearch))
-                        .map((inst: any) => (
-                        <option key={inst.id} value={inst.id}>{inst.name}</option>
-                      ))}
-                    </select>
-                  </div>
-                ))}
-              </div>
+              {Object.keys(schedule).map((day) => (
+                <div
+                  key={day}
+                  className={`flex items-center gap-4 p-4 rounded-2xl border ${
+                    schedule[day].active
+                      ? "bg-white border-emerald-100"
+                      : "bg-slate-50 border-slate-100 opacity-60"
+                  }`}
+                >
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setSchedule({
+                        ...schedule,
+                        [day]: {
+                          ...schedule[day],
+                          active: !schedule[day].active,
+                        },
+                      })
+                    }
+                    className={`w-24 py-2 rounded-lg text-[10px] font-black ${
+                      schedule[day].active
+                        ? "bg-emerald-600 text-white"
+                        : "bg-slate-200 text-slate-400"
+                    }`}
+                  >
+                    {day}
+                  </button>
+                  <span className="text-sm font-bold text-slate-600">
+                    {schedule[day].active ? "יום עבודה פעיל" : "יום חופש"}
+                  </span>
+                </div>
+              ))}
             </div>
           )}
 
           {role === "SUBSTITUTE" && (
-            <div className="p-6 bg-amber-50 rounded-[2rem] border border-amber-100 flex items-start gap-4">
-              <Info className="text-amber-500 shrink-0" size={24} />
-              <p className="text-xs text-amber-800 font-medium leading-relaxed">
-                גננת מחליפה מוגדרת כזמינה "מתי שבא לה". היא תקבל התראות על כל היעדרות במחוז, והמערכת תאפשר לשבץ אותה לכל גן פנוי, אלא אם היא כבר משובצת באותו יום.
+            <div className="p-6 bg-amber-50 rounded-2xl border border-amber-100 flex gap-4">
+              <Info className="text-amber-500" />
+              <p className="text-xs text-amber-800 leading-relaxed">
+                גננת מחליפה מוגדרת כזמינה לפי קריאה.
               </p>
             </div>
           )}
 
-          <button type="submit" disabled={loading} className="w-full py-5 bg-emerald-600 text-white rounded-2xl font-black shadow-lg shadow-emerald-100 hover:bg-emerald-700 transition-all active:scale-95">
-            {loading ? "מעבד..." : "סיום ורישום"}
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full py-5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl font-black shadow-lg active:scale-95 transition disabled:bg-slate-300"
+          >
+            {loading ? "שומר..." : "סיום ורישום"}
           </button>
         </form>
       </div>
     </div>
   );
 }
+
 ==============================
 FILE: src/components\AddUserModal.tsx.tsx
 ==============================
@@ -4253,25 +4412,62 @@ import {
   Calendar,
   CreditCard,
   Lock,
-  UserCheck,
   Shield,
   GraduationCap,
   Building,
   Info,
   CheckCircle2,
   AlertCircle,
-  Sparkles,
+  Award,
 } from "lucide-react";
+import ValidatedField from "./ValidatedField";
+import { validations } from "@/utils/validations";
+import FormInput from "./FormInput";
+
+type AddUserFormData = {
+  firstName: string;
+  lastName: string;
+  idNumber: string;
+  phoneNumber: string;
+  email: string;
+  password: string;
+  dateOfBirth: string;
+  instructorId: string;
+};
 
 export default function AddUserModal({ isOpen, onClose, onSuccess }: any) {
   const [instructors, setInstructors] = useState<any[]>([]);
   const [selectedRoles, setSelectedRoles] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
-  const [freeDays, setFreeDays] = useState<string[]>([]); // שינוי למערך
+  const [freeDays, setFreeDays] = useState<string[]>([]);
+
+  const [formData, setFormData] = useState<AddUserFormData>({
+    firstName: "",
+    lastName: "",
+    idNumber: "",
+    phoneNumber: "",
+    email: "",
+    password: "",
+    dateOfBirth: "",
+    instructorId: "",
+  });
+
+  const handleInputChange = (
+    e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>
+  ) => {
+    const { name, value } = e.target;
+    setFormData((prev) => ({ ...prev, [name]: value }));
+  };
 
   const toggleFreeDay = (day: string) => {
     setFreeDays((prev) =>
       prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day]
+    );
+  };
+
+  const handleRoleChange = (role: string) => {
+    setSelectedRoles((prev) =>
+      prev.includes(role) ? prev.filter((r) => r !== role) : [...prev, role]
     );
   };
 
@@ -4284,46 +4480,37 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }: any) {
     }
   }, [isOpen]);
 
-  const handleRoleChange = (role: string) => {
-    // בגלל שלפעמים מדריכה היא גם גננת אם, נאפשר בחירה מרובה
-    setSelectedRoles((prev) =>
-      prev.includes(role) ? prev.filter((r) => r !== role) : [...prev, role]
-    );
-  };
-
   const handleSubmit = async (e: any) => {
     e.preventDefault();
     setLoading(true);
 
+    const isIdValid = validations.idNumber(formData.idNumber) === "";
+    const isPhoneValid = validations.phoneNumber(formData.phoneNumber) === "";
+    const isEmailValid = validations.email(formData.email) === "";
+
+    if (!isIdValid || !isPhoneValid || !isEmailValid) {
+      alert(
+        "לא ניתן לשמור: אחד או יותר מהשדות (ת״ז, טלפון, אימייל) אינם תקינים."
+      );
+      setLoading(false);
+      return;
+    }
+
     try {
-      const formData = new FormData(e.target);
-      const formProps = Object.fromEntries(formData.entries()) as Record<
+      const form = new FormData(e.target);
+      const formProps = Object.fromEntries(form.entries()) as Record<
         string,
         string
       >;
 
-      const allWeekDays = [
-        "SUNDAY",
-        "MONDAY",
-        "TUESDAY",
-        "WEDNESDAY",
-        "THURSDAY",
-        "FRIDAY",
-      ];
-
-      const payload = {
-        ...formProps,
-        roles: selectedRoles,
-        workDays: [
-          "SUNDAY",
-          "MONDAY",
-          "TUESDAY",
-          "WEDNESDAY",
-          "THURSDAY",
-          "FRIDAY",
-        ].filter((d) => !freeDays.includes(d)),
-        dateOfBirth: new Date(formProps.dateOfBirth as string).toISOString(),
-      };
+   const payload = {
+      ...formData,
+      roles: selectedRoles,
+      workDays: [
+        "SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY",
+      ].filter((d) => !freeDays.includes(d)),
+      dateOfBirth: new Date(formData.dateOfBirth).toISOString(),
+    };
 
       const res = await fetch("/api/supervisor/register", {
         method: "POST",
@@ -4335,6 +4522,7 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }: any) {
         const err = await res.json();
         throw new Error(err.message || "שגיאה ברישום");
       }
+       alert("נרשמה בהצלחה!");
 
       onSuccess();
       onClose();
@@ -4347,22 +4535,10 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }: any) {
     }
   };
 
-  //  פונקציית עזר לחישוב ימי עבודה
-  const calculateWorkDays = (selectedFreeDay: string) => {
-    const allWeekDays = [
-      "SUNDAY",
-      "MONDAY",
-      "TUESDAY",
-      "WEDNESDAY",
-      "THURSDAY",
-      "FRIDAY",
-    ];
-    return allWeekDays.filter((day) => day !== selectedFreeDay);
-  };
-
   if (!isOpen) return null;
 
   const isManager = selectedRoles.includes("MANAGER");
+  const isInstructor = selectedRoles.includes("INSTRUCTOR");
   const hasSelectedRole = selectedRoles.length > 0;
 
   return (
@@ -4371,7 +4547,7 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }: any) {
       dir="rtl"
     >
       <div className="bg-white w-full max-w-2xl rounded-[2.5rem] shadow-2xl my-auto overflow-hidden flex flex-col max-h-[95vh] border border-slate-100">
-        {/* Header - סגנון כהה ויוקרתי */}
+        {/* Header */}
         <div className="p-8 bg-slate-900 text-white relative overflow-hidden shrink-0">
           <div className="absolute top-0 left-0 w-full h-full opacity-10 pointer-events-none">
             <div className="absolute -top-10 -right-10 w-40 h-40 bg-indigo-500 rounded-full blur-3xl"></div>
@@ -4399,7 +4575,7 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }: any) {
           onSubmit={handleSubmit}
           className="flex-1 overflow-y-auto p-8 space-y-8 custom-calendar-scroll"
         >
-          {/* סקציה 1: בחירת תפקיד */}
+          {/* תפקידים */}
           <div className="space-y-4">
             <label className="block text-sm font-black text-slate-700 flex items-center gap-2">
               <Shield size={16} className="text-indigo-500" /> בחרי תפקיד/ים
@@ -4424,7 +4600,7 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }: any) {
                   key={role.id}
                   type="button"
                   onClick={() => handleRoleChange(role.id)}
-                  className={`p-4 rounded-2xl border-2 text-right transition-all flex items-center gap-4 group ${
+                  className={`p-4 rounded-2xl border-2 text-right transition-all flex items-center gap-4 ${
                     selectedRoles.includes(role.id)
                       ? "border-indigo-600 bg-indigo-50/50 shadow-sm"
                       : "border-slate-100 hover:border-indigo-200 bg-white"
@@ -4459,8 +4635,9 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }: any) {
                 </button>
               ))}
             </div>
-            {(selectedRoles.includes("MANAGER") ||
-              selectedRoles.includes("INSTRUCTOR")) && (
+
+            {/* ימי חופש */}
+            {(isManager || isInstructor) && (
               <div className="space-y-3 p-4 bg-indigo-50/50 rounded-2xl border border-indigo-100">
                 <label className="text-xs font-black text-indigo-900 flex items-center gap-2">
                   <Calendar size={14} /> בחרי ימי חופש קבועים (ניתן לבחור יותר
@@ -4496,6 +4673,7 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }: any) {
             )}
           </div>
 
+          {/* אם אין תפקיד נבחר */}
           {!hasSelectedRole ? (
             <div className="p-10 text-center bg-slate-50 rounded-[2rem] border-2 border-dashed border-slate-200">
               <AlertCircle className="mx-auto text-slate-300 mb-3" size={32} />
@@ -4504,133 +4682,50 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }: any) {
               </p>
             </div>
           ) : (
-            <div className="space-y-6 animate-in slide-in-from-top-4 duration-500">
-              <div className="flex items-center gap-2 text-indigo-600 font-black text-xs uppercase tracking-widest pb-2 border-b border-slate-50">
-                <User size={14} /> פרטי זהות ויצירת קשר
-              </div>
+            <div className="animate-in slide-in-from-top-4 duration-500">
+              {/* פרטי זהות ויצירת קשר */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="md:col-span-2 flex items-center gap-2 text-indigo-600 font-black text-xs uppercase tracking-widest pb-2 border-b border-slate-100">
+                  <User size={14} /> פרטי זהות ויצירת קשר
+                </div>
 
-              {/* שורת שם */}
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <label className="text-xs font-bold text-slate-500 mr-2">
-                    שם פרטי
-                  </label>
-                  <div className="relative">
-                    <input
-                      name="firstName"
-                      required
-                      className="w-full pr-10 pl-4 py-3 bg-slate-50 border-none rounded-xl focus:ring-2 focus:ring-indigo-500 font-medium"
-                      placeholder="ישראל"
-                    />
-                    <User
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400"
-                      size={16}
-                    />
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  <label className="text-xs font-bold text-slate-500 mr-2">
-                    שם משפחה
-                  </label>
-                  <div className="relative">
-                    <input
-                      name="lastName"
-                      required
-                      className="w-full pr-10 pl-4 py-3 bg-slate-50 border-none rounded-xl focus:ring-2 focus:ring-indigo-500 font-medium"
-                      placeholder="ישראלי"
-                    />
-                    <User
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400"
-                      size={16}
-                    />
-                  </div>
-                </div>
-              </div>
+                <FormInput
+                  kind="firstName"
+                  value={formData.firstName}
+                  onChange={handleInputChange}
+                />
+                <FormInput
+                  kind="lastName"
+                  value={formData.lastName}
+                  onChange={handleInputChange}
+                />
+                <FormInput
+                  kind="idNumber"
+                  value={formData.idNumber}
+                  onChange={handleInputChange}
+                />
+                <FormInput
+                  kind="phone"
+                  value={formData.phoneNumber}
+                  onChange={handleInputChange}
+                />
+                <FormInput
+                  kind="email"
+                  value={formData.email}
+                  onChange={handleInputChange}
+                />
+                <FormInput
+                  kind="password"
+                  value={formData.password}
+                  onChange={handleInputChange}
+                />
 
-              {/* שורת קשר */}
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <label className="text-xs font-bold text-slate-500 mr-2">
-                    מספר תעודת זהות
-                  </label>
-                  <div className="relative">
-                    <input
-                      name="idNumber"
-                      required
-                      className="w-full pr-10 pl-4 py-3 bg-slate-50 border-none rounded-xl focus:ring-2 focus:ring-indigo-500 font-medium"
-                      placeholder="9 ספרות"
-                    />
-                    <CreditCard
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400"
-                      size={16}
-                    />
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  <label className="text-xs font-bold text-slate-500 mr-2">
-                    מספר טלפון
-                  </label>
-                  <div className="relative">
-                    <input
-                      name="phoneNumber"
-                      required
-                      className="w-full pr-10 pl-4 py-3 bg-slate-50 border-none rounded-xl focus:ring-2 focus:ring-indigo-500 font-medium text-left"
-                      placeholder="050-0000000"
-                      dir="ltr"
-                    />
-                    <Phone
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400"
-                      size={16}
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* שורת אימייל וסיסמה */}
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <label className="text-xs font-bold text-slate-500 mr-2">
-                    אימייל (ישמש להתחברות)
-                  </label>
-                  <div className="relative">
-                    <input
-                      name="email"
-                      type="email"
-                      required
-                      className="w-full pr-10 pl-4 py-3 bg-slate-50 border-none rounded-xl focus:ring-2 focus:ring-indigo-500 font-medium text-left"
-                      placeholder="name@email.com"
-                      dir="ltr"
-                    />
-                    <Mail
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400"
-                      size={16}
-                    />
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  <label className="text-xs font-bold text-slate-500 mr-2">
-                    סיסמה זמנית
-                  </label>
-                  <div className="relative">
-                    <input
-                      name="password"
-                      type="password"
-                      required
-                      className="w-full pr-10 pl-4 py-3 bg-slate-50 border-none rounded-xl focus:ring-2 focus:ring-indigo-500 font-medium text-left"
-                      placeholder="******"
-                      dir="ltr"
-                    />
-                    <Lock
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400"
-                      size={16}
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* שורת תאריך לידה ומדריכה */}
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
+                {/* תאריך לידה */}
+                <div
+                  className={`space-y-2 ${
+                    isInstructor ? "col-span-2" : "col-span-1"
+                  }`}
+                >
                   <label className="text-xs font-bold text-slate-500 mr-2">
                     תאריך לידה
                   </label>
@@ -4639,6 +4734,8 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }: any) {
                       name="dateOfBirth"
                       type="date"
                       required
+                      value={formData.dateOfBirth}
+                      onChange={handleInputChange}
                       className="w-full pr-10 pl-4 py-3 bg-slate-50 border-none rounded-xl focus:ring-2 focus:ring-indigo-500 font-medium"
                     />
                     <Calendar
@@ -4648,7 +4745,8 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }: any) {
                   </div>
                 </div>
 
-                {isManager && (
+                {/* מדריכה מלווה - רק אם לא INSTRUCTOR */}
+                {!isInstructor && (
                   <div className="space-y-2">
                     <label className="text-xs font-bold text-slate-500 mr-2">
                       מדריכה מלווה
@@ -4657,6 +4755,8 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }: any) {
                       <select
                         name="instructorId"
                         required
+                        value={formData.instructorId}
+                        onChange={handleInputChange}
                         className="w-full pr-10 pl-4 py-3 bg-indigo-50/50 border-none rounded-xl focus:ring-2 focus:ring-indigo-500 font-bold text-indigo-700 outline-none appearance-none"
                       >
                         <option value="">בחרי מדריכה...</option>
@@ -4671,14 +4771,13 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }: any) {
                         size={16}
                       />
                     </div>
-
                   </div>
                 )}
               </div>
             </div>
           )}
 
-          {/* Footer Actions */}
+          {/* Footer */}
           <div className="pt-6 flex gap-4 shrink-0">
             <button
               type="submit"
@@ -5014,14 +5113,159 @@ export default function EditInstitutionModal({ isOpen, onClose, onSuccess, insti
   );
 }
 ==============================
-FILE: src/components\InstructorPlacementsModal.tsx
+FILE: src/components\FormInput.tsx
+==============================
+"use client";
+
+import React, { InputHTMLAttributes } from "react";
+import { User, Mail, Phone, CreditCard, Lock, Calendar } from "lucide-react";
+import ValidatedField from "./ValidatedField";
+
+/* ===== טיפוסים ===== */
+
+type FieldKind =
+  | "firstName"
+  | "lastName"
+  | "email"
+  | "phone"
+  | "idNumber"
+  | "password"
+  | "dateOfBirth";
+
+type ValidatedName = "email" | "idNumber" | "phoneNumber";
+
+type BaseConfig = {
+  label: string;
+  placeholder: string;
+  icon: any;
+  name: string;
+  type?: string;
+  useValidation?: false;
+};
+
+type ValidatedConfig = {
+  label: string;
+  icon: any;
+  name: ValidatedName;
+  useValidation: true;
+};
+
+type FieldConfig = BaseConfig | ValidatedConfig;
+
+/* ===== קונפיג ===== */
+
+const CONFIG: Record<FieldKind, FieldConfig> = {
+  firstName: {
+    label: "שם פרטי",
+    placeholder: "שם פרטי",
+    icon: User,
+    name: "firstName",
+  },
+  lastName: {
+    label: "שם משפחה",
+    placeholder: "שם משפחה",
+    icon: User,
+    name: "lastName",
+  },
+  email: {
+    label: "אימייל",
+    icon: Mail,
+    name: "email",
+    useValidation: true,
+  },
+  phone: {
+    label: "מספר טלפון",
+    icon: Phone,
+    name: "phoneNumber",
+    useValidation: true,
+  },
+  idNumber: {
+    label: "תעודת זהות",
+    icon: CreditCard,
+    name: "idNumber",
+    useValidation: true,
+  },
+  password: {
+    label: "סיסמה",
+    placeholder: "••••••••",
+    icon: Lock,
+    name: "password",
+    type: "password",
+  },
+  dateOfBirth: {
+    name: "dateOfBirth",
+    label: "תאריך לידה",
+    type: "date",
+    icon: Calendar,
+    placeholder: "בחרי תאריך", 
+  },
+};
+
+/* ===== Props ===== */
+
+interface FormInputProps extends InputHTMLAttributes<HTMLInputElement> {
+  kind: FieldKind;
+  value: string;
+  onChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
+}
+
+/* ===== קומפוננטה ===== */
+
+export default function FormInput({
+  kind,
+  value,
+  onChange,
+  ...props
+}: FormInputProps) {
+  const config = CONFIG[kind];
+  const Icon = config.icon;
+
+  return (
+    <div className="space-y-2">
+      <label className="text-xs font-bold text-slate-500 mr-2">
+        {config.label}
+      </label>
+
+      <div className="relative">
+        {config.useValidation ? (
+          <ValidatedField
+            name={config.name}
+            label={config.label}
+            value={value}
+            onChange={onChange}
+            dir="ltr"
+          />
+        ) : (
+          <>
+            <input
+              {...props}
+              name={config.name}
+              type={config.type || "text"}
+              required
+              value={value}
+              onChange={onChange}
+              placeholder={config.placeholder}
+              className="w-full px-4 py-3 bg-slate-50 border-none rounded-xl focus:ring-2 focus:ring-indigo-500 font-medium"
+            />
+            <Icon
+              className={`absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 ${config.name==="dateOfBirth" && "hidden"}`}
+              size={16}
+            />
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+==============================
+FILE: src/components\InstructorCardModal.tsx
 ==============================
 "use client";
 
 import { X, User, Building2, Pencil, GraduationCap, Search, Sparkles } from "lucide-react";
 import { highlightText } from "@/lib/utils/formatters";
-import { useEffect, useRef, useState } from "react";
-import UserDetailsModal from "./UserDetailsModal";
+import { useEffect, useRef } from "react";
 
 interface Props {
   isOpen: boolean;
@@ -5039,7 +5283,6 @@ export default function InstructorPlacementsModal({
   onAssignClick,
 }: Props) {
   const scrollTargetRef = useRef<HTMLDivElement>(null);
-  const [selectedGanenet, setSelectedGanenet] = useState<any>(null);
 
   useEffect(() => {
     if (isOpen && scrollTargetRef.current) {
@@ -5495,7 +5738,13 @@ export default function RecentActivityModal({
 
   const getActivityText = (activity: any) => {
     if (activity.status === "CANCELLED") {
-      return `הגן ${activity.institution.name} נסגר להיום`;
+      return `הגן ${activity.institution.name} נסגר לתאריך ${new Date(
+        activity.date
+      ).toLocaleDateString("he-IL", {
+        day: "numeric",
+        month: "numeric",
+        year: "numeric",
+      })}`;
     } else if (activity.substitute) {
       return `שובצה ${activity.substitute.firstName} ${activity.substitute.lastName} לגן ${activity.institution.name}`;
     } else {
@@ -5616,32 +5865,27 @@ export default function RecentActivityModal({
 }
 
 ==============================
-FILE: src/components\UserDetailsModal.tsx
+FILE: src/components\trash.tsx
 ==============================
 "use client";
 
 import { useState, useEffect } from "react";
 import {
   X,
-  MapPin,
-  Phone,
-  Mail,
   Award,
   Shield,
   Save,
   CheckCircle2,
-  GraduationCap,
-  Calendar,
   Clock,
   User as UserIcon,
-  CreditCard,
   Power,
   UserCheck,
   UserMinus,
   ChevronDown,
 } from "lucide-react";
+import FormInput from "./FormInput";
 
-export default function UserDetailsModal({
+export default function UserEditModal({
   user,
   isOpen,
   onClose,
@@ -5651,79 +5895,30 @@ export default function UserDetailsModal({
   const [instructors, setInstructors] = useState<any[]>([]);
   const [rotations, setRotations] = useState<any[]>([]);
   const [isRoleOpen, setIsRoleOpen] = useState(false);
+  
+  // State לניהול שיבוצי רוטציה לפי ימים { "MONDAY": "teacher-id-123" }
+  const [rotationData, setRotationData] = useState<Record<string, string>>({});
+
   const [formData, setFormData] = useState({
     firstName: user.firstName || "",
     lastName: user.lastName || "",
     email: user.email || "",
-    idNumber: user.idNumber || "", // מגיע כבר מפוענח מה-API
+    idNumber: user.idNumber || "",
     phoneNumber: user.phoneNumber || "",
     roles: user.roles || [],
     isWorking: user.isWorking ?? true,
     instructorId: user.instructorId || "",
-    workDays: user.workDays || [
-      "SUNDAY",
-      "MONDAY",
-      "TUESDAY",
-      "WEDNESDAY",
-      "THURSDAY",
-      "FRIDAY",
-    ],
-    rotationTeacherId: user.rotationTeacherId || "",
+    workDays: user.workDays || ["SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
+    dateOfBirth: user.dateOfBirth || "",
   });
 
   const ALLOWED_ROLE_COMBINATIONS = [
     { id: "MANAGER_ONLY", label: "גננת אם בלבד", roles: ["MANAGER"] },
     { id: "INSTRUCTOR_ONLY", label: "מדריכה בלבד", roles: ["INSTRUCTOR"] },
-    {
-      id: "MANAGER_INSTRUCTOR",
-      label: "גננת אם וגם מדריכה",
-      roles: ["MANAGER", "INSTRUCTOR"],
-    },
+    { id: "MANAGER_INSTRUCTOR", label: "גננת אם וגם מדריכה", roles: ["MANAGER", "INSTRUCTOR"] },
     { id: "SUBSTITUTE_ONLY", label: "מחליפה בלבד", roles: ["SUBSTITUTE"] },
     { id: "ROTATION_ONLY", label: "רוטציה בלבד", roles: ["ROTATION"] },
   ];
-
-  const getCurrentComboId = () => {
-    const currentRoles = formData.roles;
-    const combo = ALLOWED_ROLE_COMBINATIONS.find(
-      (c) =>
-        c.roles.length === currentRoles.length &&
-        c.roles.every((r) => currentRoles.includes(r))
-    );
-    return combo ? combo.id : null;
-  };
-
-  const handleComboSelect = (roles: string[]) => {
-    setFormData((prev: any) => ({
-      ...prev,
-      roles: roles,
-    }));
-  };
-
-  // שליפת מדריכות עבור שיוך לגננת אם
-  useEffect(() => {
-    if (isOpen) {
-      fetch("/api/supervisor/instructors")
-        .then((res) => res.json())
-        .then((data) => setInstructors(Array.isArray(data) ? data : []))
-        .catch((err) => console.error("Error fetching instructors:", err));
-      fetch("/api/supervisor/users-stats")
-        .then((res) => res.json())
-        .then((data) => {
-          const onlyRotations = data.filter((u: any) =>
-            u.roles.includes("ROTATION")
-          );
-          setRotations(onlyRotations);
-        });
-    }
-  }, [isOpen]);
-
-  const roleLabels: any = {
-    MANAGER: "גננת אם",
-    INSTRUCTOR: "מדריכה",
-    SUBSTITUTE: "גננת מחליפה",
-    ROTATION: "גננת רוטציה",
-  };
 
   const weekDays = [
     { id: "SUNDAY", label: "א'" },
@@ -5734,18 +5929,41 @@ export default function UserDetailsModal({
     { id: "FRIDAY", label: "ו'" },
   ];
 
+  useEffect(() => {
+    if (isOpen) {
+      // טעינת מדריכות
+      fetch("/api/supervisor/instructors")
+        .then((res) => res.json())
+        .then((data) => setInstructors(Array.isArray(data) ? data : []));
+
+      // טעינת רשימת גננות רוטציה פוטנציאליות
+      fetch("/api/supervisor/users-stats")
+        .then((res) => res.json())
+        .then((data) => {
+          setRotations(data.filter((u: any) => u.roles.includes("ROTATION")));
+        });
+
+      // טעינת רוטציות קיימות של המשתמשת הספציפית הזו
+      if (user.fixedRotationsAsManager) {
+        const mapping: Record<string, string> = {};
+        user.fixedRotationsAsManager.forEach((r: any) => {
+          mapping[r.day] = r.rotationTeacherId;
+        });
+        setRotationData(mapping);
+      }
+    }
+  }, [user, isOpen]);
+
+  const getCurrentComboId = () => {
+    const combo = ALLOWED_ROLE_COMBINATIONS.find(
+      (c) => c.roles.length === formData.roles.length && c.roles.every((r) => formData.roles.includes(r))
+    );
+    return combo ? combo.id : null;
+  };
+
   const handleInputChange = (e: any) => {
     const { name, value } = e.target;
     setFormData((prev) => ({ ...prev, [name]: value }));
-  };
-
-  const toggleRole = (role: string) => {
-    setFormData((prev: any) => ({
-      ...prev,
-      roles: prev.roles.includes(role)
-        ? prev.roles.filter((r: string) => r !== role)
-        : [...prev.roles, role],
-    }));
   };
 
   const toggleWorkDay = (dayId: string) => {
@@ -5761,16 +5979,15 @@ export default function UserDetailsModal({
     e.preventDefault();
     setLoading(true);
     try {
-      // הכנת הנתונים למשלוח - וודאי שכל שדות ה-ID מנוקים
       const payload = {
         ...formData,
-        // המרת תאריך לידה חזרה לפורמט ISO שהשרת מצפה לו
-        dateOfBirth: new Date(user.dateOfBirth).toISOString(),
+        rotationData, // המידע על איזה רוטציה משובצת באיזה יום
+        dateOfBirth: formData.dateOfBirth ? new Date(formData.dateOfBirth).toISOString() : null,
       };
 
       const res = await fetch(`/api/supervisor/users/${user.id}`, {
         method: "PATCH",
-        body: JSON.stringify(payload), // משלוח ה-payload הנקי
+        body: JSON.stringify(payload),
         headers: { "Content-Type": "application/json" },
       });
 
@@ -5782,11 +5999,270 @@ export default function UserDetailsModal({
         alert(errorData.message || "שגיאה בעדכון הנתונים");
       }
     } catch (err) {
-      console.error("Update error:", err);
       alert("שגיאת תקשורת עם השרת");
     } finally {
       setLoading(false);
     }
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-150 bg-slate-900/60 backdrop-blur-sm p-4 flex items-center justify-center" dir="rtl">
+      <div className="bg-white w-full max-w-3xl rounded-[2.5rem] shadow-2xl flex flex-col max-h-[95vh] border border-slate-100 overflow-hidden">
+        <div className="p-8 bg-slate-900 text-white flex justify-between items-center shrink-0">
+          <div className="flex items-center gap-4">
+            <div className="w-14 h-14 bg-indigo-600 rounded-2xl flex items-center justify-center"><UserIcon size={30} /></div>
+            <div>
+              <h2 className="text-2xl font-black">{formData.firstName} {formData.lastName}</h2>
+              <p className="text-slate-400 text-sm">ניהול ועריכת פרטי משתמשת</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-full"><X size={28} /></button>
+        </div>
+
+        <form onSubmit={handleUpdate} className="flex-1 overflow-y-auto p-8 space-y-8 custom-calendar-scroll">
+          <section className="space-y-4">
+            <h4 className="font-black text-slate-700 flex items-center gap-2 text-lg border-b pb-2">
+              <Award size={20} className="text-indigo-500" /> פרטים אישיים
+            </h4>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <FormInput kind="firstName" value={formData.firstName} onChange={handleInputChange} />
+              <FormInput kind="lastName" value={formData.lastName} onChange={handleInputChange} />
+              <FormInput kind="idNumber" value={formData.idNumber} onChange={handleInputChange} />
+              <FormInput kind="phone" value={formData.phoneNumber} onChange={handleInputChange} />
+              <FormInput kind="email" value={formData.email} onChange={handleInputChange} />
+              <FormInput kind="dateOfBirth" value={formData.dateOfBirth} onChange={handleInputChange} />
+            </div>
+          </section>
+
+          <section className="grid grid-cols-1 md:grid-cols-2 gap-8">
+            <div className="space-y-4">
+              <h4 className="font-black text-slate-700 flex items-center gap-2 text-lg border-b pb-2"><Shield size={20} className="text-indigo-500" /> הגדרת תפקיד</h4>
+              <div className="relative">
+                <button type="button" onClick={() => setIsRoleOpen(!isRoleOpen)} className="w-full p-3 rounded-xl border-2 flex items-center justify-between font-bold text-sm bg-white">
+                  <span>{ALLOWED_ROLE_COMBINATIONS.find(c => c.id === getCurrentComboId())?.label || "בחרי תפקיד"}</span>
+                  <ChevronDown size={18} />
+                </button>
+                {isRoleOpen && (
+                  <div className="absolute z-20 mt-2 w-full bg-white border rounded-xl shadow-lg">
+                    {ALLOWED_ROLE_COMBINATIONS.map(combo => (
+                      <button key={combo.id} type="button" onClick={() => { setFormData({...formData, roles: combo.roles}); setIsRoleOpen(false); }} className="w-full p-3 text-right hover:bg-slate-50 text-sm font-bold border-b last:border-0">
+                        {combo.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              <h4 className="font-black text-slate-700 flex items-center gap-2 text-lg border-b pb-2"><Clock size={20} className="text-indigo-500" /> ימי עבודה / חופש</h4>
+              <div className="grid grid-cols-6 gap-2">
+                {weekDays.map((day) => {
+                  const isActive = formData.workDays.includes(day.id);
+                  return (
+                    <button key={day.id} type="button" onClick={() => toggleWorkDay(day.id)} className={`w-12 h-12 rounded-xl border-2 flex flex-col items-center justify-center ${isActive ? "bg-white border-slate-200" : "bg-red-50 border-red-500 text-red-700"}`}>
+                      <span className="text-sm font-black">{day.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </section>
+
+          {formData.roles.includes("MANAGER") && (
+            <section className="space-y-4 border-t pt-6">
+              <h4 className="font-black text-indigo-600 flex items-center gap-2">הגדרת רוטציה (גננת משלימה לימי חופש)</h4>
+              <div className="grid grid-cols-1 gap-3">
+                {weekDays.map((day) => {
+                  const isFreeDay = !formData.workDays.includes(day.id);
+                  if (!isFreeDay) return null;
+
+                  return (
+                    <div key={day.id} className="flex items-center justify-between p-3 bg-indigo-50/50 rounded-xl border border-indigo-100">
+                      <span className="text-sm font-bold">יום {day.label} (יום חופשי)</span>
+                      <select 
+                        className="p-2 bg-white border border-slate-200 rounded-lg text-xs font-bold outline-none"
+                        value={rotationData[day.id] || ""}
+                        onChange={(e) => setRotationData({...rotationData, [day.id]: e.target.value})}
+                      >
+                        <option value="">בחרי גננת רוטציה...</option>
+                        {rotations.map(rt => <option key={rt.id} value={rt.id}>{rt.firstName} {rt.lastName}</option>)}
+                      </select>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          )}
+
+          <div className="pt-6 flex gap-4 mt-auto">
+            <button type="submit" disabled={loading} className="flex-[2] py-4 bg-indigo-600 text-white rounded-2xl font-black shadow-lg hover:bg-indigo-700 transition-all">
+              {loading ? "מעדכן..." : "שמירת כל השינויים"}
+            </button>
+            <button type="button" onClick={onClose} className="flex-1 py-4 bg-slate-100 text-slate-600 rounded-2xl font-bold">ביטול</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+==============================
+FILE: src/components\UserEditModal.tsx
+==============================
+"use client";
+
+import { useState, useEffect } from "react";
+import {
+  X,
+  Award,
+  Shield,
+  Save,
+  CheckCircle2,
+  Clock,
+  User as UserIcon,
+  Power,
+  UserCheck,
+  UserMinus,
+  ChevronDown,
+} from "lucide-react";
+import FormInput from "./FormInput";
+
+export default function UserEditModal({
+  user,
+  isOpen,
+  onClose,
+  onUpdateSuccess,
+}: any) {
+  const [loading, setLoading] = useState(false);
+  const [instructors, setInstructors] = useState<any[]>([]);
+  const [rotations, setRotations] = useState<any[]>([]);
+  const [isRoleOpen, setIsRoleOpen] = useState(false);
+  const [rotationData, setRotationData] = useState<Record<string, string>>({});
+  const [formData, setFormData] = useState({
+    firstName: user.firstName || "",
+    lastName: user.lastName || "",
+    email: user.email || "",
+    idNumber: user.idNumber || "",
+    phoneNumber: user.phoneNumber || "",
+    roles: user.roles || [],
+    isWorking: user.isWorking ?? true,
+    instructorId: user.instructorId || "",
+    workDays: user.workDays || [
+      "SUNDAY",
+      "MONDAY",
+      "TUESDAY",
+      "WEDNESDAY",
+      "THURSDAY",
+      "FRIDAY",
+    ],
+    rotationTeacherId: user.rotationTeacherId || "",
+    dateOfBirth: user.dateOfBirth || "",
+  });
+
+  const ALLOWED_ROLE_COMBINATIONS = [
+    { id: "MANAGER_ONLY", label: "גננת אם בלבד", roles: ["MANAGER"] },
+    { id: "INSTRUCTOR_ONLY", label: "מדריכה בלבד", roles: ["INSTRUCTOR"] },
+    {
+      id: "MANAGER_INSTRUCTOR",
+      label: "גננת אם וגם מדריכה",
+      roles: ["MANAGER", "INSTRUCTOR"],
+    },
+    { id: "SUBSTITUTE_ONLY", label: "מחליפה בלבד", roles: ["SUBSTITUTE"] },
+    { id: "ROTATION_ONLY", label: "רוטציה בלבד", roles: ["ROTATION"] },
+  ];
+
+  const weekDays = [
+    { id: "SUNDAY", label: "א'" },
+    { id: "MONDAY", label: "ב'" },
+    { id: "TUESDAY", label: "ג'" },
+    { id: "WEDNESDAY", label: "ד'" },
+    { id: "THURSDAY", label: "ה'" },
+    { id: "FRIDAY", label: "ו'" },
+  ];
+
+  useEffect(() => {
+    if (isOpen) {
+      // טעינת מדריכות
+      fetch("/api/supervisor/instructors")
+        .then((res) => res.json())
+        .then((data) => setInstructors(Array.isArray(data) ? data : []));
+
+      // טעינת רשימת גננות רוטציה פוטנציאליות
+      fetch("/api/supervisor/users-stats")
+        .then((res) => res.json())
+        .then((data) => {
+          setRotations(data.filter((u: any) => u.roles.includes("ROTATION")));
+        });
+
+      // טעינת רוטציות קיימות של המשתמשת הספציפית הזו
+      if (user.fixedRotationsAsManager) {
+        const mapping: Record<string, string> = {};
+        user.fixedRotationsAsManager.forEach((r: any) => {
+          mapping[r.day] = r.rotationTeacherId;
+        });
+        setRotationData(mapping);
+      }
+    }
+  }, [user, isOpen]);
+
+  const getCurrentComboId = () => {
+    const combo = ALLOWED_ROLE_COMBINATIONS.find(
+      (c) =>
+        c.roles.length === formData.roles.length &&
+        c.roles.every((r) => formData.roles.includes(r))
+    );
+    return combo ? combo.id : null;
+  };
+
+  const handleInputChange = (e: any) => {
+    const { name, value } = e.target;
+    setFormData((prev) => ({ ...prev, [name]: value }));
+  };
+
+  const toggleWorkDay = (dayId: string) => {
+    setFormData((prev: any) => ({
+      ...prev,
+      workDays: prev.workDays.includes(dayId)
+        ? prev.workDays.filter((d: string) => d !== dayId)
+        : [...prev.workDays, dayId],
+    }));
+  };
+
+  const handleUpdate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    try {
+      const payload = {
+        ...formData,
+        rotationData, // המידע על איזה רוטציה משובצת באיזה יום
+        dateOfBirth: formData.dateOfBirth
+          ? new Date(formData.dateOfBirth).toISOString()
+          : null,
+      };
+
+      const res = await fetch(`/api/supervisor/users/${user.id}`, {
+        method: "PATCH",
+        body: JSON.stringify(payload),
+        headers: { "Content-Type": "application/json" },
+      });
+
+      if (res.ok) {
+        onUpdateSuccess();
+        onClose();
+      } else {
+        const errorData = await res.json();
+        alert(errorData.message || "שגיאה בעדכון הנתונים");
+      }
+    } catch (err) {
+      alert("שגיאת תקשורת עם השרת");
+    } finally {
+      setLoading(false);
+    }
+  };
+  const handleComboSelect = (roles: string[]) => {
+    setFormData((prev: any) => ({ ...prev, roles }));
   };
 
   if (!isOpen) return null;
@@ -5822,88 +6298,62 @@ export default function UserDetailsModal({
           onSubmit={handleUpdate}
           className="flex-1 overflow-y-auto p-8 space-y-8 custom-calendar-scroll"
         >
-          {/* 1. פרטים אישיים בסיסיים */}
+          {/* פרטים אישיים */}
           <section className="space-y-4">
             <h4 className="font-black text-slate-700 flex items-center gap-2 text-lg border-b pb-2">
               <Award size={20} className="text-indigo-500" /> פרטים אישיים
             </h4>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-500 mr-2">
-                  שם פרטי
-                </label>
-                <input
-                  name="firstName"
-                  value={formData.firstName}
-                  onChange={handleInputChange}
-                  className="input-standard"
-                />
-              </div>
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-500 mr-2">
-                  שם משפחה
-                </label>
-                <input
-                  name="lastName"
-                  value={formData.lastName}
-                  onChange={handleInputChange}
-                  className="input-standard"
-                />
-              </div>
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-500 mr-2 flex items-center gap-1">
-                  <CreditCard size={14} /> תעודת זהות
-                </label>
-                <input
-                  name="idNumber"
-                  value={formData.idNumber}
-                  onChange={handleInputChange}
-                  className="input-standard"
-                />
-              </div>
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-500 mr-2 flex items-center gap-1">
-                  <Phone size={14} /> טלפון
-                </label>
-                <input
-                  name="phoneNumber"
-                  value={formData.phoneNumber}
-                  onChange={handleInputChange}
-                  className="input-standard text-left"
-                  dir="ltr"
-                />
-              </div>
-              <div className="space-y-1 col-span-full">
-                <label className="text-xs font-bold text-slate-500 mr-2 flex items-center gap-1">
-                  <Mail size={14} /> אימייל (שם משתמש)
-                </label>
-                <input
-                  name="email"
-                  value={formData.email}
-                  onChange={handleInputChange}
-                  className="input-standard text-left"
-                  dir="ltr"
-                />
-              </div>
+              <FormInput
+                name="firstName"
+                kind="firstName"
+                value={formData.firstName}
+                onChange={handleInputChange}
+              />
+              <FormInput
+                name="lastName"
+                kind="lastName"
+                value={formData.lastName}
+                onChange={handleInputChange}
+              />
+              <FormInput
+                name="idNumber"
+                kind="idNumber"
+                value={formData.idNumber}
+                onChange={handleInputChange}
+              />
+              <FormInput
+                name="phoneNumber"
+                kind="phone"
+                value={formData.phoneNumber}
+                onChange={handleInputChange}
+              />
+              <FormInput
+                name="email"
+                kind="email"
+                value={formData.email}
+                onChange={handleInputChange}
+              />
+              <FormInput
+                name="dateOfBirth"
+                kind="dateOfBirth"
+                value={formData.dateOfBirth || ""}
+                onChange={handleInputChange}
+              />
             </div>
           </section>
 
-          {/*  ניהול תפקידים ויום חופשי */}
+          {/* הגדרת תפקידים */}
           <section className="grid grid-cols-1 md:grid-cols-2 gap-8">
             <div className="space-y-4">
-              <div className="border-b pb-2">
-                <h4 className="font-black text-slate-700 flex items-center gap-2 text-lg">
-                  <Shield size={20} className="text-indigo-500" /> הגדרת תפקיד
-                </h4>
-                <p className="text-[13px] text-slate-400 font-medium italic">
-                  * בלחיצה על החץ תפתח רשימה של תפקידים אפשריים
-                </p>
-              </div>
+              <h4 className="font-black text-slate-700 flex items-center gap-2 text-lg border-b pb-2">
+                <Shield size={20} className="text-indigo-500" /> הגדרת תפקיד
+              </h4>
               <div className="relative">
                 <button
                   type="button"
-                  onClick={() => setIsRoleOpen((v) => !v)}
-                  className="w-full p-3 rounded-xl border-2 border-slate-200 flex items-center justify-between font-bold text-sm text-slate-700 bg-white hover:border-indigo-400 transition"
+                  onClick={() => setIsRoleOpen(!isRoleOpen)}
+                  className="w-full p-3 rounded-xl border-2 flex items-center justify-between font-bold text-sm bg-white"
                 >
                   <span>
                     {ALLOWED_ROLE_COMBINATIONS.find(
@@ -5912,17 +6362,13 @@ export default function UserDetailsModal({
                   </span>
                   <ChevronDown
                     size={18}
-                    className={`transition-transform ${
-                      isRoleOpen ? "rotate-180" : ""
-                    }`}
+                    className={isRoleOpen ? "rotate-180" : ""}
                   />
                 </button>
-
                 {isRoleOpen && (
-                  <div className="absolute z-20 mt-2 w-full bg-white border border-slate-200 rounded-xl shadow-lg overflow-hidden">
+                  <div className="absolute z-20 mt-2 w-full bg-white border rounded-xl shadow-lg overflow-hidden">
                     {ALLOWED_ROLE_COMBINATIONS.map((combo) => {
                       const isSelected = getCurrentComboId() === combo.id;
-
                       return (
                         <button
                           key={combo.id}
@@ -5951,17 +6397,13 @@ export default function UserDetailsModal({
                 )}
               </div>
             </div>
+
+            {/* ימי עבודה / חופש */}
             <div className="space-y-4">
-              <div className="border-b pb-2">
-                <h4 className="font-black text-slate-700 flex items-center gap-2 text-lg ">
-                  <Clock size={20} className="text-indigo-500" /> ימי עבודה /
-                  חופש
-                </h4>
-                <p className="text-[13px] text-slate-400 font-medium italic">
-                  * ימים המסומנים באדום נחשבים ל"יום חופשי" קבוע במערכת.
-                </p>
-              </div>
-              <div className="grid grrid-cols-1 sm:grid-cols-2 md:grid-cols-6 gap-2">
+              <h4 className="font-black text-slate-700 flex items-center gap-2 text-lg border-b pb-2">
+                <Clock size={20} className="text-indigo-500" /> ימי עבודה / חופש
+              </h4>
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-6 gap-2">
                 {weekDays.map((day) => {
                   const isActive = formData.workDays.includes(day.id);
                   return (
@@ -5986,38 +6428,32 @@ export default function UserDetailsModal({
             </div>
           </section>
 
+          {/* סטטוס עבודה */}
           <section>
-            <div className="space-y-4">
-              <h4 className="font-black text-slate-700 flex items-center gap-2 text-lg border-b pb-2">
-                <Power size={20} className="text-indigo-500" /> סטטוס עבודה
-              </h4>
-              {/* כפתור סטטוס עבודה נשאר אותו דבר */}
-              <button
-                type="button"
-                onClick={() =>
-                  setFormData((prev) => ({
-                    ...prev,
-                    isWorking: !prev.isWorking,
-                  }))
-                }
-                className={`w-full p-4 rounded-2xl border-2 flex items-center justify-between transition-all ${
-                  formData.isWorking
-                    ? "border-emerald-500 bg-emerald-50 text-emerald-700"
-                    : "border-red-500 bg-red-50 text-red-700"
-                }`}
-              >
-                <span className="font-black">
-                  {formData.isWorking ? "עובדת פעילה" : "מושבתת / לא פעילה"}
-                </span>
-                {formData.isWorking ? <UserCheck /> : <UserMinus />}
-              </button>
-            </div>
+            <h4 className="font-black text-slate-700 flex items-center gap-2 text-lg border-b pb-2">
+              <Power size={20} className="text-indigo-500" /> סטטוס עבודה
+            </h4>
+            <button
+              type="button"
+              onClick={() =>
+                setFormData((prev) => ({ ...prev, isWorking: !prev.isWorking }))
+              }
+              className={`w-full p-4 rounded-2xl border-2 flex items-center justify-between transition-all ${
+                formData.isWorking
+                  ? "border-emerald-500 bg-emerald-50 text-emerald-700"
+                  : "border-red-500 bg-red-50 text-red-700"
+              }`}
+            >
+              <span className="font-black">
+                {formData.isWorking ? "עובדת פעילה" : "מושבתת / לא פעילה"}
+              </span>
+              {formData.isWorking ? <UserCheck /> : <UserMinus />}
+            </button>
           </section>
 
-          {/* 4. שיוך מדריכה (רק אם גננת אם) */}
+          {/* שיוך מדריכה / רוטציה */}
           {formData.roles.includes("MANAGER") && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {/* שיוך מדריכה (קיים) */}
               <div className="space-y-1">
                 <label className="text-xs font-bold text-slate-500 mr-2">
                   מדריכה מלווה
@@ -6037,34 +6473,55 @@ export default function UserDetailsModal({
                 </select>
               </div>
 
-              {/* חדש: שיוך גננת רוטציה קבועה */}
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-500 mr-2">
-                  גננת רוטציה קבועה (אופציונלי)
-                </label>
-                <select
-                  name="rotationTeacherId"
-                  value={formData.rotationTeacherId || ""}
-                  onChange={handleInputChange}
-                  className="input-standard border-emerald-200 focus:border-emerald-500"
-                >
-                  <option value="">ללא רוטציה קבועה</option>
-                  {rotations.map((rot) => (
-                    <option key={rot.id} value={rot.id}>
-                      {rot.firstName} {rot.lastName}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              <section className="space-y-4 border-t pt-6">
+                <h4 className="font-black text-slate-700 flex items-center gap-2 text-indigo-600">
+                  <Clock size={20} /> הגדרת רוטציה (גננת משלימה)
+                </h4>
+                <div className="grid grid-cols-1 gap-3">
+                  {weekDays.map((day) => {
+                    // גננת אם צריכה רוטציה רק בימים שהיא לא עובדת בהם
+                    const isFreeDay = !formData.workDays.includes(day.id);
+                    if (!isFreeDay) return null;
+
+                    return (
+                      <div
+                        key={day.id}
+                        className="flex items-center justify-between p-3 bg-indigo-50/50 rounded-2xl border border-indigo-100"
+                      >
+                        <span className="text-sm font-bold text-slate-700">
+                          יום {day.label} (חופשי)
+                        </span>
+                        <select
+                          className="p-2 bg-white border border-slate-200 rounded-lg text-xs font-bold outline-none focus:ring-2 focus:ring-indigo-500"
+                          value={rotationData[day.id] || ""}
+                          onChange={(e) =>
+                            setRotationData({
+                              ...rotationData,
+                              [day.id]: e.target.value,
+                            })
+                          }
+                        >
+                          <option value="">בחרי גננת רוטציה...</option>
+                          {rotations.map((rt) => (
+                            <option key={rt.id} value={rt.id}>
+                              {rt.firstName} {rt.lastName}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
             </div>
           )}
 
-          {/* Footer Actions */}
-          <div className="pt-6 flex gap-4  bottom-0 bg-white border-t border-slate-50 mt-auto">
+          {/* Footer */}
+          <div className="pt-6 flex gap-4 mt-auto bottom-0 bg-white border-t border-slate-50">
             <button
               type="submit"
               disabled={loading}
-              className="flex-[2] py-4 bg-indigo-600 text-white rounded-2xl font-black shadow-lg shadow-indigo-100 hover:bg-indigo-700 transition-all active:scale-95 flex items-center justify-center gap-2"
+              className="flex-[2] py-4 bg-indigo-600 text-white rounded-2xl font-black shadow-lg hover:bg-indigo-700 transition-all flex items-center justify-center gap-2"
             >
               {loading ? (
                 "מעדכן..."
@@ -6088,6 +6545,106 @@ export default function UserDetailsModal({
   );
 }
 
+==============================
+FILE: src/components\ValidatedField.tsx
+==============================
+"use client";
+import React, { useState } from "react";
+import { CreditCard, Phone, Mail } from "lucide-react";
+import { validations } from "@/utils/validations";
+
+interface ValidatedFieldProps {
+  name: "idNumber" | "phoneNumber" | "email";
+  label: string;
+  value: string;
+  onChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  required?: boolean;
+  placeholder?: string;
+  disabled?: boolean;
+  dir?: "rtl" | "ltr";
+}
+
+export default function ValidatedField({
+  name,
+  label,
+  value,
+  onChange,
+  required = true,
+  placeholder,
+  disabled = false,
+  dir,
+}: ValidatedFieldProps) {
+  const [error, setError] = useState("");
+
+  // ביצוע וולידציה כשהמשתמש יוצא מהשדה (Blur)
+  const handleBlur = () => {
+    if (!value && required) {
+      setError("שדה חובה");
+      return;
+    }
+    const errorMessage = validations[name](value);
+    setError(errorMessage);
+  };
+
+  // כשהמשתמש מקליד - אנחנו מנקים את השגיאה
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (error) setError("");
+    onChange(e);
+  };
+
+  // בחירת אייקון לפי סוג השדה
+  const icons = {
+    idNumber: <CreditCard size={18} />,
+    phoneNumber: <Phone size={18} />,
+    email: <Mail size={18} />,
+  };
+
+  // קביעת כיוון הטקסט (טלפון ואימייל תמיד משמאל לימין)
+  const inputDir = dir || (name === "idNumber" ? "rtl" : "ltr");
+
+  return (
+    <div className="space-y-1.5 w-full text-right">
+      
+      <div className="relative group">
+        <input
+          name={name}
+          value={value}
+          onChange={handleChange}
+          onBlur={handleBlur}
+          disabled={disabled}
+          placeholder={placeholder}
+          dir={inputDir}
+          className={`w-full pr-10 pl-4 py-3 bg-slate-50 border-none rounded-xl transition-all outline-none font-medium
+            ${error 
+              ? "ring-2 ring-red-500 bg-red-50 text-red-900" 
+              : "focus:ring-2 focus:ring-indigo-500 text-slate-700 hover:bg-slate-100"
+            } ${disabled ? "opacity-50 cursor-not-allowed" : ""}`}
+        />
+        
+        {/* אייקון ימני */}
+        <div className={`absolute right-3 top-1/2 -translate-y-1/2 transition-colors
+          ${error ? "text-red-500" : "text-slate-400 group-focus-within:text-indigo-500"}`}>
+          {icons[name]}
+        </div>
+
+        {error && (
+          <div className="absolute left-3 top-1/2 -translate-y-1/2 text-red-500 animate-pulse">
+           
+          </div>
+        )}
+      </div>
+
+      {/* הצגת הודעת השגיאה */}
+      <div className="min-h-[16px] mr-2">
+        {error && (
+          <p className="text-red-500 text-[10px] font-black animate-in fade-in slide-in-from-top-1">
+            {error}
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
 ==============================
 FILE: src/lib\api.ts
 ==============================
@@ -6226,28 +6783,34 @@ export async function db_registerUser(userData: any) {
     dateOfBirth,
     supervisorId,
     instructorId,
-    rotationTeacherId,
+    rotationData, 
     ...rest
   } = userData;
 
   const hashedPassword = await bcrypt.hash(password, 10);
   const encryptedID = encrypt(idNumber);
 
-  // בדיקה לפי email במקום username
+  // בדיקה לפי email  
   const existing = await prisma.user.findUnique({
     where: { email: rest.email },
   });
   if (existing) throw new Error("אימייל זה כבר קיים במערכת");
 
-  return await prisma.user.create({
+   return await prisma.user.create({
     data: {
-      ...rest,
+      firstName: rest.firstName,
+      lastName: rest.lastName,
+      email: rest.email,
       password: hashedPassword,
       idNumber: encryptedID,
+      phoneNumber: rest.phoneNumber,
       dateOfBirth: new Date(dateOfBirth),
+      roles: rest.roles,
+      workDays: rest.workDays,
       supervisorId: supervisorId || null,
       instructorId: instructorId || null,
-      rotationTeacherId: rotationTeacherId || null,
+      isAdmin: rest.isAdmin || false,
+      isWorking: true
     },
   });
 }
@@ -6354,7 +6917,16 @@ import {
   db_notifyMultipleUsers,
 } from "./notificationService";
 import { Day } from "@prisma/client";
-import { addMonths, endOfMonth, startOfDay, endOfDay, addDays } from "date-fns";
+import { addMonths,  startOfDay, endOfDay, addDays } from "date-fns";
+
+const isSameDate = (date1: Date, date2: Date) => {
+  return (
+    date1.getFullYear() === date2.getFullYear() &&
+    date1.getMonth() === date2.getMonth() &&
+    date1.getDate() === date2.getDate()
+  );
+};
+
 
 /**
  * שליפת נתונים ללוח הבקרה של המפקחת
@@ -6528,10 +7100,17 @@ const getDayEnum = (date: Date): Day => {
 /**
  * יצירת שיבוץ חדש
  */
+  
+  // בדיקה מי אמורה להיות בגן ביום הזה לפי הלו"ז הקבוע
+
+/**
+ * יצירת דיווח היעדרות/שיבוץ חדש
+ * תומך בדיווח של גננת אם, גננת רוטציה, או מפקחת (רטרואקטיבי)
+ */
 export async function db_createPlacement(data: {
   date: Date;
   institutionId: string;
-  mainTeacherId: string;
+  mainTeacherId: string; 
   substituteId?: string | null;
   notes?: string;
   creatorRoles: string[];
@@ -6539,56 +7118,38 @@ export async function db_createPlacement(data: {
 }) {
   const targetDate = startOfDay(new Date(data.date));
   const today = startOfDay(new Date());
-  if (targetDate.getDay() === 6) {
-    throw new Error("לא ניתן לדווח על היעדרות ביום שבת");
-  }
-  const isManager = (data.creatorRoles ?? []).some((role) =>
-    ["SUPERVISOR", "INSTRUCTOR"].includes(role)
-  );
+  
+  // 1. בדיקות בסיסיות
+  if (targetDate.getDay() === 6) throw new Error("לא ניתן לדווח בשבת");
 
+  const isManager = (data.creatorRoles ?? []).some(r => ["SUPERVISOR", "INSTRUCTOR"].includes(r));
   const isRetroactive = targetDate < today;
 
   if (isRetroactive && !isManager) {
-    throw new Error("רק מפקחת או מדריכה יכולות לדווח על היעדרות רטרואקטיבית");
+    throw new Error("רק מפקחת או מדריכה יכולות לדווח על העבר");
   }
 
-  let finalStatus: "OPEN" | "ASSIGNED" | "CANCELLED" = "OPEN";
-  if (isRetroactive) {
-    if (data.status === "ASSIGNED" || data.status === "CANCELLED") {
-      finalStatus = data.status;
-    } else {
-      throw new Error("בדיווח רטרואקטיבי יש לבחור סטטוס ASSIGNED או CANCELLED");
-    }
-  } else {
-    finalStatus = isManager ? data.status || "OPEN" : "OPEN";
-  }
-
-  const existingReport = await prisma.placement.findFirst({
-    where: {
-      institutionId: data.institutionId,
-      date: targetDate,
-    },
+  // 2. מניעת כפילות
+  const existing = await prisma.placement.findFirst({
+    where: { institutionId: data.institutionId, date: targetDate }
   });
-if (existingReport) {
-    // הוספת לוגיקה: אם המפקחת מנסה ליצור דיווח על משהו שכבר סגור או משובץ
-    if (existingReport.status === "CANCELLED") {
-      throw new Error("הגן כבר הוגדר כסגור לתאריך זה.");
-    }
-    if (existingReport.status === "ASSIGNED") {
-      throw new Error("כבר קיימת מחליפה משובצת לגן זה.");
-    }
-    throw new Error("כבר קיים דיווח פעיל לגן זה בתאריך שנבחר");
-}
+  if (existing) throw new Error("כבר קיים דיווח פעיל ליום זה בגן זה");
 
-  const diffInDays =
-    (targetDate.getTime() - today.getTime()) / (1000 * 3600 * 24);
+  // 3. קביעת סטטוס ועדיפות
+  let finalStatus = data.status || "OPEN";
+  if (isRetroactive && finalStatus === "OPEN") {
+    throw new Error("בדיווח על העבר יש לבחור סטטוס סופי");
+  }
+
+  const diffInDays = (targetDate.getTime() - today.getTime()) / (1000 * 3600 * 24);
   const priority = !isRetroactive && diffInDays <= 2 ? "URGENT" : "NORMAL";
 
+  // 4. יצירת הרשומה
   const newPlacement = await prisma.placement.create({
     data: {
       date: targetDate,
       institutionId: data.institutionId,
-      mainTeacherId: data.mainTeacherId,
+      mainTeacherId: data.mainTeacherId, // מי שנעדרת בפועל
       substituteId: data.substituteId,
       notes: data.notes,
       status: finalStatus,
@@ -6596,44 +7157,38 @@ if (existingReport) {
     },
     include: {
       institution: true,
-      mainTeacher: { select: { firstName: true, lastName: true } },
-      substitute: { select: { firstName: true, lastName: true } }, // כדאי להוסיף include גם למחליפה כאן
+      mainTeacher: { select: { firstName: true, lastName: true, supervisorId: true } },
+      substitute: { select: { firstName: true, lastName: true } },
     },
   });
 
+  // 5. התראות (רק לדיווחים עתידיים פתוחים)
   if (!isRetroactive && finalStatus === "OPEN") {
     const { institution, mainTeacher } = newPlacement;
-    const teacherName = `${mainTeacher.firstName} ${mainTeacher.lastName}`;
-    const notificationType =
-      priority === "URGENT" ? "URGENT_CALL" : "STATUS_UPDATE";
+    const notificationType = priority === "URGENT" ? "URGENT_CALL" : "STATUS_UPDATE";
 
     await db_createNotification({
       userId: institution.supervisorId,
-      title: `דיווח היעדרות: ${institution.name}`,
-      message: `גננת האם ${teacherName} דיווחה על היעדרות ל-${targetDate.toLocaleDateString(
-        "he-IL"
-      )}`,
+      title: `היעדרות בגן ${institution.name}`,
+      message: `הגננת ${mainTeacher.firstName} לא תגיע ביום ${targetDate.toLocaleDateString("he-IL")}`,
       type: notificationType,
     });
 
-    const availableTeachers = await prisma.user.findMany({
+    const available = await prisma.user.findMany({
       where: {
         isWorking: true,
         roles: { hasSome: ["SUBSTITUTE", "ROTATION"] },
         workDays: { has: getDayEnum(targetDate) },
         placementsAsSub: { none: { date: targetDate, status: "ASSIGNED" } },
       },
-      select: { id: true },
+      select: { id: true }
     });
 
-    const teacherIds = availableTeachers.map((t) => t.id);
-    if (teacherIds.length > 0) {
+    if (available.length > 0) {
       await db_notifyMultipleUsers(
-        teacherIds,
-        priority === "URGENT" ? "קריאה דחופה לשיבוץ!" : "הזדמנות לשיבוץ חדש",
-        `דרושה מחליפה לגן ${
-          institution.name
-        } בתאריך ${targetDate.toLocaleDateString("he-IL")}`,
+        available.map(u => u.id),
+        priority === "URGENT" ? "קריאה דחופה!" : "הצעה להחלפה",
+        `דרושה מחליפה לגן ${institution.name}`,
         notificationType
       );
     }
@@ -6709,7 +7264,8 @@ export async function db_updatePlacementStatus(params: {
  * לוח שנה
  */
 /**
- * שליפת נתונים מורחבת ללוח השנה
+
+ * שליפת נתונים ללוח השנה הכוללת רוטציות קבועות ודיווחים ידניים
  */
 export async function db_getCalendarData(
   month: number,
@@ -6717,20 +7273,80 @@ export async function db_getCalendarData(
   supervisorId: string
 ) {
   const startDate = new Date(year, month - 1, 1);
-  const endDate = new Date(year, month, 0);
+  const endDate = new Date(year, month, 0, 23, 59, 59);
 
-  return await prisma.placement.findMany({
+  // 1. שליפת כל הדיווחים הידניים (החריגות) של המחוז לחודש הזה
+  const manualPlacements = await prisma.placement.findMany({
     where: {
       date: { gte: startDate, lte: endDate },
-      institution: { supervisorId: supervisorId }, // סינון לפי המפקחת הרלוונטית
+      institution: { supervisorId: supervisorId },
     },
     include: {
-      institution: { select: { name: true } },
-      mainTeacher: { select: { id: true, firstName: true, lastName: true } },
+      institution: { select: { name: true, id: true } },
+      mainTeacher: { select: { id: true, firstName: true, lastName: true, roles: true } },
       substitute: { select: { id: true, firstName: true, lastName: true } },
     },
-    orderBy: { date: "asc" },
   });
+
+  // 2. שליפת כל המוסדות והרוטציות הקבועות שלהם מראש
+const institutions = await prisma.institution.findMany({
+    where: { supervisorId: supervisorId },
+    include: {
+      // כאן אנחנו מוודאים שאנחנו מושכים את גננת האם ואת הרוטציות שלה
+      mainManager: {
+        include: {
+          fixedRotationsAsManager: {
+            include: { rotationTeacher: true }
+          }
+        }
+      }
+    }
+  });
+
+  const calendarDays: any[] = [];
+
+  // 3. לולאה על הימים - הכל מחושב בזיכרון (מהיר מאוד)
+  for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
+    const currentDate = new Date(d);
+    const dayName = getDayEnum(currentDate);
+
+    for (const inst of institutions) {
+      // בדיקה: האם יש חריגה (Placement) רשומה ב-DB ליום הזה ולגן הזה?
+      const override = manualPlacements.find(p => 
+        p.institutionId === inst.id && isSameDate(new Date(p.date), currentDate)
+      );
+
+      if (override) {
+        // יש חריגה! (למשל: הרוטציה חולה, או הגננת אם החליפה יום)
+        calendarDays.push({
+          ...override,
+          isOverride: true // דגל לפרונט
+        });
+      } else {
+        // אין חריגה ידנית - נבדוק מה הלו"ז הקבוע
+        const rotation = inst.mainManager.fixedRotationsAsManager.find(r => r.day === dayName);
+
+        if (rotation) {
+          // זה יום רוטציה קבוע - הגננת היא גננת הרוטציה
+          calendarDays.push({
+            id: `fixed-${inst.id}-${currentDate.getTime()}`,
+            date: new Date(currentDate),
+            status: "ASSIGNED", 
+            institution: { name: inst.name, id: inst.id },
+            mainTeacher: rotation.rotationTeacher, // הגננת ש"אמורה" להיות שם היא הרוטציה
+            substitute: null,
+            notes: "רוטציה קבועה",
+            isFixed: true 
+          });
+        } else {
+          // יום רגיל - גננת האם נמצאת (לא מוסיפים ללוח אלא אם את רוצה להציג הכל)
+          // בדרך כלל בלוח שנה של היעדרויות נציג רק ימים עם "אירוע" (רוטציה או חריגה)
+        }
+      }
+    }
+  }
+
+  return calendarDays;
 }
 
 /**
@@ -6920,4 +7536,23 @@ export const isToday = (date: Date | string) => {
   return d.getDate() === today.getDate() &&
          d.getMonth() === today.getMonth() &&
          d.getFullYear() === today.getFullYear();
+};
+==============================
+FILE: src/utils\validations.ts
+==============================
+export const validations = {
+  idNumber: (val: string) => {
+    const id = String(val).trim();
+    if (id.length !== 9 || isNaN(Number(id))) return "תעודת זהות חייבת להכיל 9 ספרות";
+    let sum = 0;
+    for (let i = 0; i < 9; i++) {
+      let digit = Number(id[i]);
+      let step = digit * ((i % 2) + 1);
+      if (step > 9) step -= 9;
+      sum += step;
+    }
+    return sum % 10 === 0 ? "" : "תעודת זהות לא תקינה";
+  },
+  phoneNumber: (val: string) => (/^0\d{9}$/.test(val) ? "" : "טלפון לא תקין (10 ספרות, מתחיל ב-0)"),
+  email: (val: string) => (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val) ? "" : "אימייל לא תקין"),
 };

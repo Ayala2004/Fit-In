@@ -15,9 +15,12 @@ import {
   CheckCircle2,
   AlertCircle,
   Award,
+  Clock,
 } from "lucide-react";
+import ValidatedField from "./ValidatedField";
 import { validations } from "@/utils/validations";
 import FormInput from "./FormInput";
+
 type AddUserFormData = {
   firstName: string;
   lastName: string;
@@ -28,11 +31,14 @@ type AddUserFormData = {
   dateOfBirth: string;
   instructorId: string;
 };
+
 export default function AddUserModal({ isOpen, onClose, onSuccess }: any) {
   const [instructors, setInstructors] = useState<any[]>([]);
   const [selectedRoles, setSelectedRoles] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [freeDays, setFreeDays] = useState<string[]>([]);
+  const [rotations, setRotations] = useState<any[]>([]);
+  const [rotationData, setRotationData] = useState<Record<string, string>>({});
 
   const [formData, setFormData] = useState<AddUserFormData>({
     firstName: "",
@@ -58,24 +64,36 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }: any) {
     );
   };
 
-  useEffect(() => {
-    if (isOpen) {
-      fetch("/api/supervisor/instructors")
-        .then((res) => res.json())
-        .then((data) => setInstructors(Array.isArray(data) ? data : []))
-        .catch(() => setInstructors([]));
-    }
-  }, [isOpen]);
-
   const handleRoleChange = (role: string) => {
     setSelectedRoles((prev) =>
       prev.includes(role) ? prev.filter((r) => r !== role) : [...prev, role]
     );
   };
 
+  useEffect(() => {
+    if (!isOpen) return;
+
+    // טעינת רשימת גננות רוטציה
+    fetch("/api/supervisor/users-stats")
+      .then((res) => res.json())
+      .then((data) => {
+        setRotations(data.filter((u: any) => u.roles.includes("ROTATION")));
+      })
+      .catch(() => setRotations([]));
+
+    // טעינת רשימת מדריכות
+    fetch("/api/supervisor/instructors")
+      .then((res) => res.json())
+      .then((data) => {
+        setInstructors(Array.isArray(data) ? data : []);
+      })
+      .catch(() => setInstructors([]));
+  }, [isOpen]);
+
   const handleSubmit = async (e: any) => {
     e.preventDefault();
     setLoading(true);
+
     const isIdValid = validations.idNumber(formData.idNumber) === "";
     const isPhoneValid = validations.phoneNumber(formData.phoneNumber) === "";
     const isEmailValid = validations.email(formData.email) === "";
@@ -89,15 +107,16 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }: any) {
     }
 
     try {
-      const formData = new FormData(e.target);
-      const formProps = Object.fromEntries(formData.entries()) as Record<
+      const form = new FormData(e.target);
+      const formProps = Object.fromEntries(form.entries()) as Record<
         string,
         string
       >;
+
       const payload = {
-        ...formProps,
         ...formData,
         roles: selectedRoles,
+       rotationData: rotationData,
         workDays: [
           "SUNDAY",
           "MONDAY",
@@ -106,7 +125,7 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }: any) {
           "THURSDAY",
           "FRIDAY",
         ].filter((d) => !freeDays.includes(d)),
-        dateOfBirth: new Date(formProps.dateOfBirth as string).toISOString(),
+        dateOfBirth: new Date(formData.dateOfBirth).toISOString(),
       };
 
       const res = await fetch("/api/supervisor/register", {
@@ -119,6 +138,7 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }: any) {
         const err = await res.json();
         throw new Error(err.message || "שגיאה ברישום");
       }
+      alert("נרשמה בהצלחה!");
 
       onSuccess();
       onClose();
@@ -171,11 +191,176 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }: any) {
           onSubmit={handleSubmit}
           className="flex-1 overflow-y-auto p-8 space-y-8 custom-calendar-scroll"
         >
-          {/* סקציה 1: בחירת תפקיד */}
+          {/* תפקידים */}
           <div className="space-y-4">
-            {/* ... אותו קוד של בחירת תפקיד — ללא שינוי ... */}
-          </div>
+            <label className="block text-sm font-black text-slate-700 flex items-center gap-2">
+              <Shield size={16} className="text-indigo-500" /> בחרי תפקיד/ים
+              במערכת:
+            </label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {[
+                {
+                  id: "MANAGER",
+                  label: "גננת אם",
+                  desc: "ניהול גן קבוע",
+                  icon: Building,
+                },
+                {
+                  id: "INSTRUCTOR",
+                  label: "מדריכה",
+                  desc: "ליווי פדגוגי והדרכה",
+                  icon: GraduationCap,
+                },
+              ].map((role) => (
+                <button
+                  key={role.id}
+                  type="button"
+                  onClick={() => handleRoleChange(role.id)}
+                  className={`p-4 rounded-2xl border-2 text-right transition-all flex items-center gap-4 ${
+                    selectedRoles.includes(role.id)
+                      ? "border-indigo-600 bg-indigo-50/50 shadow-sm"
+                      : "border-slate-100 hover:border-indigo-200 bg-white"
+                  }`}
+                >
+                  <div
+                    className={`p-3 rounded-xl transition-colors ${
+                      selectedRoles.includes(role.id)
+                        ? "bg-indigo-600 text-white"
+                        : "bg-slate-50 text-slate-400 group-hover:text-indigo-500"
+                    }`}
+                  >
+                    <role.icon size={20} />
+                  </div>
+                  <div className="flex-1">
+                    <div
+                      className={`text-sm font-black ${
+                        selectedRoles.includes(role.id)
+                          ? "text-indigo-900"
+                          : "text-slate-700"
+                      }`}
+                    >
+                      {role.label}
+                    </div>
+                    <div className="text-[11px] text-slate-400 font-medium">
+                      {role.desc}
+                    </div>
+                  </div>
+                  {selectedRoles.includes(role.id) && (
+                    <CheckCircle2 size={18} className="text-indigo-600" />
+                  )}
+                </button>
+              ))}
+            </div>
 
+            {/* ימי חופש */}
+            {(isManager || isInstructor) && (
+              <div className="space-y-3 p-4 bg-indigo-50/50 rounded-2xl border border-indigo-100">
+                <label className="text-xs font-black text-indigo-900 flex items-center gap-2">
+                  <Calendar size={14} /> בחרי ימי חופש קבועים (ניתן לבחור יותר
+                  מאחד):
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  {[
+                    { id: "SUNDAY", label: "א'" },
+                    { id: "MONDAY", label: "ב'" },
+                    { id: "TUESDAY", label: "ג'" },
+                    { id: "WEDNESDAY", label: "ד'" },
+                    { id: "THURSDAY", label: "ה'" },
+                    { id: "FRIDAY", label: "ו'" },
+                  ].map((day) => (
+                    <button
+                      key={day.id}
+                      type="button"
+                      onClick={() => toggleFreeDay(day.id)}
+                      className={`w-10 h-10 rounded-xl font-black text-xs transition-all border-2 ${
+                        freeDays.includes(day.id)
+                          ? "bg-indigo-600 text-white border-indigo-600 shadow-md"
+                          : "bg-white text-slate-400 border-slate-100 hover:border-indigo-200"
+                      }`}
+                    >
+                      {day.label}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-[10px] text-indigo-400 font-medium">
+                  * בימים אלו המשתמשת לא תופיע כזמינה לשיבוץ/ניהול.
+                </p>
+              </div>
+            )}
+          </div>
+          {isManager && freeDays.length > 0 && (
+            <div className="space-y-4 border-t pt-6 animate-in slide-in-from-top-2">
+              <h4 className="font-black text-indigo-600 flex items-center gap-2 text-sm uppercase tracking-wider">
+                <Clock size={18} /> שיוך גננת רוטציה לימי חופש
+              </h4>
+
+              <div className="grid grid-cols-1 gap-3">
+                {freeDays.map((dayId) => {
+                  // מיפוי פשוט לשמות הימים
+                  const dayNames: Record<string, string> = {
+                    SUNDAY: "ראשון",
+                    MONDAY: "שני",
+                    TUESDAY: "שלישי",
+                    WEDNESDAY: "רביעי",
+                    THURSDAY: "חמישי",
+                    FRIDAY: "שישי",
+                  };
+
+                  // לוגיקת הסינון:
+                  // מציגים רק גננות שאין להן שום שיבוץ (assignment) ביום הזה
+                  const availableRotationsForThisDay = rotations.filter(
+                    (rt) => {
+                      const isBusyThisDay = rt.fixedRotationsAsRotation?.some(
+                        (assignment: any) => assignment.day === dayId
+                      );
+                      return !isBusyThisDay;
+                    }
+                  );
+
+                  return (
+                    <div
+                      key={dayId}
+                      className="flex items-center justify-between p-4 bg-indigo-50/30 rounded-2xl border border-indigo-100 shadow-sm transition-all hover:bg-indigo-50/50"
+                    >
+                      <div className="flex flex-col">
+                        <span className="text-[10px] font-black text-indigo-400 uppercase tracking-tighter">
+                          יום {dayNames[dayId]}
+                        </span>
+                        <span className="text-sm font-bold text-slate-700">
+                          גננת משלימה קבועה
+                        </span>
+                      </div>
+
+                      <select
+                        className="w-48 p-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold shadow-sm outline-none focus:ring-2 focus:ring-indigo-500 transition-all cursor-pointer"
+                        value={rotationData[dayId] || ""}
+                        onChange={(e) =>
+                          setRotationData({
+                            ...rotationData,
+                            [dayId]: e.target.value,
+                          })
+                        }
+                      >
+                        <option value="">-- בחרי גננת פנויה --</option>
+                        {availableRotationsForThisDay.map((rt) => (
+                          <option key={rt.id} value={rt.id}>
+                            {rt.firstName} {rt.lastName}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* הודעת עזר למפקחת */}
+              <p className="text-[10px] text-slate-400 font-medium italic mt-2">
+                * הרשימה מציגה רק גננות רוטציה שאינן משובצות ביום הנבחר בגן אחר.
+              </p>
+            </div>
+          )}
+
+          {/* אם אין תפקיד נבחר */}
           {!hasSelectedRole ? (
             <div className="p-10 text-center bg-slate-50 rounded-[2rem] border-2 border-dashed border-slate-200">
               <AlertCircle className="mx-auto text-slate-300 mb-3" size={32} />
@@ -185,8 +370,8 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }: any) {
             </div>
           ) : (
             <div className="animate-in slide-in-from-top-4 duration-500">
+              {/* פרטי זהות ויצירת קשר */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {/* כותרת */}
                 <div className="md:col-span-2 flex items-center gap-2 text-indigo-600 font-black text-xs uppercase tracking-widest pb-2 border-b border-slate-100">
                   <User size={14} /> פרטי זהות ויצירת קשר
                 </div>
@@ -196,31 +381,26 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }: any) {
                   value={formData.firstName}
                   onChange={handleInputChange}
                 />
-
                 <FormInput
                   kind="lastName"
                   value={formData.lastName}
                   onChange={handleInputChange}
                 />
-
                 <FormInput
                   kind="idNumber"
                   value={formData.idNumber}
                   onChange={handleInputChange}
                 />
-
                 <FormInput
                   kind="phone"
                   value={formData.phoneNumber}
                   onChange={handleInputChange}
                 />
-
                 <FormInput
                   kind="email"
                   value={formData.email}
                   onChange={handleInputChange}
                 />
-
                 <FormInput
                   kind="password"
                   value={formData.password}
@@ -252,7 +432,7 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }: any) {
                   </div>
                 </div>
 
-                {/* מדריכה מלווה - רק אם MANAGER */}
+                {/* מדריכה מלווה - רק אם לא מדריכה */}
                 {!isInstructor && (
                   <div className="space-y-2">
                     <label className="text-xs font-bold text-slate-500 mr-2">
@@ -284,7 +464,7 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }: any) {
             </div>
           )}
 
-          {/* Footer Actions */}
+          {/* Footer */}
           <div className="pt-6 flex gap-4 shrink-0">
             <button
               type="submit"
