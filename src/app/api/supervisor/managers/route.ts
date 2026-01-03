@@ -6,20 +6,19 @@ import { format } from "date-fns";
 export async function GET(req: Request) {
   try {
     const session = await getSession();
-    if (!session)
+    if (!session || !session.roles.includes("SUPERVISOR")) {
       return NextResponse.json({ message: "לא מורשה" }, { status: 401 });
+    }
 
     const { searchParams } = new URL(req.url);
     const dateStr = searchParams.get("date");
 
     // --- מקרה א': הקמת גן חדש (אין תאריך בבקשה) ---
-    // נשלוף רק גננות אם שאין להן עדיין גן באחריותן
     if (!dateStr) {
       const availableForNewInstitution = await prisma.user.findMany({
         where: {
           supervisorId: session.id,
           roles: { has: "MANAGER" },
-          // התנאי הקריטי: מחפשים משתמשת שאין לה (none) מוסדות בניהול ראשי
           mainManagedInstitutions: {
             none: {},
           },
@@ -29,7 +28,7 @@ export async function GET(req: Request) {
           firstName: true,
           lastName: true,
           email: true,
-          instructorId: true, // נחוץ כדי להצמיד אוטומטית את המדריכה שלה לגן החדש
+          instructorId: true,
         },
       });
 
@@ -40,23 +39,36 @@ export async function GET(req: Request) {
     const selectedDate = new Date(dateStr);
     const dayOfWeek = format(selectedDate, "EEEE").toUpperCase();
 
-    // 1. נמצא את כל השיבוצים הקיימים באותו יום (כולל סגירות גן)
+    // 1. נמצא את כל האירועים הקיימים באותו יום ב-DB (Placements)
     const existingPlacements = await prisma.placement.findMany({
       where: {
         date: {
           gte: new Date(new Date(selectedDate).setHours(0, 0, 0, 0)),
           lte: new Date(new Date(selectedDate).setHours(23, 59, 59, 999)),
         },
+        status: { not: "CANCELLED" }
       },
-      select: { mainTeacherId: true, substituteId: true },
+      select: { mainTeacherId: true, substituteId: true }
     });
 
+    // רשימת גננות (אם או רוטציה) שכבר מדווח עליהן שהן חסרות היום
     const busyMainTeachers = existingPlacements.map((p) => p.mainTeacherId);
-    const busySubstitutes = existingPlacements
-      .map((p) => p.substituteId)
-      .filter(Boolean);
+    
+    // רשימת מחליפות שכבר תפוסות היום בשיבוץ חריג
+    const busyAsSubInPlacements = existingPlacements.map((p) => p.substituteId).filter(Boolean) as string[];
 
-    // 2. שליפת גננות אם שיש להן גן ואין להן דיווח היום
+    // 2. נמצא את כל גננות הרוטציה שתפוסות ביום הזה בלו"ז הקבוע (FixedRotation)
+    const permanentlyBusyRotations = await prisma.fixedRotation.findMany({
+      where: { day: dayOfWeek as any },
+      select: { rotationTeacherId: true }
+    });
+
+    const busyInFixedRotation = permanentlyBusyRotations.map(r => r.rotationTeacherId);
+
+    // איחוד כל ה-ID של מי שתפוסה היום כמחליפה (או חריג או קבוע)
+    const allBusySubIds = [...busyAsSubInPlacements, ...busyInFixedRotation];
+
+    // 3. שליפת גננות אם פנויות לדיווח (יש להן גן, והן לא דווחו כבר כחסרות היום)
     const availableManagers = await prisma.user.findMany({
       where: {
         supervisorId: session.id,
@@ -72,13 +84,12 @@ export async function GET(req: Request) {
       },
     });
 
-    // 2. חדש: שליפת גננות רוטציה שאמורות לעבוד ביום הזה
+    // 4. שליפת גננות רוטציה שאמורות לעבוד היום (כדי לאפשר דיווח על היעדרותן)
     const activeRotations = await prisma.fixedRotation.findMany({
       where: {
         day: dayOfWeek as any,
-        // סינון לפי המפקחת של מנהלת הגן
         manager: { supervisorId: session.id },
-        rotationTeacherId: { notIn: busyMainTeachers }, // שלא יהיו כאלו שכבר דיווחו
+        rotationTeacherId: { notIn: busyMainTeachers },
       },
       include: {
         rotationTeacher: {
@@ -95,21 +106,25 @@ export async function GET(req: Request) {
       },
     });
 
-    // 3. שליפת מחליפות רגילות
+    // 5. שליפת מחליפות פנויות (מי שעובדת היום, לא חסרה בעצמה, ולא תפוסה בשיבוץ אחר)
     const availableSubstitutes = await prisma.user.findMany({
       where: {
         roles: { hasSome: ["SUBSTITUTE", "ROTATION"] },
         workDays: { has: dayOfWeek as any },
-        id: { notIn: busySubstitutes as string[] },
+        isWorking: true,
+        id: { 
+          notIn: [...allBusySubIds, ...busyMainTeachers] // לא תפוסה ולא חסרה
+        },
       },
       select: { id: true, firstName: true, lastName: true },
     });
 
     return NextResponse.json({
       managers: availableManagers,
-      rotations: activeRotations, // הרשימה החדשה
+      rotations: activeRotations,
       substitutes: availableSubstitutes,
     });
+
   } catch (error) {
     console.error("Managers API Error:", error);
     return NextResponse.json(

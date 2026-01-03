@@ -340,10 +340,10 @@ export async function GET(req: Request) {
 FILE: src/app\api\supervisor\institutions\route.ts
 ==============================
 // src/app/api/supervisor/institutions/route.ts
-import { NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
-import { getSession } from '@/lib/auth';
-import { db_createInstitution } from '@/services/institutionService';
+import { NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { getSession } from "@/lib/auth";
+import { db_createInstitution } from "@/services/institutionService";
 
 export async function GET() {
   const session = await getSession();
@@ -355,17 +355,24 @@ export async function GET() {
     const institutions = await prisma.institution.findMany({
       where: { supervisorId: session.id },
       include: {
-        // שימוש ב-select מוודא שאנחנו לא מושכים שדות לא קיימים
-        mainManager: { 
-          select: { firstName: true, lastName: true, id: true, email: true } 
+        mainManager: {
+          include: {
+            fixedRotationsAsManager: {
+              include: {
+                rotationTeacher: {
+                  select: { firstName: true, lastName: true },
+                },
+              },
+            },
+          },
         },
-        instructor: { 
-          select: { firstName: true, lastName: true, id: true } 
-        }
+        instructor: {
+          select: { firstName: true, lastName: true, id: true },
+        },
       },
-      orderBy: { name: 'asc' }
+      orderBy: { name: "asc" },
     });
-    
+
     return NextResponse.json(institutions);
   } catch (error) {
     console.error("GET Institutions Error:", error);
@@ -382,7 +389,7 @@ export async function POST(req: Request) {
     }
 
     const body = await req.json();
-    
+
     // הוספת ה-supervisorId מהסשן באופן אוטומטי
     const institutionData = {
       ...body,
@@ -391,18 +398,22 @@ export async function POST(req: Request) {
 
     const newInstitution = await db_createInstitution(institutionData);
 
-    return NextResponse.json({ 
-      message: 'הגן נוצר בהצלחה', 
-      institution: newInstitution 
+    return NextResponse.json({
+      message: "הגן נוצר בהצלחה",
+      institution: newInstitution,
     });
   } catch (error: any) {
     console.error(error);
-    if (error.code === 'P2002') {
-      return NextResponse.json({ message: 'מספר מוסד זה כבר קיים במערכת' }, { status: 400 });
+    if (error.code === "P2002") {
+      return NextResponse.json(
+        { message: "מספר מוסד זה כבר קיים במערכת" },
+        { status: 400 }
+      );
     }
-    return NextResponse.json({ message: 'שגיאה ביצירת הגן' }, { status: 500 });
+    return NextResponse.json({ message: "שגיאה ביצירת הגן" }, { status: 500 });
   }
 }
+
 ==============================
 FILE: src/app\api\supervisor\institutions\[id]\route.ts
 ==============================
@@ -463,18 +474,19 @@ export async function GET() {
 ==============================
 FILE: src/app\api\supervisor\managers\route.ts
 ==============================
-import { NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
-import { getSession } from '@/lib/auth';
-import { format } from 'date-fns';
+import { NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { getSession } from "@/lib/auth";
+import { format } from "date-fns";
 
 export async function GET(req: Request) {
   try {
     const session = await getSession();
-    if (!session) return NextResponse.json({ message: "לא מורשה" }, { status: 401 });
+    if (!session)
+      return NextResponse.json({ message: "לא מורשה" }, { status: 401 });
 
     const { searchParams } = new URL(req.url);
-    const dateStr = searchParams.get('date');
+    const dateStr = searchParams.get("date");
 
     // --- מקרה א': הקמת גן חדש (אין תאריך בבקשה) ---
     // נשלוף רק גננות אם שאין להן עדיין גן באחריותן
@@ -485,73 +497,104 @@ export async function GET(req: Request) {
           roles: { has: "MANAGER" },
           // התנאי הקריטי: מחפשים משתמשת שאין לה (none) מוסדות בניהול ראשי
           mainManagedInstitutions: {
-            none: {}
-          }
+            none: {},
+          },
         },
         select: {
           id: true,
           firstName: true,
           lastName: true,
           email: true,
-          instructorId: true // נחוץ כדי להצמיד אוטומטית את המדריכה שלה לגן החדש
-        }
+          instructorId: true, // נחוץ כדי להצמיד אוטומטית את המדריכה שלה לגן החדש
+        },
       });
-      
+
       return NextResponse.json(availableForNewInstitution);
     }
 
     // --- מקרה ב': דיווח יומי בלוח השנה (יש תאריך בבקשה) ---
     const selectedDate = new Date(dateStr);
-    const dayOfWeek = format(selectedDate, 'EEEE').toUpperCase();
+    const dayOfWeek = format(selectedDate, "EEEE").toUpperCase();
 
     // 1. נמצא את כל השיבוצים הקיימים באותו יום (כולל סגירות גן)
     const existingPlacements = await prisma.placement.findMany({
       where: {
         date: {
-          gte: new Date(new Date(selectedDate).setHours(0,0,0,0)),
-          lte: new Date(new Date(selectedDate).setHours(23,59,59,999))
+          gte: new Date(new Date(selectedDate).setHours(0, 0, 0, 0)),
+          lte: new Date(new Date(selectedDate).setHours(23, 59, 59, 999)),
         },
       },
-      select: { mainTeacherId: true, substituteId: true }
+      select: { mainTeacherId: true, substituteId: true },
     });
 
-    const busyMainTeachers = existingPlacements.map(p => p.mainTeacherId);
-    const busySubstitutes = existingPlacements.map(p => p.substituteId).filter(Boolean);
+    const busyMainTeachers = existingPlacements.map((p) => p.mainTeacherId);
+    const busySubstitutes = existingPlacements
+      .map((p) => p.substituteId)
+      .filter(Boolean);
 
     // 2. שליפת גננות אם שיש להן גן ואין להן דיווח היום
     const availableManagers = await prisma.user.findMany({
       where: {
         supervisorId: session.id,
         roles: { has: "MANAGER" },
-        mainManagedInstitutions: { some: {} }, // חייב להיות להן גן כדי לדווח על היעדרות
-        id: { notIn: busyMainTeachers }
+        mainManagedInstitutions: { some: {} },
+        id: { notIn: busyMainTeachers },
       },
       select: {
-        id: true, firstName: true, lastName: true,
-        mainManagedInstitutions: { select: { id: true, name: true } }
-      }
+        id: true,
+        firstName: true,
+        lastName: true,
+        mainManagedInstitutions: { select: { id: true, name: true } },
+      },
     });
 
-    // 3. שליפת מחליפות (Substitutes) שהיום הוא יום עבודה שלהן ואינן משובצות
+    // 2. חדש: שליפת גננות רוטציה שאמורות לעבוד ביום הזה
+    const activeRotations = await prisma.fixedRotation.findMany({
+      where: {
+        day: dayOfWeek as any,
+        // סינון לפי המפקחת של מנהלת הגן
+        manager: { supervisorId: session.id },
+        rotationTeacherId: { notIn: busyMainTeachers }, // שלא יהיו כאלו שכבר דיווחו
+      },
+      include: {
+        rotationTeacher: {
+          select: { id: true, firstName: true, lastName: true },
+        },
+        manager: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            mainManagedInstitutions: { select: { id: true, name: true } },
+          },
+        },
+      },
+    });
+
+    // 3. שליפת מחליפות רגילות
     const availableSubstitutes = await prisma.user.findMany({
       where: {
         roles: { hasSome: ["SUBSTITUTE", "ROTATION"] },
         workDays: { has: dayOfWeek as any },
-        id: { notIn: busySubstitutes as string[] }
+        id: { notIn: busySubstitutes as string[] },
       },
-      select: { id: true, firstName: true, lastName: true }
+      select: { id: true, firstName: true, lastName: true },
     });
 
     return NextResponse.json({
       managers: availableManagers,
-      substitutes: availableSubstitutes
+      rotations: activeRotations, // הרשימה החדשה
+      substitutes: availableSubstitutes,
     });
-
   } catch (error) {
     console.error("Managers API Error:", error);
-    return NextResponse.json({ message: "שגיאה בסינון נתונים" }, { status: 500 });
+    return NextResponse.json(
+      { message: "שגיאה בסינון נתונים" },
+      { status: 500 }
+    );
   }
 }
+
 ==============================
 FILE: src/app\api\supervisor\placements\route.ts
 ==============================
@@ -993,17 +1036,29 @@ export async function PATCH(
       where: { id: id },
       data: updateData,
     });
-
-    // 4. עדכון טבלת FixedRotation (רק אם היא MANAGER ושלחנו נתוני רוטציה)
-    if (updatedUser.roles.includes("MANAGER") && rotationData) {
+    if (
+      updatedUser.isWorking === false &&
+      updatedUser.roles.includes("MANAGER")
+    ) {
+      await prisma.fixedRotation.deleteMany({
+        where: { managerId: id },
+      });
+      console.log(`Released all fixed rotations for inactive manager: ${id}`);
+    }
+    // אם היא נשארה פעילה אבל נשלחו נתוני רוטציה חדשים (הקוד הקיים שלך)
+    else if (updatedUser.roles.includes("MANAGER") && rotationData) {
       // מחיקה של כל הרוטציות הקודמות של המשתמשת הזו
       await prisma.fixedRotation.deleteMany({
-        where: { managerId: id }
+        where: { managerId: id },
       });
 
       // יצירת הרוטציות החדשות
       const rotationsToCreate = Object.entries(rotationData)
-        .filter(([_, teacherId]) => teacherId && teacherId !== "")
+       .filter(([_, teacherId]) => 
+            teacherId && 
+            teacherId !== "" && 
+            teacherId !== "REMOVE"
+        )
         .map(([day, teacherId]) => ({
           managerId: id,
           day: day as any,
@@ -1012,7 +1067,7 @@ export async function PATCH(
 
       if (rotationsToCreate.length > 0) {
         await prisma.fixedRotation.createMany({
-          data: rotationsToCreate
+          data: rotationsToCreate,
         });
       }
     }
@@ -1026,6 +1081,7 @@ export async function PATCH(
     );
   }
 }
+
 ==============================
 FILE: src/app\api\supervisor\users-stats\route.ts
 ==============================
@@ -1042,31 +1098,37 @@ export async function GET() {
   }
 
   try {
-const users = await prisma.user.findMany({
-  where: {
-    OR: [
-      { supervisorId: session.id },
-      { roles: { hasSome: ["SUBSTITUTE", "ROTATION"] } }
-    ]
-  },
-  include: {
-    instructor: { select: { firstName: true, lastName: true } },
-    // הנתון הקריטי: אילו ימים כבר תפוסים לגננת הרוטציה
-    fixedRotationsAsRotation: {
-      select: {
-        day: true,
-        managerId: true // נשמור את זה כדי לדעת למי היא משויכת
-      }
-    }
-  },
-  orderBy: { firstName: 'asc' }
-});
+    const users = await prisma.user.findMany({
+      where: {
+        OR: [
+          { supervisorId: session.id },
+          { roles: { hasSome: ["SUBSTITUTE", "ROTATION"] } }
+        ]
+      },
+      include: {
+        instructor: { select: { firstName: true, lastName: true } },
+        // תיקון: הוספת הקשר שמראה מי גננות הרוטציה שרשומות תחת גננת האם הזו
+        fixedRotationsAsManager: {
+          include: {
+            rotationTeacher: {
+              select: { firstName: true, lastName: true }
+            }
+          }
+        },
+        // הנתון הזה חשוב כדי לדעת מתי גננת רוטציה תפוסה במקום אחר
+        fixedRotationsAsRotation: {
+          select: {
+            day: true,
+            managerId: true
+          }
+        }
+      },
+      orderBy: { firstName: 'asc' }
+    });
 
     const decryptedUsers = users.map((u) => ({
       ...u,
-      // פענוח תעודת זהות לצורך הצגה למפקחת
       idNumber: u.idNumber ? decrypt(u.idNumber) : "לא הוזן",
-      // המרת תאריך לפורמט שקלט HTML מבין (YYYY-MM-DD)
       dateOfBirth: u.dateOfBirth
         ? new Date(u.dateOfBirth).toISOString().split("T")[0]
         : "",
@@ -2044,52 +2106,67 @@ export default function SupervisorCalendar() {
                   ) : (
                     <div className="flex-1 space-y-2 overflow-y-auto overflow-x-hidden custom-calendar-scroll">
                       {" "}
-                      {dayPlacements.map((p: any) => (
-                        <div
-                          key={p.id}
-                          className="group relative p-2 rounded-xl border border-slate-100 bg-white shadow-sm hover:border-indigo-300 hover:shadow-md transition-all cursor-pointer"
-                          onClick={() => setEditingPlacement(p)}
-                        >
-                          <div className="text-[14px] font-bold text-slate-700 leading-tight">
-                            {p.mainTeacher?.firstName} {p.mainTeacher?.lastName}
-                          </div>
-                          <div
-                            className={`text-[12px] mt-1 flex items-center gap-1.5 ${
-                              p.status === "OPEN"
-                                ? "text-amber-600 font-bold"
-                                : p.status === "CANCELLED"
-                                ? "text-red-500 font-bold"
-                                : "text-emerald-600 font-bold"
-                            }`}
-                          >
+                      <div className="flex-1 space-y-2 overflow-y-auto overflow-x-hidden custom-calendar-scroll">
+                        {dayPlacements.map((p: any) => {
+                          // בדיקה האם הגננת שחסרה (mainTeacher) היא גננת רוטציה
+                          const isRotationAbsent =
+                            p.mainTeacher?.roles?.includes("ROTATION");
+
+                          return (
                             <div
-                              className={`w-1.5 h-1.5 rounded-full ${
-                                p.status === "OPEN"
-                                  ? "bg-amber-500 animate-pulse"
-                                  : p.status === "CANCELLED"
-                                  ? "bg-red-500"
-                                  : "bg-emerald-500"
+                              key={p.id}
+                              className={`group relative p-2 rounded-xl border transition-all cursor-pointer shadow-sm hover:shadow-md ${
+                                isRotationAbsent
+                                  ? "bg-blue-50 border-blue-200 hover:border-blue-400" // כחול בהיר לרוטציה
+                                  : "bg-white border-slate-100 hover:border-indigo-300" // לבן לגננת אם
                               }`}
-                            />
-                            {p.status === "OPEN"
-                              ? "ממתין"
-                              : p.status === "CANCELLED"
-                              ? "סגור"
-                              : p.substitute
-                              ? `${p.substitute.firstName} ${p.substitute.lastName[0]}.`
-                              : "משובץ"}
-                          </div>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleDelete(p.id);
-                            }}
-                            className="absolute -top-1.5 -left-1.5 opacity-0 group-hover:opacity-100 bg-white text-red-500 p-1 rounded-full shadow-md border border-red-50 hover:bg-red-500 hover:text-white transition-all"
-                          >
-                            <X size={10} />
-                          </button>
-                        </div>
-                      ))}
+                              onClick={() => setEditingPlacement(p)}
+                            >
+                              <div className="text-[14px] font-bold text-slate-700 leading-tight">
+                                {p.mainTeacher?.firstName}{" "}
+                                {p.mainTeacher?.lastName}
+                              </div>
+
+                              <div
+                                className={`text-[12px] mt-1 flex items-center gap-1.5 ${
+                                  p.status === "OPEN"
+                                    ? "text-amber-600 font-bold"
+                                    : p.status === "CANCELLED"
+                                    ? "text-red-500 font-bold"
+                                    : "text-emerald-600 font-bold"
+                                }`}
+                              >
+                                <div
+                                  className={`w-1.5 h-1.5 rounded-full ${
+                                    p.status === "OPEN"
+                                      ? "bg-amber-500 animate-pulse"
+                                      : p.status === "CANCELLED"
+                                      ? "bg-red-500"
+                                      : "bg-emerald-500"
+                                  }`}
+                                />
+                                {p.status === "OPEN"
+                                  ? "ממתין"
+                                  : p.status === "CANCELLED"
+                                  ? "סגור"
+                                  : p.substitute
+                                  ? `${p.substitute.firstName} ${p.substitute.lastName[0]}.`
+                                  : "משובץ"}
+                              </div>
+
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDelete(p.id);
+                                }}
+                                className="absolute -top-1.5 -left-1.5 opacity-0 group-hover:opacity-100 bg-white text-red-500 p-1 rounded-full shadow-md border border-red-50 hover:bg-red-500 hover:text-white transition-all"
+                              >
+                                <X size={10} />
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
                     </div>
                   )}
                 </div>
@@ -2725,7 +2802,14 @@ export default function DistrictManagementPage() {
   const [isAddInstitutionOpen, setIsAddInstitutionOpen] = useState(false);
   const [activeInstructor, setActiveInstructor] = useState<any>(null);
   const [selectedPlacement, setSelectedPlacement] = useState<any>(null);
-
+  const dayTranslations: Record<string, string> = {
+    SUNDAY: "א'",
+    MONDAY: "ב'",
+    TUESDAY: "ג'",
+    WEDNESDAY: "ד'",
+    THURSDAY: "ה'",
+    FRIDAY: "ו'",
+  };
   // 2. פונקציות טעינה
   const loadData = async () => {
     setLoading(true);
@@ -3132,10 +3216,9 @@ export default function DistrictManagementPage() {
               key={inst.id}
               className="bg-white rounded-4xl border border-slate-100 shadow-sm p-8 flex flex-col hover:shadow-lg transition-all relative group"
             >
-              {/* כפתור עריכה בפינה */}
               <button
                 onClick={() => setSelectedInstitutionForEdit(inst)}
-                className="absolute top-6 left-6  opacity-100 p-2 bg-indigo-50 text-slate-600 rounded-lg hover:bg-indigo-600 hover:text-white transition-all shadow-sm"
+                className="absolute top-6 left-6 opacity-100 p-2 bg-indigo-50 text-slate-600 rounded-lg hover:bg-indigo-600 hover:text-white transition-all shadow-sm"
               >
                 <Edit3 size={18} />
               </button>
@@ -3143,20 +3226,59 @@ export default function DistrictManagementPage() {
               <div className="w-12 h-12 bg-pink-50 text-pink-600 rounded-2xl flex items-center justify-center mb-6 shadow-sm">
                 <Building2 size={24} />
               </div>
+
               <h3 className="text-xl font-black text-slate-800 mb-1">
                 {inst.name}
               </h3>
+
               <p className="text-slate-400 text-xs font-bold uppercase mb-6">
                 סמל מוסד: {inst.institutionNumber}
               </p>
-              <div className="space-y-3">
-                <div className="flex items-center gap-3 text-slate-600 text-sm font-medium">
-                  <MapPin size={14} className="text-indigo-500" />{" "}
-                  {inst.address}
+
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <div className="flex items-center gap-3 text-slate-600 text-sm font-medium">
+                    <MapPin size={14} className="text-indigo-500" />{" "}
+                    {inst.address}
+                  </div>
+                  <div className="flex items-center gap-3 text-slate-600 text-sm font-medium">
+                    <Users size={14} className="text-indigo-500" /> גננת אם:{" "}
+                    <span className="font-bold">
+                      {inst.mainManager?.firstName} {inst.mainManager?.lastName}
+                    </span>
+                  </div>
                 </div>
-                <div className="flex items-center gap-3 text-slate-600 text-sm font-medium">
-                  <Users size={14} className="text-indigo-500" /> גננת:{" "}
-                  {inst.mainManager?.firstName} {inst.mainManager?.lastName}
+
+                {/* --- הצגת גננות רוטציה קבועות --- */}
+                <div className="pt-4 border-t border-slate-50">
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">
+                    צוות משלים קבוע (רוטציה):
+                  </p>
+                  <div className="space-y-2">
+                    {inst.mainManager?.fixedRotationsAsManager?.length > 0 ? (
+                      inst.mainManager.fixedRotationsAsManager.map(
+                        (rot: any) => (
+                          <div
+                            key={rot.id}
+                            className="flex items-center gap-2 bg-slate-50 p-2 rounded-xl border border-slate-100/50"
+                          >
+                            <span className="w-fit h-fit p-2 flex items-center justify-center text-[13px] font-black text-indigo-600 ">
+                              ביום: {" "}
+                              {dayTranslations[rot.day]}
+                            </span>
+                            <span className="text-xs font-bold text-slate-700">
+                              {rot.rotationTeacher?.firstName}{" "}
+                              {rot.rotationTeacher?.lastName}
+                            </span>
+                          </div>
+                        )
+                      )
+                    ) : (
+                      <p className="text-[11px] text-slate-400 italic">
+                        טרם הוגדרה רוטציה קבועה
+                      </p>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>
@@ -3992,6 +4114,7 @@ import {
   UserPlus,
   AlertCircle,
   GraduationCap,
+  RefreshCcw,
 } from "lucide-react";
 
 interface Teacher {
@@ -3999,6 +4122,16 @@ interface Teacher {
   firstName: string;
   lastName: string;
   mainManagedInstitutions?: { id: string; name: string }[];
+}
+
+interface RotationRecord {
+  rotationTeacher: { id: string; firstName: string; lastName: string };
+  manager: {
+    id: string;
+    firstName: string;
+    lastName: string;
+    mainManagedInstitutions: { id: string; name: string }[];
+  };
 }
 
 interface Props {
@@ -4016,8 +4149,14 @@ export default function AddPlacementModal({
   refreshData,
   user,
 }: Props) {
-  const [data, setData] = useState<{ managers: Teacher[]; substitutes: Teacher[] }>({ managers: [], substitutes: [] });
-  const [selectedManagerId, setSelectedManagerId] = useState("");
+  const [data, setData] = useState<{
+    managers: Teacher[];
+    substitutes: Teacher[];
+    rotations: RotationRecord[];
+  }>({ managers: [], substitutes: [], rotations: [] });
+
+  const [activeTab, setActiveTab] = useState<"MANAGER" | "ROTATION">("MANAGER");
+  const [selectedAbsentId, setSelectedAbsentId] = useState("");
   const [selectedSubId, setSelectedSubId] = useState("");
   const [mode, setMode] = useState<"pending" | "assign" | "closed">("pending");
   const [loading, setLoading] = useState(false);
@@ -4030,22 +4169,68 @@ export default function AddPlacementModal({
     }
   }, [isOpen, date]);
 
+  const getSubOptions = () => {
+    // יצירת עותק של המחליפות (שימוש ב-any כאן כדי לאפשר הוספת שדה זמני isMainManager)
+    const baseSubs: any[] = [...data.substitutes];
+
+    if (activeTab === "ROTATION" && selectedAbsentId) {
+      const currentRotation = data.rotations.find(
+        (r) => r.rotationTeacher.id === selectedAbsentId
+      );
+
+      if (currentRotation?.manager) {
+        const manager = currentRotation.manager;
+        // מוודאים שהיא לא כבר ברשימה
+        if (!baseSubs.find((s) => s.id === manager.id)) {
+          baseSubs.unshift({
+            id: manager.id,
+            firstName: `(גננת אם) ${manager.firstName}`,
+            lastName: manager.lastName,
+            isMainManager: true,
+          });
+        }
+      }
+    }
+    return baseSubs;
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedManagerId) return alert("חובה לבחור גננת אם");
-    if (mode === "assign" && !selectedSubId) return alert("חובה לבחור גננת מחליפה");
+    if (!selectedAbsentId) return alert("חובה לבחור גננת נעדרת");
+    if (mode === "assign" && !selectedSubId)
+      return alert("חובה לבחור גננת מחליפה");
 
     setLoading(true);
-    const manager = data.managers.find((m) => m.id === selectedManagerId);
+    let instId = "";
+
+    // שליפת ה-ID של המוסד לפי הטאב הפעיל
+    if (activeTab === "MANAGER") {
+      const m = data.managers.find((m) => m.id === selectedAbsentId);
+      instId = m?.mainManagedInstitutions?.[0]?.id || ""; // תיקון ה-Type
+    } else {
+      const r = data.rotations.find(
+        (r) => r.rotationTeacher.id === selectedAbsentId
+      );
+      instId = r?.manager?.mainManagedInstitutions?.[0]?.id || ""; // תיקון ה-Type
+    }
+
+    if (!instId) {
+      setLoading(false);
+      return alert("לא נמצא מוסד משויך לגננת זו. וודאי שהגן מוגדר במערכת.");
+    }
 
     const payload = {
       date: date.toISOString(),
-      mainTeacherId: selectedManagerId,
-      institutionId: manager?.mainManagedInstitutions?.[0]?.id,
+      mainTeacherId: selectedAbsentId,
+      institutionId: instId,
       substituteId: mode === "assign" ? selectedSubId : null,
-      status: mode === "closed" ? "CANCELLED" : mode === "assign" ? "ASSIGNED" : "OPEN",
+      status:
+        mode === "closed"
+          ? "CANCELLED"
+          : mode === "assign"
+          ? "ASSIGNED"
+          : "OPEN",
       creatorRoles: user.roles,
-      notes: mode === "closed" ? "הגן נסגר על ידי הפיקוח" : "",
     };
 
     try {
@@ -4056,9 +4241,11 @@ export default function AddPlacementModal({
       });
 
       if (!res.ok) throw new Error((await res.json()).message);
+
       refreshData();
       onClose();
-      setSelectedManagerId("");
+      // איפוס שדות
+      setSelectedAbsentId("");
       setSelectedSubId("");
       setMode("pending");
     } catch (e: any) {
@@ -4071,117 +4258,409 @@ export default function AddPlacementModal({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[110] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4" dir="rtl">
+    // <div
+    //   className="fixed inset-0 z-[110] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4"
+    //   dir="rtl"
+    // >
+    //   {/* טאבים לבחירה מי נעדרת */}
+    //   <div className="flex bg-slate-100 p-1">
+    //     <button
+    //       onClick={() => {
+    //         setActiveTab("MANAGER");
+    //         setSelectedAbsentId("");
+    //       }}
+    //       className={`flex-1 py-3 text-sm font-black rounded-t-2xl transition-all ${
+    //         activeTab === "MANAGER"
+    //           ? "bg-white text-indigo-600"
+    //           : "text-slate-400"
+    //       }`}
+    //     >
+    //       היעדרות גננת אם
+    //     </button>
+    //     <button
+    //       onClick={() => {
+    //         setActiveTab("ROTATION");
+    //         setSelectedAbsentId("");
+    //       }}
+    //       className={`flex-1 py-3 text-sm font-black rounded-t-2xl transition-all ${
+    //         activeTab === "ROTATION"
+    //           ? "bg-white text-indigo-600"
+    //           : "text-slate-400"
+    //       }`}
+    //     >
+    //       היעדרות גננת רוטציה
+    //     </button>
+    //   </div>
+    //   <div className="bg-white w-full max-w-md rounded-[2.5rem] shadow-2xl overflow-hidden border border-slate-100 animate-in fade-in zoom-in-95 duration-200">
+    //     {/* Header */}
+    //     <div className="p-8 bg-slate-900 text-white relative">
+    //       <div className="flex justify-between items-center">
+    //         <div>
+    //           <h2 className="text-2xl font-black">הוספת דיווח</h2>
+    //           <p className="text-slate-400 text-sm mt-1">
+    //             {new Date(date).toLocaleString("IL-he")}
+    //           </p>
+    //         </div>
+    //         <button
+    //           onClick={onClose}
+    //           className="p-2 hover:bg-white/10 rounded-full"
+    //         >
+    //           <X size={22} />
+    //         </button>
+    //       </div>
+    //     </div>
+
+    //     <form onSubmit={handleSubmit} className="p-8 space-y-6">
+    //       <div className="space-y-2">
+    //         <label className="text-xs font-bold text-slate-500 mr-2">
+    //           {activeTab === "MANAGER"
+    //             ? "בחירת גננת אם שחסרה"
+    //             : "בחירת גננת רוטציה שחסרה"}
+    //         </label>
+    //         <select
+    //           value={selectedAbsentId}
+    //           onChange={(e) => setSelectedAbsentId(e.target.value)}
+    //           className="input-standard appearance-none"
+    //         >
+    //           <option value="">בחרי...</option>
+    //           {activeTab === "MANAGER"
+    //             ? data.managers.map((m: any) => (
+    //                 <option key={m.id} value={m.id}>
+    //                   {m.firstName} {m.lastName} (
+    //                   {m.mainManagedInstitutions?.[0]?.name})
+    //                 </option>
+    //               ))
+    //             : data.rotations.map((r: any) => (
+    //                 <option
+    //                   key={r.rotationTeacher.id}
+    //                   value={r.rotationTeacher.id}
+    //                 >
+    //                   {r.rotationTeacher.firstName} {r.rotationTeacher.lastName}{" "}
+    //                   (גן {r.manager.mainManagedInstitutions?.[0]?.name})
+    //                 </option>
+    //               ))}
+    //         </select>
+    //       </div>
+
+    //       {/* בחירת מחליפה - כאן הלוגיקה משתנה */}
+    //       {mode === "assign" && (
+    //         <div className="space-y-2">
+    //           <label className="text-xs font-bold text-slate-500 mr-2">
+    //             גננת מחליפה
+    //           </label>
+    //           <select
+    //             value={selectedSubId}
+    //             onChange={(e) => setSelectedSubId(e.target.value)}
+    //             className="input-standard appearance-none bg-emerald-50"
+    //           >
+    //             <option value="">בחרי מחליפה...</option>
+    //             {getSubOptions().map((s: any) => (
+    //               <option
+    //                 key={s.id}
+    //                 value={s.id}
+    //                 className={
+    //                   s.isMainManager ? "font-black text-indigo-700" : ""
+    //                 }
+    //               >
+    //                 {s.firstName} {s.lastName}
+    //               </option>
+    //             ))}
+    //           </select>
+    //         </div>
+    //       )}
+    //       {/* גננת אם */}
+    //       {/* <div className="space-y-2">
+    //         <label className="text-xs font-bold text-slate-500 mr-2">
+    //           גננת אם (נעדרת)
+    //         </label>
+    //         <div className="relative">
+    //           <select
+    //             value={selectedManagerId}
+    //             onChange={(e) => setSelectedManagerId(e.target.value)}
+    //             className="w-full pr-10 pl-4 py-3 bg-slate-50 border-none rounded-xl focus:ring-2 focus:ring-indigo-500 font-medium appearance-none"
+    //           >
+    //             <option value="">בחרי גננת…</option>
+    //             {data.managers.map((m) => (
+    //               <option key={m.id} value={m.id}>
+    //                 {m.firstName} {m.lastName} (
+    //                 {m.mainManagedInstitutions?.[0]?.name || "ללא גן"})
+    //               </option>
+    //             ))}
+    //           </select>
+    //           <GraduationCap
+    //             className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400"
+    //             size={16}
+    //           />
+    //         </div>
+    //       </div> */}
+
+    //       {/* מצב */}
+    //       <div className="space-y-2">
+    //         <label className="text-xs font-bold text-slate-500 mr-2">
+    //           סוג דיווח
+    //         </label>
+    //         <div className="grid grid-cols-3 gap-2 bg-slate-100 p-1 rounded-2xl">
+    //           {[
+    //             { key: "pending", label: "דיווח", icon: Clock },
+    //             { key: "assign", label: "שיבוץ", icon: UserPlus },
+    //             { key: "closed", label: "סגירה", icon: Home },
+    //           ].map(({ key, label, icon: Icon }) => (
+    //             <button
+    //               key={key}
+    //               type="button"
+    //               onClick={() => setMode(key as any)}
+    //               className={`flex flex-col items-center gap-1 p-3 rounded-xl text-[11px] font-bold transition-all ${
+    //                 mode === key
+    //                   ? "bg-white shadow text-indigo-600"
+    //                   : "text-slate-500"
+    //               }`}
+    //             >
+    //               <Icon size={18} />
+    //               {label}
+    //             </button>
+    //           ))}
+    //         </div>
+    //       </div>
+
+    //       {/* שדות דינמיים */}
+    //       {mode === "assign" && (
+    //         <div className="space-y-2 animate-in slide-in-from-top-2">
+    //           <label className="text-xs font-bold text-slate-500 mr-2">
+    //             גננת מחליפה
+    //           </label>
+    //           <div className="relative">
+    //             <select
+    //               value={selectedSubId}
+    //               onChange={(e) => setSelectedSubId(e.target.value)}
+    //               className="w-full pr-10 pl-4 py-3 bg-emerald-50 border-none rounded-xl focus:ring-2 focus:ring-emerald-500 font-medium appearance-none"
+    //             >
+    //               <option value="">בחרי מחליפה…</option>
+    //               {data.substitutes.map((s) => (
+    //                 <option key={s.id} value={s.id}>
+    //                   {s.firstName} {s.lastName}
+    //                 </option>
+    //               ))}
+    //             </select>
+    //             <UserPlus
+    //               className="absolute right-3 top-1/2 -translate-y-1/2 text-emerald-400"
+    //               size={16}
+    //             />
+    //           </div>
+    //         </div>
+    //       )}
+
+    //       {mode === "pending" && (
+    //         <div className="p-4 bg-amber-50 border border-amber-100 rounded-xl text-xs text-amber-800 flex gap-2 items-center">
+    //           <Clock size={14} /> יישמר במצב ממתין.
+    //         </div>
+    //       )}
+
+    //       {mode === "closed" && (
+    //         <div className="p-4 bg-red-50 border border-red-100 rounded-xl text-xs text-red-800 flex gap-2 items-center">
+    //           <Check size={14} /> הגן יסומן כסגור.
+    //         </div>
+    //       )}
+
+    //       {/* Footer */}
+    //       <div className="flex gap-4 pt-4">
+    //         <button
+    //           type="submit"
+    //           disabled={loading}
+    //           className="flex-[2] py-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl font-black shadow-lg shadow-indigo-100 active:scale-95 transition"
+    //         >
+    //           {loading ? "שומר..." : "אישור"}
+    //         </button>
+    //         <button
+    //           type="button"
+    //           onClick={onClose}
+    //           className="flex-1 py-4 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-2xl font-bold"
+    //         >
+    //           ביטול
+    //         </button>
+    //       </div>
+    //     </form>
+    //   </div>
+    // </div>
+
+    <div
+      className="fixed inset-0 z-[110] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4"
+      dir="rtl"
+    >
       <div className="bg-white w-full max-w-md rounded-[2.5rem] shadow-2xl overflow-hidden border border-slate-100 animate-in fade-in zoom-in-95 duration-200">
+        {/* טאבים */}
+        <div className="flex bg-slate-900 p-1 shrink-0">
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTab("MANAGER");
+              setSelectedAbsentId("");
+            }}
+            className={`flex-1 py-3 text-xs font-black rounded-xl transition-all ${
+              activeTab === "MANAGER"
+                ? "bg-slate-700 text-white shadow-sm"
+                : "text-slate-400"
+            }`}
+          >
+            גננת אם
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTab("ROTATION");
+              setSelectedAbsentId("");
+            }}
+            className={`flex-1 py-3 text-xs font-black rounded-xl transition-all ${
+              activeTab === "ROTATION"
+                ? "bg-slate-700 text-white shadow-sm"
+                : "text-slate-400"
+            }`}
+          >
+            גננת רוטציה
+          </button>
+        </div>
 
         {/* Header */}
-        <div className="p-8 bg-slate-900 text-white relative">
+        <div className="p-6 bg-white border-b border-slate-50">
           <div className="flex justify-between items-center">
             <div>
-              <h2 className="text-2xl font-black">הוספת דיווח</h2>
-              <p className="text-slate-400 text-sm mt-1">
-                {new Date(date).toLocaleString("IL-he")}
+              <h2 className="text-xl font-black text-slate-800">
+                הוספת דיווח 
+              </h2>
+              <p className="text-slate-400 text-xs mt-1">
+                לתאריך {new Date(date).toLocaleDateString("he-IL")}
               </p>
             </div>
-            <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-full">
-              <X size={22} />
+            <button
+              onClick={onClose}
+              className="p-2 hover:bg-slate-100 rounded-full text-slate-400"
+            >
+              <X size={20} />
             </button>
           </div>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-8 space-y-6">
-
-          {/* גננת אם */}
+        <form onSubmit={handleSubmit} className="p-6 space-y-5">
+          {/* בחירת הנעדרת */}
           <div className="space-y-2">
-            <label className="text-xs font-bold text-slate-500 mr-2">גננת אם (נעדרת)</label>
+            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mr-1">
+              {activeTab === "MANAGER"
+                ? "גננת אם (נעדרת)"
+                : "גננת רוטציה (נעדרת)"}
+            </label>
             <div className="relative">
               <select
-                value={selectedManagerId}
-                onChange={(e) => setSelectedManagerId(e.target.value)}
-                className="w-full pr-10 pl-4 py-3 bg-slate-50 border-none rounded-xl focus:ring-2 focus:ring-indigo-500 font-medium appearance-none"
+                value={selectedAbsentId}
+                onChange={(e) => setSelectedAbsentId(e.target.value)}
+                className="w-full pr-10 pl-4 py-3 bg-slate-50 border-none rounded-xl focus:ring-2 focus:ring-indigo-500 font-bold text-slate-700 appearance-none text-sm"
               >
-                <option value="">בחרי גננת…</option>
-                {data.managers.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.firstName} {m.lastName} ({m.mainManagedInstitutions?.[0]?.name || "ללא גן"})
-                  </option>
-                ))}
+                <option value="">בחרי גננת...</option>
+                {activeTab === "MANAGER"
+                  ? data.managers.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.firstName} {m.lastName} (
+                        {m.mainManagedInstitutions?.[0]?.name})
+                      </option>
+                    ))
+                  : data.rotations.map((r) => (
+                      <option
+                        key={r.rotationTeacher.id}
+                        value={r.rotationTeacher.id}
+                      >
+                        {r.rotationTeacher.firstName}{" "}
+                        {r.rotationTeacher.lastName} (גן{" "}
+                        {r.manager.mainManagedInstitutions?.[0]?.name})
+                      </option>
+                    ))}
               </select>
-              <GraduationCap className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+              {activeTab === "MANAGER" ? (
+                <GraduationCap
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400"
+                  size={16}
+                />
+              ) : (
+                <RefreshCcw
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400"
+                  size={16}
+                />
+              )}
             </div>
           </div>
 
-          {/* מצב */}
+          {/* מצב דיווח */}
           <div className="space-y-2">
-            <label className="text-xs font-bold text-slate-500 mr-2">סוג דיווח</label>
+            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mr-1">
+              סטטוס הדיווח
+            </label>
             <div className="grid grid-cols-3 gap-2 bg-slate-100 p-1 rounded-2xl">
               {[
-                { key: "pending", label: "דיווח", icon: Clock },
+                { key: "pending", label: "ממתין", icon: Clock },
                 { key: "assign", label: "שיבוץ", icon: UserPlus },
-                { key: "closed", label: "סגירה", icon: Home },
+                { key: "closed", label: "סגור", icon: Home },
               ].map(({ key, label, icon: Icon }) => (
                 <button
                   key={key}
                   type="button"
                   onClick={() => setMode(key as any)}
-                  className={`flex flex-col items-center gap-1 p-3 rounded-xl text-[11px] font-bold transition-all ${
-                    mode === key ? "bg-white shadow text-indigo-600" : "text-slate-500"
+                  className={`flex flex-col items-center gap-1 p-3 rounded-xl text-[10px] font-black transition-all ${
+                    mode === key
+                      ? "bg-white shadow-sm text-indigo-600"
+                      : "text-slate-500"
                   }`}
                 >
-                  <Icon size={18} />
+                  <Icon size={16} />
                   {label}
                 </button>
               ))}
             </div>
           </div>
 
-          {/* שדות דינמיים */}
+          {/* בחירת מחליפה */}
           {mode === "assign" && (
             <div className="space-y-2 animate-in slide-in-from-top-2">
-              <label className="text-xs font-bold text-slate-500 mr-2">גננת מחליפה</label>
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mr-1">
+                גננת מחליפה
+              </label>
               <div className="relative">
                 <select
                   value={selectedSubId}
                   onChange={(e) => setSelectedSubId(e.target.value)}
-                  className="w-full pr-10 pl-4 py-3 bg-emerald-50 border-none rounded-xl focus:ring-2 focus:ring-emerald-500 font-medium appearance-none"
+                  className="w-full pr-10 pl-4 py-3 bg-slate-50 border-none rounded-xl focus:ring-2 focus:ring-slate-500 font-bold text-slate-700 appearance-none text-sm shadow-inner"
                 >
-                  <option value="">בחרי מחליפה…</option>
-                  {data.substitutes.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.firstName} {s.lastName}
+                  <option value="">בחרי מחליפה...</option>
+                  {getSubOptions().map((s) => (
+                    <option
+                      key={s.id}
+                      value={s.id}
+                      className={
+                        s.isMainManager ? "text-indigo-700 font-black" : ""
+                      }
+                    >
+                      {s.firstName} {s.lastName}{" "}
+                      {s.isMainManager ? "(גננת אם)" : ""}
                     </option>
                   ))}
                 </select>
-                <UserPlus className="absolute right-3 top-1/2 -translate-y-1/2 text-emerald-400" size={16} />
+                <UserPlus
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500"
+                  size={16}
+                />
               </div>
             </div>
           )}
 
-          {mode === "pending" && (
-            <div className="p-4 bg-amber-50 border border-amber-100 rounded-xl text-xs text-amber-800 flex gap-2 items-center">
-              <Clock size={14} /> יישמר במצב ממתין.
-            </div>
-          )}
-
-          {mode === "closed" && (
-            <div className="p-4 bg-red-50 border border-red-100 rounded-xl text-xs text-red-800 flex gap-2 items-center">
-              <Check size={14} /> הגן יסומן כסגור.
-            </div>
-          )}
-
-          {/* Footer */}
-          <div className="flex gap-4 pt-4">
+          {/* כפתורי פעולה */}
+          <div className="flex gap-3 pt-4">
             <button
               type="submit"
               disabled={loading}
-              className="flex-[2] py-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl font-black shadow-lg shadow-indigo-100 active:scale-95 transition"
+              className="flex-[2] py-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl font-black shadow-lg shadow-indigo-100 active:scale-95 transition flex items-center justify-center"
             >
-              {loading ? "שומר..." : "אישור"}
+              {loading ? "שומר..." : "אישור ושמירה"}
             </button>
             <button
               type="button"
               onClick={onClose}
-              className="flex-1 py-4 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-2xl font-bold"
+              className="flex-1 py-4 bg-slate-100 hover:bg-slate-200 text-slate-500 rounded-2xl font-bold transition"
             >
               ביטול
             </button>
@@ -4312,7 +4791,7 @@ export default function AddSubstituteModal({
     >
       <div className="bg-white w-full max-w-3xl rounded-[2.5rem] shadow-2xl overflow-hidden flex flex-col max-h-[95vh] border border-slate-100">
         {/* Header */}
-        <div className="p-8 bg-emerald-600 text-white relative shrink-0">
+        <div className="p-8 bg-slate-900 text-white relative shrink-0">
           <h2 className="text-2xl font-black">הוספת צוות מחליף</h2>
           <p className="opacity-90 text-sm font-medium">
             רישום גננת מחליפה או רוטציה
@@ -4336,7 +4815,7 @@ export default function AddSubstituteModal({
               onClick={() => setRole("SUBSTITUTE")}
               className={`p-4 rounded-xl font-black flex items-center justify-center gap-2 ${
                 role === "SUBSTITUTE"
-                  ? "bg-white text-emerald-600 shadow-sm"
+                  ? "bg-white text-slate-900 shadow-sm"
                   : "text-slate-500"
               }`}
             >
@@ -4347,7 +4826,7 @@ export default function AddSubstituteModal({
               onClick={() => setRole("ROTATION")}
               className={`p-4 rounded-xl font-black flex items-center justify-center gap-2 ${
                 role === "ROTATION"
-                  ? "bg-white text-emerald-600 shadow-sm"
+                  ? "bg-white text-slate-900 shadow-sm"
                   : "text-slate-500"
               }`}
             >
@@ -4398,9 +4877,9 @@ export default function AddSubstituteModal({
           </div>
 
           {/*כרגע מוותרת על ימי חופשה לרוטציה */}
-          {/* {role === "ROTATION" && (
+          {role === "SUBSTITUTE" && (
             <div className="space-y-4 animate-in slide-in-from-top-4">
-              <div className="flex items-center gap-2 text-emerald-600 font-black text-xs uppercase border-b pb-2">
+              <div className="flex items-center gap-2 text-slate-900 font-black text-xs uppercase border-b pb-2">
                 <Calendar size={14} /> הגדרת ימי עבודה
               </div>
 
@@ -4426,7 +4905,7 @@ export default function AddSubstituteModal({
                     }
                     className={`w-24 py-2 rounded-lg text-[10px] font-black ${
                       schedule[day].active
-                        ? "bg-emerald-600 text-white"
+                        ? "bg-slate-900 text-white"
                         : "bg-slate-200 text-slate-400"
                     }`}
                   >
@@ -4438,7 +4917,7 @@ export default function AddSubstituteModal({
                 </div>
               ))}
             </div>
-          )} */}
+          )}
 
           {role === "SUBSTITUTE" && (
             <div className="p-6 bg-amber-50 rounded-2xl border border-amber-100 flex gap-4">
@@ -4452,7 +4931,7 @@ export default function AddSubstituteModal({
           <button
             type="submit"
             disabled={loading}
-            className="w-full py-5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl font-black shadow-lg active:scale-95 transition disabled:bg-slate-300"
+            className="w-full py-5 bg-slate-900 hover:bg-emerald-700 text-white rounded-2xl font-black shadow-lg active:scale-95 transition disabled:bg-slate-300"
           >
             {loading ? "שומר..." : "סיום ורישום"}
           </button>
@@ -6097,32 +6576,36 @@ export default function UserEditModal({
     { id: "FRIDAY", label: "ו'" },
   ];
 
-useEffect(() => {
-  if (!isOpen || !user) return;
+  useEffect(() => {
+    if (!isOpen || !user) return;
 
-  // טעינת מדריכות
-  fetch("/api/supervisor/instructors")
-    .then((res) => res.json())
-    .then((data) => setInstructors(Array.isArray(data) ? data : []));
+    // טעינת מדריכות
+    fetch("/api/supervisor/instructors")
+      .then((res) => res.json())
+      .then((data) => setInstructors(Array.isArray(data) ? data : []));
 
-  // טעינת גננות רוטציה
-  fetch("/api/supervisor/users-stats")
-    .then((res) => res.json())
-    .then((data) => {
-      setRotations(data.filter((u: any) => u.roles.includes("ROTATION")));
-    });
+    // טעינת גננות רוטציה
+    fetch("/api/supervisor/users-stats")
+      .then((res) => res.json())
+      .then((data) => {
+        setRotations(data.filter((u: any) => u.roles.includes("ROTATION")));
+      });
 
-  // ⬅️ אתחול נכון של rotationData מתוך הנתון של המשתמשת
-  const mapping: Record<string, string> = {};
-  if (user.fixedRotationsAsManager?.length) {
-    user.fixedRotationsAsManager.forEach((r: any) => {
-      mapping[r.day] = r.rotationTeacherId;
-    });
-  }
+    // ⬅️ אתחול נכון של rotationData מתוך הנתון של המשתמשת
+    const mapping: Record<string, string> = {};
+    if (
+      user.fixedRotationsAsManager &&
+      Array.isArray(user.fixedRotationsAsManager)
+    ) {
+      user.fixedRotationsAsManager.forEach((r: any) => {
+        mapping[r.day] = r.rotationTeacherId;
+      });
+    }
 
-  setRotationData(mapping);
-}, [user, isOpen]);
+    setRotationData(mapping);
 
+    setRotationData(mapping);
+  }, [user, isOpen]);
 
   const getCurrentComboId = () => {
     const combo = ALLOWED_ROLE_COMBINATIONS.find(
@@ -7399,11 +7882,15 @@ export async function db_updatePlacementStatus(params: {
     where: { id: params.placementId },
     data: {
       status: params.newStatus,
-      substituteId: params.newStatus === "CANCELLED" ? null : undefined,
+      // תיקון: אם הגן נסגר (CANCELLED) או הוחזר להמתנה (OPEN) - אנחנו מוחקים את המחליפה
+      substituteId: (params.newStatus === "CANCELLED" || params.newStatus === "OPEN") 
+        ? null 
+        : undefined, 
     },
     include: { institution: true },
   });
 
+  // שליחת התראה (נשאר כפי שכתבת)
   const message = `סטטוס הגן ${updated.institution.name} עודכן ל-${params.newStatus}`;
   await db_createNotification({
     userId: updated.institution.supervisorId,
@@ -7430,8 +7917,9 @@ export async function db_getCalendarData(
   const startDate = new Date(year, month - 1, 1);
   const endDate = new Date(year, month, 0, 23, 59, 59);
 
-  // 1. שליפת כל הדיווחים הידניים (החריגות) של המחוז לחודש הזה
-  const manualPlacements = await prisma.placement.findMany({
+  // אנחנו שולפים רק את טבלת Placement.
+  // רשומה בטבלה הזו קיימת רק אם מישהי דיווחה על היעדרות (חריגה מהשגרה).
+  return await prisma.placement.findMany({
     where: {
       date: { gte: startDate, lte: endDate },
       institution: { supervisorId: supervisorId },
@@ -7441,67 +7929,10 @@ export async function db_getCalendarData(
       mainTeacher: { select: { id: true, firstName: true, lastName: true, roles: true } },
       substitute: { select: { id: true, firstName: true, lastName: true } },
     },
-  });
-
-  // 2. שליפת כל המוסדות והרוטציות הקבועות שלהם מראש
-const institutions = await prisma.institution.findMany({
-    where: { supervisorId: supervisorId },
-    include: {
-      // כאן אנחנו מוודאים שאנחנו מושכים את גננת האם ואת הרוטציות שלה
-      mainManager: {
-        include: {
-          fixedRotationsAsManager: {
-            include: { rotationTeacher: true }
-          }
-        }
-      }
+    orderBy: {
+      date: 'asc'
     }
   });
-
-  const calendarDays: any[] = [];
-
-  // 3. לולאה על הימים - הכל מחושב בזיכרון (מהיר מאוד)
-  for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
-    const currentDate = new Date(d);
-    const dayName = getDayEnum(currentDate);
-
-    for (const inst of institutions) {
-      // בדיקה: האם יש חריגה (Placement) רשומה ב-DB ליום הזה ולגן הזה?
-      const override = manualPlacements.find(p => 
-        p.institutionId === inst.id && isSameDate(new Date(p.date), currentDate)
-      );
-
-      if (override) {
-        // יש חריגה! (למשל: הרוטציה חולה, או הגננת אם החליפה יום)
-        calendarDays.push({
-          ...override,
-          isOverride: true // דגל לפרונט
-        });
-      } else {
-        // אין חריגה ידנית - נבדוק מה הלו"ז הקבוע
-        const rotation = inst.mainManager.fixedRotationsAsManager.find(r => r.day === dayName);
-
-        if (rotation) {
-          // זה יום רוטציה קבוע - הגננת היא גננת הרוטציה
-          calendarDays.push({
-            id: `fixed-${inst.id}-${currentDate.getTime()}`,
-            date: new Date(currentDate),
-            status: "ASSIGNED", 
-            institution: { name: inst.name, id: inst.id },
-            mainTeacher: rotation.rotationTeacher, // הגננת ש"אמורה" להיות שם היא הרוטציה
-            substitute: null,
-            notes: "רוטציה קבועה",
-            isFixed: true 
-          });
-        } else {
-          // יום רגיל - גננת האם נמצאת (לא מוסיפים ללוח אלא אם את רוצה להציג הכל)
-          // בדרך כלל בלוח שנה של היעדרויות נציג רק ימים עם "אירוע" (רוטציה או חריגה)
-        }
-      }
-    }
-  }
-
-  return calendarDays;
 }
 
 /**

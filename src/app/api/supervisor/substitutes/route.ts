@@ -23,24 +23,32 @@ export async function GET(request: Request) {
     // הגדרת טווח התאריכים (מתחילת היום עד סופו) כדי לבדוק כפילות שיבוץ
     const startOfDay = new Date(searchDate.setHours(0, 0, 0, 0));
     const endOfDay = new Date(searchDate.setHours(23, 59, 59, 999));
+const busyInPlacements = await prisma.placement.findMany({
+      where: {
+        date: { gte: startOfDay, lte: endOfDay },
+        status: "ASSIGNED"
+      },
+      select: { substituteId: true }
+    });
+
+    // 2. מי תפוסה ברוטציה קבועה (FixedRotation)
+    const busyInFixedRotation = await prisma.fixedRotation.findMany({
+      where: { day: dayOfWeek },
+      select: { rotationTeacherId: true }
+    });
+
+    const allBusyIds = [
+      ...busyInPlacements.map(p => p.substituteId),
+      ...busyInFixedRotation.map(r => r.rotationTeacherId)
+    ].filter(Boolean) as string[];
 
     // 3. שאילתה חכמה ב-Prisma
-    const substitutes = await prisma.user.findMany({
+     const substitutes = await prisma.user.findMany({
       where: {
         roles: { hasSome: ["SUBSTITUTE", "ROTATION"] },
         isWorking: true,
-        // סינון 1: עובדת ביום הספציפי הזה בשבוע
         workDays: { has: dayOfWeek },
-        // סינון 2: אין לה שיבוץ קיים בסטטוס ASSIGNED בתאריך הזה
-        placementsAsSub: {
-          none: {
-            date: {
-              gte: startOfDay,
-              lte: endOfDay
-            },
-            status: "ASSIGNED"
-          }
-        }
+        id: { notIn: allBusyIds } // הסינון הקריטי
       },
       select: {
         id: true,
@@ -50,6 +58,8 @@ export async function GET(request: Request) {
         workDays: true
       }
     });
+
+    return NextResponse.json(substitutes);
 
     return NextResponse.json(substitutes);
   } catch (error) {
