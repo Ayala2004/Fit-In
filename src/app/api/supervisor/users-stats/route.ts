@@ -11,31 +11,37 @@ export async function GET() {
   }
 
   try {
-const users = await prisma.user.findMany({
-  where: {
-    OR: [
-      { supervisorId: session.id },
-      { roles: { hasSome: ["SUBSTITUTE", "ROTATION"] } }
-    ]
-  },
-  include: {
-    instructor: { select: { firstName: true, lastName: true } },
-    // הנתון הקריטי: אילו ימים כבר תפוסים לגננת הרוטציה
-    fixedRotationsAsRotation: {
-      select: {
-        day: true,
-        managerId: true // נשמור את זה כדי לדעת למי היא משויכת
-      }
-    }
-  },
-  orderBy: { firstName: 'asc' }
-});
+    const users = await prisma.user.findMany({
+      where: {
+        OR: [
+          { supervisorId: session.id },
+          { roles: { hasSome: ["SUBSTITUTE", "ROTATION"] } }
+        ]
+      },
+      include: {
+        instructor: { select: { firstName: true, lastName: true } },
+        // תיקון: הוספת הקשר שמראה מי גננות הרוטציה שרשומות תחת גננת האם הזו
+        fixedRotationsAsManager: {
+          include: {
+            rotationTeacher: {
+              select: { firstName: true, lastName: true }
+            }
+          }
+        },
+        // הנתון הזה חשוב כדי לדעת מתי גננת רוטציה תפוסה במקום אחר
+        fixedRotationsAsRotation: {
+          select: {
+            day: true,
+            managerId: true
+          }
+        }
+      },
+      orderBy: { firstName: 'asc' }
+    });
 
     const decryptedUsers = users.map((u) => ({
       ...u,
-      // פענוח תעודת זהות לצורך הצגה למפקחת
       idNumber: u.idNumber ? decrypt(u.idNumber) : "לא הוזן",
-      // המרת תאריך לפורמט שקלט HTML מבין (YYYY-MM-DD)
       dateOfBirth: u.dateOfBirth
         ? new Date(u.dateOfBirth).toISOString().split("T")[0]
         : "",

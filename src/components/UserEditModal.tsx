@@ -74,32 +74,36 @@ export default function UserEditModal({
     { id: "FRIDAY", label: "ו'" },
   ];
 
-useEffect(() => {
-  if (!isOpen || !user) return;
+  useEffect(() => {
+    if (!isOpen || !user) return;
 
-  // טעינת מדריכות
-  fetch("/api/supervisor/instructors")
-    .then((res) => res.json())
-    .then((data) => setInstructors(Array.isArray(data) ? data : []));
+    // טעינת מדריכות
+    fetch("/api/supervisor/instructors")
+      .then((res) => res.json())
+      .then((data) => setInstructors(Array.isArray(data) ? data : []));
 
-  // טעינת גננות רוטציה
-  fetch("/api/supervisor/users-stats")
-    .then((res) => res.json())
-    .then((data) => {
-      setRotations(data.filter((u: any) => u.roles.includes("ROTATION")));
-    });
+    // טעינת גננות רוטציה
+    fetch("/api/supervisor/users-stats")
+      .then((res) => res.json())
+      .then((data) => {
+        setRotations(data.filter((u: any) => u.roles.includes("ROTATION")));
+      });
 
-  // ⬅️ אתחול נכון של rotationData מתוך הנתון של המשתמשת
-  const mapping: Record<string, string> = {};
-  if (user.fixedRotationsAsManager?.length) {
-    user.fixedRotationsAsManager.forEach((r: any) => {
-      mapping[r.day] = r.rotationTeacherId;
-    });
-  }
+    // ⬅️ אתחול נכון של rotationData מתוך הנתון של המשתמשת
+    const mapping: Record<string, string> = {};
+    if (
+      user.fixedRotationsAsManager &&
+      Array.isArray(user.fixedRotationsAsManager)
+    ) {
+      user.fixedRotationsAsManager.forEach((r: any) => {
+        mapping[r.day] = r.rotationTeacherId;
+      });
+    }
 
-  setRotationData(mapping);
-}, [user, isOpen]);
+    setRotationData(mapping);
 
+    setRotationData(mapping);
+  }, [user, isOpen]);
 
   const getCurrentComboId = () => {
     const combo = ALLOWED_ROLE_COMBINATIONS.find(
