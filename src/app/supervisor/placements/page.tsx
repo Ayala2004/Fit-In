@@ -6,7 +6,7 @@ import { highlightText } from "@/lib/utils/formatters";
 import AddInstitutionModal from "@/components/AddInstitutionModal";
 import AddUserModal from "@/components/AddUserModal.tsx";
 import AddSubstituteModal from "@/components/AddSubstituteModal";
-import InstructorPlacementsModal from "@/components/InstructorPlacementsModal";
+import InstructorPlacementsModal from "@/components/InstructorCardModal";
 import PlacementModal from "@/components/PlacementModal";
 import {
   Search,
@@ -23,7 +23,7 @@ import {
   User2Icon,
   PlusCircle,
 } from "lucide-react";
-import UserDetailsModal from "@/components/UserDetailsModal";
+import UserEditModal from "@/components/UserEditModal";
 import EditInstitutionModal from "@/components/EditInstitutionModal";
 
 export default function DistrictManagementPage() {
@@ -497,7 +497,7 @@ export default function DistrictManagementPage() {
         />
       )}
       {selectedUserForEdit && (
-        <UserDetailsModal
+        <UserEditModal
           isOpen={!!selectedUserForEdit}
           user={selectedUserForEdit}
           onClose={() => setSelectedUserForEdit(null)}

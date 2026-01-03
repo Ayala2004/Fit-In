@@ -48,7 +48,13 @@ export default function RecentActivityModal({
 
   const getActivityText = (activity: any) => {
     if (activity.status === "CANCELLED") {
-      return `הגן ${activity.institution.name} נסגר להיום`;
+      return `הגן ${activity.institution.name} נסגר לתאריך ${new Date(
+        activity.date
+      ).toLocaleDateString("he-IL", {
+        day: "numeric",
+        month: "numeric",
+        year: "numeric",
+      })}`;
     } else if (activity.substitute) {
       return `שובצה ${activity.substitute.firstName} ${activity.substitute.lastName} לגן ${activity.institution.name}`;
     } else {

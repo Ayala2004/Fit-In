@@ -54,9 +54,6 @@ export default function ValidatedField({
 
   return (
     <div className="space-y-1.5 w-full text-right">
-      <label className="text-xs font-bold text-slate-500 mr-2 flex items-center gap-1">
-        {label} {required && <span className="text-red-400">*</span>}
-      </label>
       
       <div className="relative group">
         <input

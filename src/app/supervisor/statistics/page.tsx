@@ -8,7 +8,7 @@ import {
   User,
   Info,
 } from "lucide-react";
-import UserDetailsModal from "@/components/UserDetailsModal";
+import UserEditModal from "@/components/UserEditModal";
 
 export default function StatisticsPage() {
   const [stats, setStats] = useState<any>(null);
@@ -216,7 +216,7 @@ const fetchStats = async () => {
         </>
       )}
       {isDetailsOpen && selectedUser && (
-        <UserDetailsModal
+        <UserEditModal
           user={selectedUser}
           isOpen={isDetailsOpen}
           onClose={() => {

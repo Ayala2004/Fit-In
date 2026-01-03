@@ -1,6 +1,15 @@
 "use client";
 import { useState, useEffect } from "react";
-import { User, Home, X, Check, Clock, UserPlus, AlertCircle } from "lucide-react";
+import {
+  User,
+  Home,
+  X,
+  Check,
+  Clock,
+  UserPlus,
+  AlertCircle,
+  GraduationCap,
+} from "lucide-react";
 
 interface Teacher {
   id: string;
@@ -17,13 +26,17 @@ interface Props {
   user: { id: string; roles: string[] };
 }
 
-export default function AddPlacementModal({ isOpen, onClose, date, refreshData, user }: Props) {
+export default function AddPlacementModal({
+  isOpen,
+  onClose,
+  date,
+  refreshData,
+  user,
+}: Props) {
   const [data, setData] = useState<{ managers: Teacher[]; substitutes: Teacher[] }>({ managers: [], substitutes: [] });
   const [selectedManagerId, setSelectedManagerId] = useState("");
   const [selectedSubId, setSelectedSubId] = useState("");
-  
-  // מצבים: 'pending' (ממתין), 'assign' (שיבוץ), 'closed' (גן סגור)
-  const [mode, setMode] = useState<'pending' | 'assign' | 'closed'>('pending');
+  const [mode, setMode] = useState<"pending" | "assign" | "closed">("pending");
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -36,9 +49,8 @@ export default function AddPlacementModal({ isOpen, onClose, date, refreshData, 
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-
     if (!selectedManagerId) return alert("חובה לבחור גננת אם");
-    if (mode === 'assign' && !selectedSubId) return alert("חובה לבחור גננת מחליפה");
+    if (mode === "assign" && !selectedSubId) return alert("חובה לבחור גננת מחליפה");
 
     setLoading(true);
     const manager = data.managers.find((m) => m.id === selectedManagerId);
@@ -47,10 +59,10 @@ export default function AddPlacementModal({ isOpen, onClose, date, refreshData, 
       date: date.toISOString(),
       mainTeacherId: selectedManagerId,
       institutionId: manager?.mainManagedInstitutions?.[0]?.id,
-      substituteId: mode === 'assign' ? selectedSubId : null,
-      status: mode === 'closed' ? "CANCELLED" : mode === 'assign' ? "ASSIGNED" : "OPEN",
+      substituteId: mode === "assign" ? selectedSubId : null,
+      status: mode === "closed" ? "CANCELLED" : mode === "assign" ? "ASSIGNED" : "OPEN",
       creatorRoles: user.roles,
-      notes: mode === 'closed' ? "הגן נסגר על ידי הפיקוח" : "",
+      notes: mode === "closed" ? "הגן נסגר על ידי הפיקוח" : "",
     };
 
     try {
@@ -60,156 +72,133 @@ export default function AddPlacementModal({ isOpen, onClose, date, refreshData, 
         body: JSON.stringify(payload),
       });
 
-      if (res.ok) {
-        refreshData();
-        onClose();
-        resetForm();
-      } else {
-        const err = await res.json();
-        alert(err.message || "שגיאה בשמירת השיבוץ");
-      }
-    } catch {
-      alert("שגיאת תקשורת עם השרת");
+      if (!res.ok) throw new Error((await res.json()).message);
+      refreshData();
+      onClose();
+      setSelectedManagerId("");
+      setSelectedSubId("");
+      setMode("pending");
+    } catch (e: any) {
+      alert(e.message || "שגיאה בשמירה");
     } finally {
       setLoading(false);
     }
   };
 
-  const resetForm = () => {
-    setSelectedManagerId("");
-    setSelectedSubId("");
-    setMode('pending');
-  };
-
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-[110] p-4" dir="rtl">
-      <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden border border-slate-100 animate-in fade-in zoom-in-95 duration-200">
-        
+    <div className="fixed inset-0 z-[110] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4" dir="rtl">
+      <div className="bg-white w-full max-w-md rounded-[2.5rem] shadow-2xl overflow-hidden border border-slate-100 animate-in fade-in zoom-in-95 duration-200">
+
         {/* Header */}
-        <div className="bg-indigo-600 p-6 text-white flex justify-between items-center">
-          <div>
-            <h2 className="text-xl font-bold">הוספת דיווח חדש</h2>
-            <p className="text-indigo-100 text-sm opacity-90">
-              {new Date(date).toLocaleString("IL-he")}
-            </p>
+        <div className="p-8 bg-slate-900 text-white relative">
+          <div className="flex justify-between items-center">
+            <div>
+              <h2 className="text-2xl font-black">הוספת דיווח</h2>
+              <p className="text-slate-400 text-sm mt-1">
+                {new Date(date).toLocaleString("IL-he")}
+              </p>
+            </div>
+            <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-full">
+              <X size={22} />
+            </button>
           </div>
-          <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-full transition-colors">
-            <X size={24} />
-          </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-6 space-y-5">
-          {/* 1. בחירת גננת אם */}
-          <div>
-            <label className="block text-sm font-bold text-slate-700 mb-2 flex items-center gap-2">
-              <User size={16} className="text-indigo-500" /> גננת אם (נעדרת):
-            </label>
-            <select
-              className="w-full p-3 rounded-xl border-2 border-slate-100 focus:border-indigo-500 outline-none bg-slate-50 transition-all font-medium"
-              value={selectedManagerId}
-              onChange={(e) => setSelectedManagerId(e.target.value)}
-              required
-            >
-              <option value="">-- בחרי גננת אם --</option>
-              {data.managers.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.firstName} {m.lastName} ({m.mainManagedInstitutions?.[0]?.name || 'ללא גן'})
-                </option>
-              ))}
-            </select>
-          </div>
+        <form onSubmit={handleSubmit} className="p-8 space-y-6">
 
-          {/* 2. בחירת סוג הדיווח */}
+          {/* גננת אם */}
           <div className="space-y-2">
-             <label className="block text-sm font-bold text-slate-700 mb-2 flex items-center gap-2">
-              <AlertCircle size={16} className="text-indigo-500" /> מה תרצי לבצע?
-            </label>
-            <div className="grid grid-cols-3 gap-2 p-1 bg-slate-100 rounded-2xl">
-              <button
-                type="button"
-                onClick={() => setMode('pending')}
-                className={`flex flex-col items-center gap-1 p-3 rounded-xl text-[11px] font-bold transition-all ${
-                  mode === 'pending' ? "bg-white shadow-sm text-indigo-600" : "text-slate-500 hover:text-slate-700"
-                }`}
+            <label className="text-xs font-bold text-slate-500 mr-2">גננת אם (נעדרת)</label>
+            <div className="relative">
+              <select
+                value={selectedManagerId}
+                onChange={(e) => setSelectedManagerId(e.target.value)}
+                className="w-full pr-10 pl-4 py-3 bg-slate-50 border-none rounded-xl focus:ring-2 focus:ring-indigo-500 font-medium appearance-none"
               >
-                <Clock size={18} /> דיווח בלבד
-              </button>
-              <button
-                type="button"
-                onClick={() => setMode('assign')}
-                className={`flex flex-col items-center gap-1 p-3 rounded-xl text-[11px] font-bold transition-all ${
-                  mode === 'assign' ? "bg-white shadow-sm text-emerald-600" : "text-slate-500 hover:text-slate-700"
-                }`}
-              >
-                <UserPlus size={18} /> שיבוץ מחליפה
-              </button>
-              <button
-                type="button"
-                onClick={() => setMode('closed')}
-                className={`flex flex-col items-center gap-1 p-3 rounded-xl text-[11px] font-bold transition-all ${
-                  mode === 'closed' ? "bg-white shadow-sm text-red-600" : "text-slate-500 hover:text-slate-700"
-                }`}
-              >
-                <Home size={18} /> סגירת גן
-              </button>
+                <option value="">בחרי גננת…</option>
+                {data.managers.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.firstName} {m.lastName} ({m.mainManagedInstitutions?.[0]?.name || "ללא גן"})
+                  </option>
+                ))}
+              </select>
+              <GraduationCap className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
             </div>
           </div>
 
-          {/* 3. שדות דינמיים לפי המצב */}
-          <div className="min-h-[80px] flex items-end">
-            {mode === 'assign' && (
-              <div className="w-full animate-in slide-in-from-top-2 duration-300">
-                <label className="block text-sm font-bold text-slate-700 mb-2">בחירת גננת מחליפה:</label>
-                <select
-                  className="w-full p-3 rounded-xl border-2 border-emerald-100 focus:border-emerald-500 outline-none bg-emerald-50/30 transition-all font-medium"
-                  value={selectedSubId}
-                  onChange={(e) => setSelectedSubId(e.target.value)}
-                  required
+          {/* מצב */}
+          <div className="space-y-2">
+            <label className="text-xs font-bold text-slate-500 mr-2">סוג דיווח</label>
+            <div className="grid grid-cols-3 gap-2 bg-slate-100 p-1 rounded-2xl">
+              {[
+                { key: "pending", label: "דיווח", icon: Clock },
+                { key: "assign", label: "שיבוץ", icon: UserPlus },
+                { key: "closed", label: "סגירה", icon: Home },
+              ].map(({ key, label, icon: Icon }) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => setMode(key as any)}
+                  className={`flex flex-col items-center gap-1 p-3 rounded-xl text-[11px] font-bold transition-all ${
+                    mode === key ? "bg-white shadow text-indigo-600" : "text-slate-500"
+                  }`}
                 >
-                  <option value="">-- בחרי מחליפה פנויה --</option>
-                  {data.substitutes.map((s) => (
-                    <option key={s.id} value={s.id}>{s.firstName} {s.lastName}</option>
-                  ))}
-                </select>
-              </div>
-            )}
-
-            {mode === 'pending' && (
-              <div className="w-full p-4 bg-amber-50 rounded-xl border border-amber-100 animate-in fade-in duration-300">
-                <p className="text-amber-800 text-xs font-medium flex items-center gap-2">
-                  <Clock size={14} /> הדיווח יישמר במצב "ממתין" ויופיע בדאשבורד כקריאה פתוחה.
-                </p>
-              </div>
-            )}
-
-            {mode === 'closed' && (
-              <div className="w-full p-4 bg-red-50 rounded-xl border border-red-100 animate-in fade-in duration-300">
-                <p className="text-red-800 text-xs font-medium flex items-center gap-2">
-                  <Check size={14} /> הגן יסומן כסגור ולא יחפשו עבורו מחליפה להיום.
-                </p>
-              </div>
-            )}
+                  <Icon size={18} />
+                  {label}
+                </button>
+              ))}
+            </div>
           </div>
 
-          {/* Footer Buttons */}
-          <div className="flex gap-3 pt-4">
-             <button
+          {/* שדות דינמיים */}
+          {mode === "assign" && (
+            <div className="space-y-2 animate-in slide-in-from-top-2">
+              <label className="text-xs font-bold text-slate-500 mr-2">גננת מחליפה</label>
+              <div className="relative">
+                <select
+                  value={selectedSubId}
+                  onChange={(e) => setSelectedSubId(e.target.value)}
+                  className="w-full pr-10 pl-4 py-3 bg-emerald-50 border-none rounded-xl focus:ring-2 focus:ring-emerald-500 font-medium appearance-none"
+                >
+                  <option value="">בחרי מחליפה…</option>
+                  {data.substitutes.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.firstName} {s.lastName}
+                    </option>
+                  ))}
+                </select>
+                <UserPlus className="absolute right-3 top-1/2 -translate-y-1/2 text-emerald-400" size={16} />
+              </div>
+            </div>
+          )}
+
+          {mode === "pending" && (
+            <div className="p-4 bg-amber-50 border border-amber-100 rounded-xl text-xs text-amber-800 flex gap-2 items-center">
+              <Clock size={14} /> יישמר במצב ממתין.
+            </div>
+          )}
+
+          {mode === "closed" && (
+            <div className="p-4 bg-red-50 border border-red-100 rounded-xl text-xs text-red-800 flex gap-2 items-center">
+              <Check size={14} /> הגן יסומן כסגור.
+            </div>
+          )}
+
+          {/* Footer */}
+          <div className="flex gap-4 pt-4">
+            <button
               type="submit"
               disabled={loading}
-              className={`flex-[2] p-4 rounded-2xl font-bold text-white shadow-lg transition-all active:scale-95 ${
-                mode === 'closed' ? "bg-red-600 hover:bg-red-700 shadow-red-100" : 
-                mode === 'assign' ? "bg-emerald-600 hover:bg-emerald-700 shadow-emerald-100" :
-                "bg-indigo-600 hover:bg-indigo-700 shadow-indigo-100"
-              }`}
+              className="flex-[2] py-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl font-black shadow-lg shadow-indigo-100 active:scale-95 transition"
             >
-              {loading ? "מעבד..." : "אישור וביצוע"}
+              {loading ? "שומר..." : "אישור"}
             </button>
             <button
               type="button"
               onClick={onClose}
-              className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-600 p-4 rounded-2xl font-bold transition-colors"
+              className="flex-1 py-4 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-2xl font-bold"
             >
               ביטול
             </button>

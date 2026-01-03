@@ -2,8 +2,7 @@
 
 import { X, User, Building2, Pencil, GraduationCap, Search, Sparkles } from "lucide-react";
 import { highlightText } from "@/lib/utils/formatters";
-import { useEffect, useRef, useState } from "react";
-import UserDetailsModal from "./UserDetailsModal";
+import { useEffect, useRef } from "react";
 
 interface Props {
   isOpen: boolean;
@@ -21,7 +20,6 @@ export default function InstructorPlacementsModal({
   onAssignClick,
 }: Props) {
   const scrollTargetRef = useRef<HTMLDivElement>(null);
-  const [selectedGanenet, setSelectedGanenet] = useState<any>(null);
 
   useEffect(() => {
     if (isOpen && scrollTargetRef.current) {
