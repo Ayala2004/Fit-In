@@ -47,7 +47,14 @@ export default function DistrictManagementPage() {
   const [isAddInstitutionOpen, setIsAddInstitutionOpen] = useState(false);
   const [activeInstructor, setActiveInstructor] = useState<any>(null);
   const [selectedPlacement, setSelectedPlacement] = useState<any>(null);
-
+  const dayTranslations: Record<string, string> = {
+    SUNDAY: "א'",
+    MONDAY: "ב'",
+    TUESDAY: "ג'",
+    WEDNESDAY: "ד'",
+    THURSDAY: "ה'",
+    FRIDAY: "ו'",
+  };
   // 2. פונקציות טעינה
   const loadData = async () => {
     setLoading(true);
@@ -454,10 +461,9 @@ export default function DistrictManagementPage() {
               key={inst.id}
               className="bg-white rounded-4xl border border-slate-100 shadow-sm p-8 flex flex-col hover:shadow-lg transition-all relative group"
             >
-              {/* כפתור עריכה בפינה */}
               <button
                 onClick={() => setSelectedInstitutionForEdit(inst)}
-                className="absolute top-6 left-6  opacity-100 p-2 bg-indigo-50 text-slate-600 rounded-lg hover:bg-indigo-600 hover:text-white transition-all shadow-sm"
+                className="absolute top-6 left-6 opacity-100 p-2 bg-indigo-50 text-slate-600 rounded-lg hover:bg-indigo-600 hover:text-white transition-all shadow-sm"
               >
                 <Edit3 size={18} />
               </button>
@@ -465,20 +471,59 @@ export default function DistrictManagementPage() {
               <div className="w-12 h-12 bg-pink-50 text-pink-600 rounded-2xl flex items-center justify-center mb-6 shadow-sm">
                 <Building2 size={24} />
               </div>
+
               <h3 className="text-xl font-black text-slate-800 mb-1">
                 {inst.name}
               </h3>
+
               <p className="text-slate-400 text-xs font-bold uppercase mb-6">
                 סמל מוסד: {inst.institutionNumber}
               </p>
-              <div className="space-y-3">
-                <div className="flex items-center gap-3 text-slate-600 text-sm font-medium">
-                  <MapPin size={14} className="text-indigo-500" />{" "}
-                  {inst.address}
+
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <div className="flex items-center gap-3 text-slate-600 text-sm font-medium">
+                    <MapPin size={14} className="text-indigo-500" />{" "}
+                    {inst.address}
+                  </div>
+                  <div className="flex items-center gap-3 text-slate-600 text-sm font-medium">
+                    <Users size={14} className="text-indigo-500" /> גננת אם:{" "}
+                    <span className="font-bold">
+                      {inst.mainManager?.firstName} {inst.mainManager?.lastName}
+                    </span>
+                  </div>
                 </div>
-                <div className="flex items-center gap-3 text-slate-600 text-sm font-medium">
-                  <Users size={14} className="text-indigo-500" /> גננת:{" "}
-                  {inst.mainManager?.firstName} {inst.mainManager?.lastName}
+
+                {/* --- הצגת גננות רוטציה קבועות --- */}
+                <div className="pt-4 border-t border-slate-50">
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">
+                    צוות משלים קבוע (רוטציה):
+                  </p>
+                  <div className="space-y-2">
+                    {inst.mainManager?.fixedRotationsAsManager?.length > 0 ? (
+                      inst.mainManager.fixedRotationsAsManager.map(
+                        (rot: any) => (
+                          <div
+                            key={rot.id}
+                            className="flex items-center gap-2 bg-slate-50 p-2 rounded-xl border border-slate-100/50"
+                          >
+                            <span className="w-fit h-fit p-2 flex items-center justify-center text-[13px] font-black text-indigo-600 ">
+                              ביום: {" "}
+                              {dayTranslations[rot.day]}
+                            </span>
+                            <span className="text-xs font-bold text-slate-700">
+                              {rot.rotationTeacher?.firstName}{" "}
+                              {rot.rotationTeacher?.lastName}
+                            </span>
+                          </div>
+                        )
+                      )
+                    ) : (
+                      <p className="text-[11px] text-slate-400 italic">
+                        טרם הוגדרה רוטציה קבועה
+                      </p>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>

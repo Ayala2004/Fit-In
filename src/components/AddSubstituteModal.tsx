@@ -115,7 +115,7 @@ export default function AddSubstituteModal({
     >
       <div className="bg-white w-full max-w-3xl rounded-[2.5rem] shadow-2xl overflow-hidden flex flex-col max-h-[95vh] border border-slate-100">
         {/* Header */}
-        <div className="p-8 bg-emerald-600 text-white relative shrink-0">
+        <div className="p-8 bg-slate-900 text-white relative shrink-0">
           <h2 className="text-2xl font-black">הוספת צוות מחליף</h2>
           <p className="opacity-90 text-sm font-medium">
             רישום גננת מחליפה או רוטציה
@@ -139,7 +139,7 @@ export default function AddSubstituteModal({
               onClick={() => setRole("SUBSTITUTE")}
               className={`p-4 rounded-xl font-black flex items-center justify-center gap-2 ${
                 role === "SUBSTITUTE"
-                  ? "bg-white text-emerald-600 shadow-sm"
+                  ? "bg-white text-slate-900 shadow-sm"
                   : "text-slate-500"
               }`}
             >
@@ -150,7 +150,7 @@ export default function AddSubstituteModal({
               onClick={() => setRole("ROTATION")}
               className={`p-4 rounded-xl font-black flex items-center justify-center gap-2 ${
                 role === "ROTATION"
-                  ? "bg-white text-emerald-600 shadow-sm"
+                  ? "bg-white text-slate-900 shadow-sm"
                   : "text-slate-500"
               }`}
             >
@@ -201,9 +201,9 @@ export default function AddSubstituteModal({
           </div>
 
           {/*כרגע מוותרת על ימי חופשה לרוטציה */}
-          {/* {role === "ROTATION" && (
+          {role === "SUBSTITUTE" && (
             <div className="space-y-4 animate-in slide-in-from-top-4">
-              <div className="flex items-center gap-2 text-emerald-600 font-black text-xs uppercase border-b pb-2">
+              <div className="flex items-center gap-2 text-slate-900 font-black text-xs uppercase border-b pb-2">
                 <Calendar size={14} /> הגדרת ימי עבודה
               </div>
 
@@ -229,7 +229,7 @@ export default function AddSubstituteModal({
                     }
                     className={`w-24 py-2 rounded-lg text-[10px] font-black ${
                       schedule[day].active
-                        ? "bg-emerald-600 text-white"
+                        ? "bg-slate-900 text-white"
                         : "bg-slate-200 text-slate-400"
                     }`}
                   >
@@ -241,7 +241,7 @@ export default function AddSubstituteModal({
                 </div>
               ))}
             </div>
-          )} */}
+          )}
 
           {role === "SUBSTITUTE" && (
             <div className="p-6 bg-amber-50 rounded-2xl border border-amber-100 flex gap-4">
@@ -255,7 +255,7 @@ export default function AddSubstituteModal({
           <button
             type="submit"
             disabled={loading}
-            className="w-full py-5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl font-black shadow-lg active:scale-95 transition disabled:bg-slate-300"
+            className="w-full py-5 bg-slate-900 hover:bg-emerald-700 text-white rounded-2xl font-black shadow-lg active:scale-95 transition disabled:bg-slate-300"
           >
             {loading ? "שומר..." : "סיום ורישום"}
           </button>
