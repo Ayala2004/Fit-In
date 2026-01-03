@@ -64,17 +64,29 @@ export async function PATCH(
       where: { id: id },
       data: updateData,
     });
-
-    // 4. עדכון טבלת FixedRotation (רק אם היא MANAGER ושלחנו נתוני רוטציה)
-    if (updatedUser.roles.includes("MANAGER") && rotationData) {
+    if (
+      updatedUser.isWorking === false &&
+      updatedUser.roles.includes("MANAGER")
+    ) {
+      await prisma.fixedRotation.deleteMany({
+        where: { managerId: id },
+      });
+      console.log(`Released all fixed rotations for inactive manager: ${id}`);
+    }
+    // אם היא נשארה פעילה אבל נשלחו נתוני רוטציה חדשים (הקוד הקיים שלך)
+    else if (updatedUser.roles.includes("MANAGER") && rotationData) {
       // מחיקה של כל הרוטציות הקודמות של המשתמשת הזו
       await prisma.fixedRotation.deleteMany({
-        where: { managerId: id }
+        where: { managerId: id },
       });
 
       // יצירת הרוטציות החדשות
       const rotationsToCreate = Object.entries(rotationData)
-        .filter(([_, teacherId]) => teacherId && teacherId !== "")
+       .filter(([_, teacherId]) => 
+            teacherId && 
+            teacherId !== "" && 
+            teacherId !== "REMOVE"
+        )
         .map(([day, teacherId]) => ({
           managerId: id,
           day: day as any,
@@ -83,7 +95,7 @@ export async function PATCH(
 
       if (rotationsToCreate.length > 0) {
         await prisma.fixedRotation.createMany({
-          data: rotationsToCreate
+          data: rotationsToCreate,
         });
       }
     }

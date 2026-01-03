@@ -295,52 +295,67 @@ export default function SupervisorCalendar() {
                   ) : (
                     <div className="flex-1 space-y-2 overflow-y-auto overflow-x-hidden custom-calendar-scroll">
                       {" "}
-                      {dayPlacements.map((p: any) => (
-                        <div
-                          key={p.id}
-                          className="group relative p-2 rounded-xl border border-slate-100 bg-white shadow-sm hover:border-indigo-300 hover:shadow-md transition-all cursor-pointer"
-                          onClick={() => setEditingPlacement(p)}
-                        >
-                          <div className="text-[14px] font-bold text-slate-700 leading-tight">
-                            {p.mainTeacher?.firstName} {p.mainTeacher?.lastName}
-                          </div>
-                          <div
-                            className={`text-[12px] mt-1 flex items-center gap-1.5 ${
-                              p.status === "OPEN"
-                                ? "text-amber-600 font-bold"
-                                : p.status === "CANCELLED"
-                                ? "text-red-500 font-bold"
-                                : "text-emerald-600 font-bold"
-                            }`}
-                          >
+                      <div className="flex-1 space-y-2 overflow-y-auto overflow-x-hidden custom-calendar-scroll">
+                        {dayPlacements.map((p: any) => {
+                          // בדיקה האם הגננת שחסרה (mainTeacher) היא גננת רוטציה
+                          const isRotationAbsent =
+                            p.mainTeacher?.roles?.includes("ROTATION");
+
+                          return (
                             <div
-                              className={`w-1.5 h-1.5 rounded-full ${
-                                p.status === "OPEN"
-                                  ? "bg-amber-500 animate-pulse"
-                                  : p.status === "CANCELLED"
-                                  ? "bg-red-500"
-                                  : "bg-emerald-500"
+                              key={p.id}
+                              className={`group relative p-2 rounded-xl border transition-all cursor-pointer shadow-sm hover:shadow-md ${
+                                isRotationAbsent
+                                  ? "bg-blue-50 border-blue-200 hover:border-blue-400" // כחול בהיר לרוטציה
+                                  : "bg-white border-slate-100 hover:border-indigo-300" // לבן לגננת אם
                               }`}
-                            />
-                            {p.status === "OPEN"
-                              ? "ממתין"
-                              : p.status === "CANCELLED"
-                              ? "סגור"
-                              : p.substitute
-                              ? `${p.substitute.firstName} ${p.substitute.lastName[0]}.`
-                              : "משובץ"}
-                          </div>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleDelete(p.id);
-                            }}
-                            className="absolute -top-1.5 -left-1.5 opacity-0 group-hover:opacity-100 bg-white text-red-500 p-1 rounded-full shadow-md border border-red-50 hover:bg-red-500 hover:text-white transition-all"
-                          >
-                            <X size={10} />
-                          </button>
-                        </div>
-                      ))}
+                              onClick={() => setEditingPlacement(p)}
+                            >
+                              <div className="text-[14px] font-bold text-slate-700 leading-tight">
+                                {p.mainTeacher?.firstName}{" "}
+                                {p.mainTeacher?.lastName}
+                              </div>
+
+                              <div
+                                className={`text-[12px] mt-1 flex items-center gap-1.5 ${
+                                  p.status === "OPEN"
+                                    ? "text-amber-600 font-bold"
+                                    : p.status === "CANCELLED"
+                                    ? "text-red-500 font-bold"
+                                    : "text-emerald-600 font-bold"
+                                }`}
+                              >
+                                <div
+                                  className={`w-1.5 h-1.5 rounded-full ${
+                                    p.status === "OPEN"
+                                      ? "bg-amber-500 animate-pulse"
+                                      : p.status === "CANCELLED"
+                                      ? "bg-red-500"
+                                      : "bg-emerald-500"
+                                  }`}
+                                />
+                                {p.status === "OPEN"
+                                  ? "ממתין"
+                                  : p.status === "CANCELLED"
+                                  ? "סגור"
+                                  : p.substitute
+                                  ? `${p.substitute.firstName} ${p.substitute.lastName[0]}.`
+                                  : "משובץ"}
+                              </div>
+
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDelete(p.id);
+                                }}
+                                className="absolute -top-1.5 -left-1.5 opacity-0 group-hover:opacity-100 bg-white text-red-500 p-1 rounded-full shadow-md border border-red-50 hover:bg-red-500 hover:text-white transition-all"
+                              >
+                                <X size={10} />
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
                     </div>
                   )}
                 </div>

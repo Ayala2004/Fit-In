@@ -331,11 +331,15 @@ export async function db_updatePlacementStatus(params: {
     where: { id: params.placementId },
     data: {
       status: params.newStatus,
-      substituteId: params.newStatus === "CANCELLED" ? null : undefined,
+      // תיקון: אם הגן נסגר (CANCELLED) או הוחזר להמתנה (OPEN) - אנחנו מוחקים את המחליפה
+      substituteId: (params.newStatus === "CANCELLED" || params.newStatus === "OPEN") 
+        ? null 
+        : undefined, 
     },
     include: { institution: true },
   });
 
+  // שליחת התראה (נשאר כפי שכתבת)
   const message = `סטטוס הגן ${updated.institution.name} עודכן ל-${params.newStatus}`;
   await db_createNotification({
     userId: updated.institution.supervisorId,
@@ -362,8 +366,9 @@ export async function db_getCalendarData(
   const startDate = new Date(year, month - 1, 1);
   const endDate = new Date(year, month, 0, 23, 59, 59);
 
-  // 1. שליפת כל הדיווחים הידניים (החריגות) של המחוז לחודש הזה
-  const manualPlacements = await prisma.placement.findMany({
+  // אנחנו שולפים רק את טבלת Placement.
+  // רשומה בטבלה הזו קיימת רק אם מישהי דיווחה על היעדרות (חריגה מהשגרה).
+  return await prisma.placement.findMany({
     where: {
       date: { gte: startDate, lte: endDate },
       institution: { supervisorId: supervisorId },
@@ -373,67 +378,10 @@ export async function db_getCalendarData(
       mainTeacher: { select: { id: true, firstName: true, lastName: true, roles: true } },
       substitute: { select: { id: true, firstName: true, lastName: true } },
     },
-  });
-
-  // 2. שליפת כל המוסדות והרוטציות הקבועות שלהם מראש
-const institutions = await prisma.institution.findMany({
-    where: { supervisorId: supervisorId },
-    include: {
-      // כאן אנחנו מוודאים שאנחנו מושכים את גננת האם ואת הרוטציות שלה
-      mainManager: {
-        include: {
-          fixedRotationsAsManager: {
-            include: { rotationTeacher: true }
-          }
-        }
-      }
+    orderBy: {
+      date: 'asc'
     }
   });
-
-  const calendarDays: any[] = [];
-
-  // 3. לולאה על הימים - הכל מחושב בזיכרון (מהיר מאוד)
-  for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
-    const currentDate = new Date(d);
-    const dayName = getDayEnum(currentDate);
-
-    for (const inst of institutions) {
-      // בדיקה: האם יש חריגה (Placement) רשומה ב-DB ליום הזה ולגן הזה?
-      const override = manualPlacements.find(p => 
-        p.institutionId === inst.id && isSameDate(new Date(p.date), currentDate)
-      );
-
-      if (override) {
-        // יש חריגה! (למשל: הרוטציה חולה, או הגננת אם החליפה יום)
-        calendarDays.push({
-          ...override,
-          isOverride: true // דגל לפרונט
-        });
-      } else {
-        // אין חריגה ידנית - נבדוק מה הלו"ז הקבוע
-        const rotation = inst.mainManager.fixedRotationsAsManager.find(r => r.day === dayName);
-
-        if (rotation) {
-          // זה יום רוטציה קבוע - הגננת היא גננת הרוטציה
-          calendarDays.push({
-            id: `fixed-${inst.id}-${currentDate.getTime()}`,
-            date: new Date(currentDate),
-            status: "ASSIGNED", 
-            institution: { name: inst.name, id: inst.id },
-            mainTeacher: rotation.rotationTeacher, // הגננת ש"אמורה" להיות שם היא הרוטציה
-            substitute: null,
-            notes: "רוטציה קבועה",
-            isFixed: true 
-          });
-        } else {
-          // יום רגיל - גננת האם נמצאת (לא מוסיפים ללוח אלא אם את רוצה להציג הכל)
-          // בדרך כלל בלוח שנה של היעדרויות נציג רק ימים עם "אירוע" (רוטציה או חריגה)
-        }
-      }
-    }
-  }
-
-  return calendarDays;
 }
 
 /**
