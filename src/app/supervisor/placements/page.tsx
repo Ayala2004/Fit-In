@@ -277,7 +277,10 @@ export default function DistrictManagementPage() {
       {/* Tab Switcher */}
       <div className="flex gap-4 p-1.5 bg-slate-100 rounded-3xl w-full max-w-md">
         <button
-          onClick={() => setActiveTab("STAFF")}
+          onClick={() => {
+            setActiveTab("STAFF");
+            setSearchTerm(""); // <--  איפוס שורת חיפוש
+          }}
           className={`flex-1 py-3 rounded-2xl font-black text-sm transition-all ${
             activeTab === "STAFF"
               ? "bg-white text-indigo-600 shadow-sm"
@@ -289,6 +292,7 @@ export default function DistrictManagementPage() {
         <button
           onClick={() => {
             setActiveTab("ALL_USERS");
+            setSearchTerm(""); // <--  איפוס שורת חיפוש
             loadAllUsers();
           }}
           className={`flex-1 py-3 rounded-2xl font-black text-sm transition-all ${
@@ -300,7 +304,10 @@ export default function DistrictManagementPage() {
           ניהול כח אדם
         </button>
         <button
-          onClick={() => setActiveTab("INSTITUTIONS")}
+          onClick={() => {
+            setActiveTab("INSTITUTIONS");
+            setSearchTerm("");
+          }}
           className={`flex-1 py-3 rounded-2xl font-black text-sm transition-all ${
             activeTab === "INSTITUTIONS"
               ? "bg-white text-indigo-600 shadow-sm"
@@ -350,7 +357,6 @@ export default function DistrictManagementPage() {
                   >
                     {instructor.isWorking ? "מדריכה" : "מדריכה - לא פעילה"}
                   </div>
-
                 </div>
 
                 <h3

@@ -11,23 +11,10 @@ import {
   GraduationCap,
   RefreshCcw,
 } from "lucide-react";
+import { Teacher,RotationRecord } from "@/types";
 
-interface Teacher {
-  id: string;
-  firstName: string;
-  lastName: string;
-  mainManagedInstitutions?: { id: string; name: string }[];
-}
 
-interface RotationRecord {
-  rotationTeacher: { id: string; firstName: string; lastName: string };
-  manager: {
-    id: string;
-    firstName: string;
-    lastName: string;
-    mainManagedInstitutions: { id: string; name: string }[];
-  };
-}
+
 
 interface Props {
   isOpen: boolean;

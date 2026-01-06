@@ -16,7 +16,6 @@ interface ValidatedFieldProps {
 
 export default function ValidatedField({
   name,
-  label,
   value,
   onChange,
   required = true,
@@ -54,7 +53,6 @@ export default function ValidatedField({
 
   return (
     <div className="space-y-1.5 w-full text-right">
-      
       <div className="relative group">
         <input
           name={name}
@@ -65,22 +63,27 @@ export default function ValidatedField({
           placeholder={placeholder}
           dir={inputDir}
           className={`w-full pr-10 pl-4 py-3 bg-slate-50 border-none rounded-xl transition-all outline-none font-medium
-            ${error 
-              ? "ring-2 ring-red-500 bg-red-50 text-red-900" 
-              : "focus:ring-2 focus:ring-indigo-500 text-slate-700 hover:bg-slate-100"
+            ${
+              error
+                ? "ring-2 ring-red-500 bg-red-50 text-red-900"
+                : "focus:ring-2 focus:ring-indigo-500 text-slate-700 hover:bg-slate-100"
             } ${disabled ? "opacity-50 cursor-not-allowed" : ""}`}
         />
-        
+
         {/* אייקון ימני */}
-        <div className={`absolute right-3 top-1/2 -translate-y-1/2 transition-colors
-          ${error ? "text-red-500" : "text-slate-400 group-focus-within:text-indigo-500"}`}>
+        <div
+          className={`absolute right-3 top-1/2 -translate-y-1/2 transition-colors
+          ${
+            error
+              ? "text-red-500"
+              : "text-slate-400 group-focus-within:text-indigo-500"
+          }`}
+        >
           {icons[name]}
         </div>
 
         {error && (
-          <div className="absolute left-3 top-1/2 -translate-y-1/2 text-red-500 animate-pulse">
-           
-          </div>
+          <div className="absolute left-3 top-1/2 -translate-y-1/2 text-red-500 animate-pulse"></div>
         )}
       </div>
 

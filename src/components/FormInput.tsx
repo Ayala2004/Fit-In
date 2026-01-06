@@ -3,39 +3,8 @@
 import React, { InputHTMLAttributes } from "react";
 import { User, Mail, Phone, CreditCard, Lock, Calendar } from "lucide-react";
 import ValidatedField from "./ValidatedField";
+import { FieldConfig, FieldKind } from "@/types";
 
-/* ===== טיפוסים ===== */
-
-type FieldKind =
-  | "firstName"
-  | "lastName"
-  | "email"
-  | "phone"
-  | "idNumber"
-  | "password"
-  | "dateOfBirth";
-
-type ValidatedName = "email" | "idNumber" | "phoneNumber";
-
-type BaseConfig = {
-  label: string;
-  placeholder: string;
-  icon: any;
-  name: string;
-  type?: string;
-  useValidation?: false;
-};
-
-type ValidatedConfig = {
-  label: string;
-  icon: any;
-  name: ValidatedName;
-  useValidation: true;
-};
-
-type FieldConfig = BaseConfig | ValidatedConfig;
-
-/* ===== קונפיג ===== */
 
 const CONFIG: Record<FieldKind, FieldConfig> = {
   firstName: {
