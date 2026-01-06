@@ -4,7 +4,7 @@ import {
   db_notifyMultipleUsers,
 } from "./notificationService";
 import { Day } from "@prisma/client";
-import { addMonths,  startOfDay, endOfDay, addDays } from "date-fns";
+import { addMonths, startOfDay, endOfDay, addDays } from "date-fns";
 
 const isSameDate = (date1: Date, date2: Date) => {
   return (
@@ -14,7 +14,6 @@ const isSameDate = (date1: Date, date2: Date) => {
   );
 };
 
-
 /**
  * שליפת נתונים ללוח הבקרה של המפקחת
  */
@@ -23,9 +22,27 @@ export async function db_getSupervisorDashboard(supervisorId: string) {
   const oneMonthFromNow = endOfDay(addMonths(new Date(), 1));
 
   const endOfWeek = endOfDay(addDays(today, 5));
+  const orphanedManagers = await prisma.user.findMany({
+    where: {
+      supervisorId: supervisorId,
+      roles: { has: "MANAGER" },
+      OR: [
+        { instructorId: null },
+        { instructor: { isWorking: false } },
+        {
+          instructor: {
+            NOT: {
+              roles: { has: "INSTRUCTOR" },
+            },
+          },
+        },
+      ],
+    },
+    select: { id: true, firstName: true, lastName: true },
+  });
 
   // --- פונקציית עזר לחישוב דילוג שבת ---
-   const getTargetDate = (startDate: Date, daysToCount: number) => {
+  const getTargetDate = (startDate: Date, daysToCount: number) => {
     let currentDate = new Date(startDate);
     let addedDays = 0;
     while (addedDays < daysToCount) {
@@ -60,7 +77,7 @@ export async function db_getSupervisorDashboard(supervisorId: string) {
       institution: { supervisorId: supervisorId },
       status: "OPEN",
       date: {
-        gt: urgentDeadline,   // מעבר לטווח הדחוף
+        gt: urgentDeadline, // מעבר לטווח הדחוף
         lte: oneMonthFromNow, // עד בדיוק חודש מהיום
       },
     },
@@ -112,6 +129,7 @@ export async function db_getSupervisorDashboard(supervisorId: string) {
     pendingUpdates,
     recentActivity,
     openMonthlyRequests,
+    orphanedManagers,
   };
 }
 
@@ -187,8 +205,8 @@ const getDayEnum = (date: Date): Day => {
 /**
  * יצירת שיבוץ חדש
  */
-  
-  // בדיקה מי אמורה להיות בגן ביום הזה לפי הלו"ז הקבוע
+
+// בדיקה מי אמורה להיות בגן ביום הזה לפי הלו"ז הקבוע
 
 /**
  * יצירת דיווח היעדרות/שיבוץ חדש
@@ -197,7 +215,7 @@ const getDayEnum = (date: Date): Day => {
 export async function db_createPlacement(data: {
   date: Date;
   institutionId: string;
-  mainTeacherId: string; 
+  mainTeacherId: string;
   substituteId?: string | null;
   notes?: string;
   creatorRoles: string[];
@@ -205,11 +223,13 @@ export async function db_createPlacement(data: {
 }) {
   const targetDate = startOfDay(new Date(data.date));
   const today = startOfDay(new Date());
-  
+
   // 1. בדיקות בסיסיות
   if (targetDate.getDay() === 6) throw new Error("לא ניתן לדווח בשבת");
 
-  const isManager = (data.creatorRoles ?? []).some(r => ["SUPERVISOR", "INSTRUCTOR"].includes(r));
+  const isManager = (data.creatorRoles ?? []).some((r) =>
+    ["SUPERVISOR", "INSTRUCTOR"].includes(r)
+  );
   const isRetroactive = targetDate < today;
 
   if (isRetroactive && !isManager) {
@@ -218,7 +238,7 @@ export async function db_createPlacement(data: {
 
   // 2. מניעת כפילות
   const existing = await prisma.placement.findFirst({
-    where: { institutionId: data.institutionId, date: targetDate }
+    where: { institutionId: data.institutionId, date: targetDate },
   });
   if (existing) throw new Error("כבר קיים דיווח פעיל ליום זה בגן זה");
 
@@ -228,7 +248,8 @@ export async function db_createPlacement(data: {
     throw new Error("בדיווח על העבר יש לבחור סטטוס סופי");
   }
 
-  const diffInDays = (targetDate.getTime() - today.getTime()) / (1000 * 3600 * 24);
+  const diffInDays =
+    (targetDate.getTime() - today.getTime()) / (1000 * 3600 * 24);
   const priority = !isRetroactive && diffInDays <= 2 ? "URGENT" : "NORMAL";
 
   // 4. יצירת הרשומה
@@ -244,7 +265,9 @@ export async function db_createPlacement(data: {
     },
     include: {
       institution: true,
-      mainTeacher: { select: { firstName: true, lastName: true, supervisorId: true } },
+      mainTeacher: {
+        select: { firstName: true, lastName: true, supervisorId: true },
+      },
       substitute: { select: { firstName: true, lastName: true } },
     },
   });
@@ -252,12 +275,15 @@ export async function db_createPlacement(data: {
   // 5. התראות (רק לדיווחים עתידיים פתוחים)
   if (!isRetroactive && finalStatus === "OPEN") {
     const { institution, mainTeacher } = newPlacement;
-    const notificationType = priority === "URGENT" ? "URGENT_CALL" : "STATUS_UPDATE";
+    const notificationType =
+      priority === "URGENT" ? "URGENT_CALL" : "STATUS_UPDATE";
 
     await db_createNotification({
       userId: institution.supervisorId,
       title: `היעדרות בגן ${institution.name}`,
-      message: `הגננת ${mainTeacher.firstName} לא תגיע ביום ${targetDate.toLocaleDateString("he-IL")}`,
+      message: `הגננת ${
+        mainTeacher.firstName
+      } לא תגיע ביום ${targetDate.toLocaleDateString("he-IL")}`,
       type: notificationType,
     });
 
@@ -268,12 +294,12 @@ export async function db_createPlacement(data: {
         workDays: { has: getDayEnum(targetDate) },
         placementsAsSub: { none: { date: targetDate, status: "ASSIGNED" } },
       },
-      select: { id: true }
+      select: { id: true },
     });
 
     if (available.length > 0) {
       await db_notifyMultipleUsers(
-        available.map(u => u.id),
+        available.map((u) => u.id),
         priority === "URGENT" ? "קריאה דחופה!" : "הצעה להחלפה",
         `דרושה מחליפה לגן ${institution.name}`,
         notificationType
@@ -332,9 +358,10 @@ export async function db_updatePlacementStatus(params: {
     data: {
       status: params.newStatus,
       // תיקון: אם הגן נסגר (CANCELLED) או הוחזר להמתנה (OPEN) - אנחנו מוחקים את המחליפה
-      substituteId: (params.newStatus === "CANCELLED" || params.newStatus === "OPEN") 
-        ? null 
-        : undefined, 
+      substituteId:
+        params.newStatus === "CANCELLED" || params.newStatus === "OPEN"
+          ? null
+          : undefined,
     },
     include: { institution: true },
   });
@@ -375,12 +402,14 @@ export async function db_getCalendarData(
     },
     include: {
       institution: { select: { name: true, id: true } },
-      mainTeacher: { select: { id: true, firstName: true, lastName: true, roles: true } },
+      mainTeacher: {
+        select: { id: true, firstName: true, lastName: true, roles: true },
+      },
       substitute: { select: { id: true, firstName: true, lastName: true } },
     },
     orderBy: {
-      date: 'asc'
-    }
+      date: "asc",
+    },
   });
 }
 

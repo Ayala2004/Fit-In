@@ -17,6 +17,7 @@ import {
   RefreshCcw,
 } from "lucide-react";
 import FormInput from "./FormInput";
+import ReassignTeachersModal from "./ReassignTeachersModal";
 
 export default function UserEditModal({
   user,
@@ -31,6 +32,9 @@ export default function UserEditModal({
   const [rotationData, setRotationData] = useState<Record<string, string>>({});
   const [isInstructorOpen, setIsInstructorOpen] = useState(false);
   const [openRotationDay, setOpenRotationDay] = useState<string | null>(null);
+  const [showReassignModal, setShowReassignModal] = useState(false);
+  const [orphanedTeachers, setOrphanedTeachers] = useState([]);
+  const [lastDisabledId, setLastDisabledId] = useState<string | null>(null);
 
   const [formData, setFormData] = useState({
     firstName: user.firstName || "",
@@ -159,12 +163,17 @@ export default function UserEditModal({
         headers: { "Content-Type": "application/json" },
       });
 
+      const data = await res.json();
+
       if (res.ok) {
-        onUpdateSuccess();
-        onClose();
-      } else {
-        const errorData = await res.json();
-        alert(errorData.message || "שגיאה בעדכון הנתונים");
+        if (data.needsReassignment) {
+          setOrphanedTeachers(data.orphanedManagers);
+          setLastDisabledId(user.id); // <-- שמירת ה-ID של המדריכה שהרגע הושבתה
+          setShowReassignModal(true);
+        } else {
+          onUpdateSuccess();
+          onClose();
+        }
       }
     } catch (err) {
       console.error("Update error:", err);
@@ -175,6 +184,27 @@ export default function UserEditModal({
   };
   const handleComboSelect = (roles: string[]) => {
     setFormData((prev: any) => ({ ...prev, roles }));
+  };
+
+  const handleCancelDisabling = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/supervisor/users/${user.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isWorking: true }), // מחזירים לפעילה
+      });
+
+      if (res.ok) {
+        setShowReassignModal(false);
+        onUpdateSuccess();
+        onClose(); // סוגרים את הכל
+      }
+    } catch (err) {
+      alert("שגיאה בביטול ההשבתה");
+    } finally {
+      setLoading(false);
+    }
   };
 
   if (!isOpen) return null;
@@ -636,6 +666,25 @@ export default function UserEditModal({
             </button>
           </div>
         </form>
+        {showReassignModal && (
+          <ReassignTeachersModal
+            isOpen={showReassignModal}
+            teachers={orphanedTeachers}
+            instructors={instructors}
+            excludedId={lastDisabledId} // <-- שליחת ה-ID להחרגה
+            isForced={true}
+            onCancelDisabling={handleCancelDisabling}
+            onComplete={(remaining?: any) => {
+              if (remaining) {
+                setOrphanedTeachers(remaining);
+              } else {
+                setShowReassignModal(false);
+                onUpdateSuccess();
+                onClose();
+              }
+            }}
+          />
+        )}
       </div>
     </div>
   );

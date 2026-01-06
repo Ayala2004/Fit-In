@@ -22,9 +22,11 @@ import {
   Loader2,
   User2Icon,
   PlusCircle,
+  Power,
 } from "lucide-react";
 import UserEditModal from "@/components/UserEditModal";
 import EditInstitutionModal from "@/components/EditInstitutionModal";
+import ReassignTeachersModal from "@/components/ReassignTeachersModal";
 
 export default function DistrictManagementPage() {
   const [activeTab, setActiveTab] = useState<
@@ -47,6 +49,10 @@ export default function DistrictManagementPage() {
   const [isAddInstitutionOpen, setIsAddInstitutionOpen] = useState(false);
   const [activeInstructor, setActiveInstructor] = useState<any>(null);
   const [selectedPlacement, setSelectedPlacement] = useState<any>(null);
+  const [showReassignModal, setShowReassignModal] = useState(false);
+  const [orphanedTeachers, setOrphanedTeachers] = useState<any[]>([]);
+  const [instructorsList, setInstructorsList] = useState<any[]>([]); // לצורך בחירה במודאל
+
   const dayTranslations: Record<string, string> = {
     SUNDAY: "א'",
     MONDAY: "ב'",
@@ -95,6 +101,28 @@ export default function DistrictManagementPage() {
   // טעינה ראשונית
   useEffect(() => {
     loadData();
+  }, []);
+
+  useEffect(() => {
+    const checkOrphans = async () => {
+      try {
+        const res = await fetch("/api/supervisor/dashboard");
+        const data = await res.json();
+        if (data.orphanedManagers?.length > 0) {
+          setOrphanedTeachers(data.orphanedManagers);
+          setShowReassignModal(true);
+        }
+      } catch (err) {
+        console.error("Failed to check for orphaned managers", err);
+      }
+    };
+    checkOrphans();
+  }, []);
+  // טעינת מדריכות בטעינה ראשונית כדי שיהיו זמינות למודאל
+  useEffect(() => {
+    fetch("/api/supervisor/instructors")
+      .then((res) => res.json())
+      .then((data) => setInstructorsList(data));
   }, []);
 
   const filteredAndSortedUsers = allUsers
@@ -158,6 +186,11 @@ export default function DistrictManagementPage() {
           .includes(searchTerm.toLowerCase())
       )
   );
+
+  const sortedInstructors = [...filteredStaff].sort((a, b) => {
+    if (a.isWorking === b.isWorking) return 0;
+    return a.isWorking ? -1 : 1;
+  });
 
   const filteredInstitutions = (
     Array.isArray(institutions) ? institutions : []
@@ -296,29 +329,70 @@ export default function DistrictManagementPage() {
       {/* STAFF TAB */}
       {activeTab === "STAFF" && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {filteredStaff.map((instructor) => (
+          {sortedInstructors.map((instructor) => (
             <div
               key={instructor.id}
               onClick={() => setActiveInstructor(instructor)}
-              className="group bg-white rounded-[2rem] border border-slate-100 shadow-sm hover:shadow-xl transition-all cursor-pointer overflow-hidden flex flex-col"
+              className={`group rounded-[2rem] border transition-all overflow-hidden flex flex-col ${
+                instructor.isWorking
+                  ? "bg-white border-slate-100 hover:shadow-xl shadow-sm cursor-pointer "
+                  : "bg-red-50/50 border-red-100 opacity-90 cursor-not-allowed" // צבע אדום בהיר ללא פעילות
+              }`}
             >
               <div className="p-8 pb-4">
-                <div className="px-3 py-1 bg-indigo-50 text-indigo-600 text-[10px] font-black uppercase rounded-lg inline-block mb-4">
-                  מדריכה
+                <div className="flex justify-between items-start">
+                  <div
+                    className={`px-3 py-1 text-[10px] font-black uppercase rounded-lg inline-block mb-4 ${
+                      instructor.isWorking
+                        ? "bg-indigo-50 text-indigo-600"
+                        : "bg-red-100 text-red-600"
+                    }`}
+                  >
+                    {instructor.isWorking ? "מדריכה" : "מדריכה - לא פעילה"}
+                  </div>
+
                 </div>
-                <h3 className="text-xl font-black text-slate-800">
+
+                <h3
+                  className={`text-xl font-black ${
+                    instructor.isWorking ? "text-slate-800" : "text-red-900"
+                  }`}
+                >
                   {instructor.firstName} {instructor.lastName}
                 </h3>
                 <p className="text-slate-400 text-sm mb-6">
                   {instructor.email}
                 </p>
-                <div className="inline-flex items-center gap-3 px-5 py-3 bg-slate-50 rounded-2xl border border-slate-100 w-full font-bold text-slate-700">
-                  <Users size={18} className="text-indigo-500" />{" "}
+
+                <div
+                  className={`inline-flex items-center gap-3 px-5 py-3 rounded-2xl border w-full font-bold ${
+                    instructor.isWorking
+                      ? "bg-slate-50 border-slate-100 text-slate-700"
+                      : "bg-red-100/50 border-red-200 text-red-800"
+                  }`}
+                >
+                  <Users
+                    size={18}
+                    className={
+                      instructor.isWorking ? "text-indigo-500" : "text-red-500"
+                    }
+                  />{" "}
                   {instructor.subordinatesIns?.length || 0} גננות אם
                 </div>
               </div>
-              <div className="mt-auto p-6 bg-slate-50/50 border-t flex justify-between items-center text-sm font-bold text-slate-500 group-hover:text-indigo-600 transition-colors">
-                <span>צפייה בפרטים ושיבוץ</span>
+
+              <div
+                className={`mt-auto p-6 border-t flex justify-between items-center text-sm font-bold transition-colors ${
+                  instructor.isWorking
+                    ? "bg-slate-50/50 text-slate-500 group-hover:text-indigo-600"
+                    : "bg-red-100/30 text-red-500"
+                }`}
+              >
+                <span>
+                  {instructor.isWorking
+                    ? "צפייה בגננות האם המשויכות"
+                    : "מדריכה מושבתת"}
+                </span>
                 <ChevronLeft size={18} />
               </div>
             </div>
@@ -508,8 +582,7 @@ export default function DistrictManagementPage() {
                             className="flex items-center gap-2 bg-slate-50 p-2 rounded-xl border border-slate-100/50"
                           >
                             <span className="w-fit h-fit p-2 flex items-center justify-center text-[13px] font-black text-indigo-600 ">
-                              ביום: {" "}
-                              {dayTranslations[rot.day]}
+                              ביום: {dayTranslations[rot.day]}
                             </span>
                             <span className="text-xs font-bold text-slate-700">
                               {rot.rotationTeacher?.firstName}{" "}
@@ -573,6 +646,23 @@ export default function DistrictManagementPage() {
           institution={selectedInstitutionForEdit}
           onClose={() => setSelectedInstitutionForEdit(null)}
           onSuccess={loadData}
+        />
+      )}
+      {showReassignModal && (
+        <ReassignTeachersModal
+          isOpen={showReassignModal}
+          teachers={orphanedTeachers}
+          instructors={instructorsList}
+          isForced={true} // גורם להשתלטות על המסך
+          onClose={() => setShowReassignModal(false)}
+          onComplete={(remaining?: any) => {
+            if (remaining && remaining.length > 0) {
+              setOrphanedTeachers(remaining);
+            } else {
+              setShowReassignModal(false);
+              loadData(); // רענון הנתונים הכללי בדף
+            }
+          }}
         />
       )}
     </div>

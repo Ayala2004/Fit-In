@@ -14,8 +14,50 @@ export async function PATCH(
   }
 
   try {
-    const body = await req.json();
     const { id } = await params;
+    const body = await req.json();
+
+    // בדיקת "המדריכה האחרונה"
+    if (
+      body.isWorking === false ||
+      (body.roles && !body.roles.includes("INSTRUCTOR"))
+    ) {
+      // האם המשתמשת הזו היא מדריכה כרגע?
+      const currentUser = await prisma.user.findUnique({
+        where: { id },
+        include: { subordinatesIns: true }, // גננות שמשויכות אליה
+      });
+
+      if (currentUser?.roles.includes("INSTRUCTOR")) {
+        // כמה מדריכות פעילות אחרות נשארו למפקחת הזו?
+        const activeInstructorsCount = await prisma.user.count({
+          where: {
+            supervisorId: session.id,
+            roles: { has: "INSTRUCTOR" },
+            isWorking: true,
+            id: { not: id }, // לא לספור את זו שאנחנו עורכים
+          },
+        });
+
+        // אם אין מדריכות אחרות אבל יש גננות במחוז
+        if (activeInstructorsCount === 0) {
+          // נבדוק אם יש בכלל גננות במחוז (של המפקחת הזו)
+          const totalManagersInDistrict = await prisma.user.count({
+            where: { supervisorId: session.id, roles: { has: "MANAGER" } },
+          });
+
+          if (totalManagersInDistrict > 0) {
+            return NextResponse.json(
+              {
+                message:
+                  "לא ניתן להשבית את המדריכה האחרונה במחוז כל עוד ישנן גננות אם. עלייך להגדיר מדריכה פעילה אחרת תחילה.",
+              },
+              { status: 400 }
+            );
+          }
+        }
+      }
+    }
 
     // 1. פירוק השדות - אנחנו מוציאים כל מה שהוא לא שדה פשוט ב-User
     const {
@@ -107,7 +149,6 @@ export async function PATCH(
 
       // א. מוחקים את כל הרוטציות הקודמות של הגננת הזו
       await prisma.fixedRotation.deleteMany({ where: { managerId: id } });
-
       // ב. יוצרים את כל החדשות בבת אחת (רק אם יש כאלו)
       if (rotationsToCreate.length > 0) {
         await prisma.fixedRotation.createMany({
@@ -115,7 +156,25 @@ export async function PATCH(
         });
       }
     }
-    return NextResponse.json(updatedUser);
+    // בדיקה: האם המשתמשת המעודכנת הפכה ללא פעילה או איבדה תפקיד מדריכה?
+    const isNoLongerActiveInstructor =
+      updatedUser.isWorking === false ||
+      !updatedUser.roles.includes("INSTRUCTOR");
+
+    // אם היא כבר לא מדריכה פעילה, נבדוק אם יש גננות שמשויכות אליה
+    let orphanedManagers: any[] = [];
+    if (isNoLongerActiveInstructor) {
+      orphanedManagers = await prisma.user.findMany({
+        where: { instructorId: id },
+        select: { id: true, firstName: true, lastName: true },
+      });
+    }
+
+    return NextResponse.json({
+      user: updatedUser,
+      needsReassignment: orphanedManagers.length > 0,
+      orphanedManagers: orphanedManagers,
+    });
   } catch (error: any) {
     console.error("Prisma Update Error Details:", error);
     return NextResponse.json(
