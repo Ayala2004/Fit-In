@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { X, Search, UserCheck, Loader2, AlertCircle, Home } from "lucide-react";
 import { format } from "date-fns";
 import { he } from "date-fns/locale";
+import LoadingScreen from "./ui/LoadingScreen";
 
 interface PlacementModalProps {
   placement: any;
@@ -72,7 +73,11 @@ export default function PlacementModal({
   };
 
   const handleCloseGarden = () => {
-    if (confirm(`האם את בטוחה שברצונך לסגור את גן ${placement.institution?.name} לתאריך זה?`)) {
+    if (
+      confirm(
+        `האם את בטוחה שברצונך לסגור את גן ${placement.institution?.name} לתאריך זה?`
+      )
+    ) {
       updatePlacement(null, "CANCELLED");
     }
   };
@@ -86,22 +91,30 @@ export default function PlacementModal({
   );
 
   return (
-    <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-[100] p-4 animate-in fade-in duration-300" dir="rtl">
+    <div
+      className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-[100] p-4 animate-in fade-in duration-300"
+      dir="rtl"
+    >
       <div className="bg-white w-full max-w-lg rounded-[2.5rem] shadow-2xl overflow-hidden flex flex-col max-h-[85vh] border border-slate-100">
-        
         {/* Header */}
         <div className="p-8 bg-slate-900 text-white flex justify-between items-center relative overflow-hidden shrink-0">
           <div className="absolute top-0 left-0 w-full h-full opacity-10 pointer-events-none">
             <div className="absolute -top-10 -right-10 w-32 h-32 bg-indigo-500 rounded-full blur-3xl"></div>
           </div>
-          
+
           <div className="relative z-10">
-            <h3 className="text-2xl font-black tracking-tight italic">עדכון סטטוס גן</h3>
+            <h3 className="text-2xl font-black tracking-tight italic">
+              עדכון סטטוס גן
+            </h3>
             <p className="text-slate-400 text-sm font-medium mt-1">
-              גן {placement.institution?.name} | {format(new Date(placement.date), "dd/MM/yyyy", { locale: he })}
+              גן {placement.institution?.name} |{" "}
+              {format(new Date(placement.date), "dd/MM/yyyy", { locale: he })}
             </p>
           </div>
-          <button onClick={onClose} className="relative z-10 p-2 hover:bg-white/10 rounded-full transition-colors">
+          <button
+            onClick={onClose}
+            className="relative z-10 p-2 hover:bg-white/10 rounded-full transition-colors"
+          >
             <X size={24} />
           </button>
         </div>
@@ -113,7 +126,10 @@ export default function PlacementModal({
             disabled={isProcessing}
             className="w-full flex items-center justify-center gap-3 p-4 bg-white rounded-2xl border-2 border-red-200 text-red-600 hover:bg-red-600 hover:text-white hover:border-red-600 transition-all shadow-sm group font-black uppercase text-sm tracking-widest disabled:opacity-50"
           >
-            <Home size={20} className="group-hover:scale-110 transition-transform" />
+            <Home
+              size={20}
+              className="group-hover:scale-110 transition-transform"
+            />
             סגירת הגן עקב חוסר במחליפה
           </button>
         </div>
@@ -121,10 +137,14 @@ export default function PlacementModal({
         {/* Search */}
         <div className="p-6 pb-2 shrink-0">
           <label className="block text-sm font-black text-slate-700 mb-3 flex items-center gap-2">
-            <UserCheck size={18} className="text-indigo-500" /> או שיבוץ מחליפה פנויה:
+            <UserCheck size={18} className="text-indigo-500" /> או שיבוץ מחליפה
+            פנויה:
           </label>
           <div className="relative group">
-            <Search className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-indigo-500 transition-colors" size={18} />
+            <Search
+              className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-indigo-500 transition-colors"
+              size={18}
+            />
             <input
               type="text"
               placeholder="חפשי לפי שם או טלפון..."
@@ -138,15 +158,16 @@ export default function PlacementModal({
         {/* List */}
         <div className="flex-1 overflow-y-auto px-6 pb-8 space-y-2 mt-4 custom-calendar-scroll">
           {loading ? (
-            <div className="flex flex-col items-center justify-center p-12 space-y-3">
-              <Loader2 className="animate-spin text-indigo-500 w-8 h-8" />
-              <p className="text-slate-400 text-sm font-bold">בודק זמינות מחליפות...</p>
-            </div>
+            <LoadingScreen message="בודק זמינות מחליפות..." />
           ) : filteredSubstitutes.length === 0 ? (
             <div className="text-center py-12 px-6 bg-slate-50 rounded-[2rem] border-2 border-dashed border-slate-200">
               <AlertCircle className="mx-auto text-slate-300 mb-4" size={32} />
-              <p className="text-slate-900 font-black text-lg">אין מחליפות פנויות</p>
-              <p className="text-slate-500 text-sm mt-1">לא נמצאו גננות שעובדות ביום זה</p>
+              <p className="text-slate-900 font-black text-lg">
+                אין מחליפות פנויות
+              </p>
+              <p className="text-slate-500 text-sm mt-1">
+                לא נמצאו גננות שעובדות ביום זה
+              </p>
             </div>
           ) : (
             filteredSubstitutes.map((sub) => (
@@ -159,8 +180,12 @@ export default function PlacementModal({
                     {sub.firstName[0]}
                   </div>
                   <div>
-                    <p className="font-black text-slate-800">{sub.firstName} {sub.lastName}</p>
-                    <p className="text-xs text-slate-400 font-medium">{sub.phoneNumber}</p>
+                    <p className="font-black text-slate-800">
+                      {sub.firstName} {sub.lastName}
+                    </p>
+                    <p className="text-xs text-slate-400 font-medium">
+                      {sub.phoneNumber}
+                    </p>
                   </div>
                 </div>
                 <button
@@ -168,7 +193,11 @@ export default function PlacementModal({
                   onClick={() => updatePlacement(sub.id, "ASSIGNED")}
                   className="px-5 py-2.5 bg-indigo-50 text-indigo-600 rounded-xl font-black text-xs hover:bg-indigo-600 hover:text-white transition-all active:scale-95 disabled:opacity-50"
                 >
-                  {isProcessing ? <Loader2 size={16} className="animate-spin" /> : "שבצי"}
+                  {isProcessing ? (
+                    <Loader2 size={16} className="animate-spin" />
+                  ) : (
+                    "שבצי"
+                  )}
                 </button>
               </div>
             ))

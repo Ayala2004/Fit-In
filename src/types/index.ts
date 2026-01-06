@@ -102,3 +102,11 @@ export type ValidatedConfig = {
 };
 
 export type FieldConfig = BaseConfig | ValidatedConfig;
+
+export interface Option {
+  id: string;
+  label: string;
+}
+
+export type InputChange = React.ChangeEvent<HTMLInputElement | HTMLSelectElement> | { name: string; value: string };
+

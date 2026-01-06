@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect } from "react";
 import { X, Building2, MapPin, Hash, User, Save, Loader2, Search, Info } from "lucide-react";
+import LoadingScreen from "./ui/LoadingScreen";
 
 export default function EditInstitutionModal({ isOpen, onClose, onSuccess, institution }: any) {
   const [managers, setManagers] = useState<any[]>([]);
@@ -136,7 +137,7 @@ export default function EditInstitutionModal({ isOpen, onClose, onSuccess, insti
 
           <div className="flex gap-4 pt-4">
             <button type="submit" disabled={loading} className="flex-[2] py-4 bg-indigo-600 text-white rounded-2xl font-black shadow-lg hover:bg-indigo-700 transition-all flex items-center justify-center gap-2">
-              {loading ? <Loader2 className="animate-spin" /> : <><Save size={18} /> שמירת שינויים</>}
+              {loading ? <LoadingScreen /> : <><Save size={18} /> שמירת שינויים</>}
             </button>
             <button type="button" onClick={onClose} className="flex-1 py-4 bg-slate-100 text-slate-600 rounded-2xl font-bold">ביטול</button>
           </div>

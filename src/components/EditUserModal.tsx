@@ -19,7 +19,7 @@ import {
 import FormInput from "./FormInput";
 import ReassignTeachersModal from "./ReassignTeachersModal";
 
-export default function UserEditModal({
+export default function EditUserModal({
   user,
   isOpen,
   onClose,

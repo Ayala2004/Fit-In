@@ -4,7 +4,7 @@ import React, { InputHTMLAttributes } from "react";
 import { User, Mail, Phone, CreditCard, Lock, Calendar } from "lucide-react";
 import ValidatedField from "./ValidatedField";
 import { FieldConfig, FieldKind } from "@/types";
-
+import CustomDatePicker from "./ui/CustomDatePicker";
 
 const CONFIG: Record<FieldKind, FieldConfig> = {
   firstName: {
@@ -49,7 +49,7 @@ const CONFIG: Record<FieldKind, FieldConfig> = {
     label: "תאריך לידה",
     type: "date",
     icon: Calendar,
-    placeholder: "בחרי תאריך", 
+    placeholder: "בחרי תאריך",
   },
 };
 
@@ -61,8 +61,6 @@ interface FormInputProps extends InputHTMLAttributes<HTMLInputElement> {
   onChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
 }
 
-/* ===== קומפוננטה ===== */
-
 export default function FormInput({
   kind,
   value,
@@ -71,7 +69,21 @@ export default function FormInput({
 }: FormInputProps) {
   const config = CONFIG[kind];
   const Icon = config.icon;
+  const isLTR = ["password", "email", "phoneNumber", "idNumber"].includes(
+    config.name
+  );
 
+  if (kind === "dateOfBirth") {
+    return (
+      <CustomDatePicker
+        label={config.label}
+        value={value}
+        onChange={(val: any) =>
+          onChange({ target: { name: config.name, value: val } } as any)
+        }
+      />
+    );
+  }
   return (
     <div className="space-y-2">
       <label className="text-xs font-bold text-slate-500 mr-2">
@@ -85,7 +97,13 @@ export default function FormInput({
             label={config.label}
             value={value}
             onChange={onChange}
-            dir="ltr"
+            dir={
+              ["password", "email", "phoneNumber", "idNumber"].includes(
+                config.name
+              )
+                ? "ltr"
+                : "rtl"
+            }
           />
         ) : (
           <>
@@ -97,10 +115,22 @@ export default function FormInput({
               value={value}
               onChange={onChange}
               placeholder={config.placeholder}
+              dir={
+                ["password", "email", "phoneNumber", "idNumber"].includes(
+                  config.name
+                )
+                  ? "ltr"
+                  : "rtl"
+              }
               className="w-full px-4 py-3 bg-slate-50 border-none rounded-xl focus:ring-2 focus:ring-indigo-500 font-medium"
             />
+
             <Icon
-              className={`absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 ${config.name==="dateOfBirth" && "hidden"}`}
+              className={`absolute ${
+                isLTR ? "right-3" : "left-3"
+              } top-1/2 -translate-y-1/2 text-slate-400 ${
+                config.name === "dateOfBirth" ? "hidden" : ""
+              }`}
               size={16}
             />
           </>

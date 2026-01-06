@@ -157,15 +157,27 @@ export async function PATCH(
       }
     }
     // בדיקה: האם המשתמשת המעודכנת הפכה ללא פעילה או איבדה תפקיד מדריכה?
-    const isNoLongerActiveInstructor =
-      updatedUser.isWorking === false ||
-      !updatedUser.roles.includes("INSTRUCTOR");
 
+    const wasInstructor =
+      body.roles?.includes("INSTRUCTOR") || body.roles.includes("INSTRUCTOR");
+    const isNoLongerActiveInstructor =
+      wasInstructor &&
+      (updatedUser.isWorking === false ||
+        !updatedUser.roles.includes("INSTRUCTOR"));
     // אם היא כבר לא מדריכה פעילה, נבדוק אם יש גננות שמשויכות אליה
     let orphanedManagers: any[] = [];
+
+    // רק אם היא באמת הפסיקה להיות מדריכה, נחפש מי נשאר יתום תחתיה
     if (isNoLongerActiveInstructor) {
       orphanedManagers = await prisma.user.findMany({
-        where: { instructorId: id },
+        where: {
+          instructorId: id,
+          isWorking: true,
+          id: { not: id }, // לא לכלול את עצמה
+          NOT: {
+            roles: { has: "INSTRUCTOR" },
+          }, // גננות שהן לא מדריכות בעצמן
+        },
         select: { id: true, firstName: true, lastName: true },
       });
     }

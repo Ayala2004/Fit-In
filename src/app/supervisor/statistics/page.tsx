@@ -2,13 +2,9 @@
 
 import { useState, useEffect, useMemo } from "react";
 import { format, subMonths, subYears, startOfMonth } from "date-fns";
-import {
-  BarChart3,
-  Calendar,
-  User,
-  Info,
-} from "lucide-react";
-import UserEditModal from "@/components/UserEditModal";
+import { BarChart3, Calendar, User, Info } from "lucide-react";
+import EditUserModal from "@/components/EditUserModal";
+import LoadingScreen from "@/components/ui/LoadingScreen";
 
 export default function StatisticsPage() {
   const [stats, setStats] = useState<any>(null);
@@ -34,24 +30,23 @@ export default function StatisticsPage() {
   }, []);
 
   // שליפת הנתונים מהשרת
-const fetchStats = async () => {
-  try {
-    setLoading(true);
-    const params = new URLSearchParams({
-      start: startDate,
-      end: endDate,
-      ...(selectedUserId && { userId: selectedUserId }),
-    });
-    const res = await fetch(`/api/supervisor/stats?${params}`);
-    const data = await res.json();
-    setStats(data);
-  } catch (err) {
-    console.error("Failed to fetch stats", err);
-  } finally {
-    setLoading(false);
-  }
-};
-
+  const fetchStats = async () => {
+    try {
+      setLoading(true);
+      const params = new URLSearchParams({
+        start: startDate,
+        end: endDate,
+        ...(selectedUserId && { userId: selectedUserId }),
+      });
+      const res = await fetch(`/api/supervisor/stats?${params}`);
+      const data = await res.json();
+      setStats(data);
+    } catch (err) {
+      console.error("Failed to fetch stats", err);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   // קריאה ראשונית וכל שינוי בטווח/משתמשת
   useEffect(() => {
@@ -216,7 +211,7 @@ const fetchStats = async () => {
         </>
       )}
       {isDetailsOpen && selectedUser && (
-        <UserEditModal
+        <EditUserModal
           user={selectedUser}
           isOpen={isDetailsOpen}
           onClose={() => {
@@ -225,7 +220,7 @@ const fetchStats = async () => {
           }}
         />
       )}
-
+      {loading && <LoadingScreen />}
       {/* Empty State */}
       {!loading && stats?.total === 0 && (
         <div className="bg-white p-20 rounded-[3rem] border-2 border-dashed border-slate-100 text-center">

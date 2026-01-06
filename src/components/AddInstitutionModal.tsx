@@ -13,6 +13,7 @@ import {
   Sparkles,
   Building,
 } from "lucide-react";
+import LoadingScreen from "./ui/LoadingScreen";
 
 export default function AddInstitutionModal({
   isOpen,
@@ -24,21 +25,19 @@ export default function AddInstitutionModal({
   const [loading, setLoading] = useState(false);
   const [selectedId, setSelectedId] = useState(""); // <--- הוספת State לבחירה
 
-  useEffect(() => {
-    if (isOpen) {
-      fetch("/api/supervisor/managers")
-        .then((res) => res.json())
-        .then((data) => setManagers(Array.isArray(data) ? data : []));
-    }
-  }, [isOpen]);
 
-  useEffect(() => {
-    if (isOpen) {
-      fetch("/api/supervisor/managers")
-        .then((res) => res.json())
-        .then((data) => setManagers(Array.isArray(data) ? data : []));
-    }
-  }, [isOpen]);
+
+ useEffect(() => {
+  if (isOpen) {
+    fetch("/api/supervisor/managers")
+      .then((res) => res.json())
+      .then((data) => {
+        console.log("Managers fetched:", data); // בדיקה
+        setManagers(Array.isArray(data) ? data : []);
+      });
+  }
+}, [isOpen]);
+
 
   const filteredManagers = managers.filter((m) =>
     `${m.firstName} ${m.lastName}`
@@ -268,7 +267,8 @@ export default function AddInstitutionModal({
               className="flex-[2] py-4 bg-indigo-600 text-white rounded-2xl font-black shadow-lg shadow-indigo-100 hover:bg-indigo-700 transition-all disabled:bg-slate-200 disabled:shadow-none active:scale-95 flex items-center justify-center gap-2"
             >
               {loading ? (
-                "מקים גן..."
+                <LoadingScreen message="מקים גן..." />
+                
               ) : (
                 <>
                   <Sparkles size={18} />

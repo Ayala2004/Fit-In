@@ -25,7 +25,11 @@ export async function db_getSupervisorDashboard(supervisorId: string) {
   const orphanedManagers = await prisma.user.findMany({
     where: {
       supervisorId: supervisorId,
-      roles: { has: "MANAGER" },
+      isWorking: true, // רק גננות פעילות
+      roles: { has: "MANAGER" }, // הן גננות אם
+      NOT: {
+        roles: { has: "INSTRUCTOR" }, // אבל לא מדריכות
+      },
       OR: [
         { instructorId: null },
         { instructor: { isWorking: false } },

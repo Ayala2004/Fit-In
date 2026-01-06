@@ -8,6 +8,7 @@ import {
   AlertTriangle,
   Loader2,
 } from "lucide-react";
+import LoadingScreen from "./ui/LoadingScreen";
 
 export default function ReassignTeachersModal({
   isOpen,
@@ -156,11 +157,7 @@ export default function ReassignTeachersModal({
             disabled={loading || selectedIds.length === 0 || !newInstructorId}
             className="flex-1 py-4 bg-indigo-600 text-white rounded-2xl font-black shadow-lg disabled:bg-slate-300"
           >
-            {loading ? (
-              <Loader2 className="animate-spin mx-auto" />
-            ) : (
-              "בצע שיבוץ מחדש"
-            )}
+            {loading ? <LoadingScreen /> : "בצע שיבוץ מחדש"}
           </button>
           {isForced && (
             <button

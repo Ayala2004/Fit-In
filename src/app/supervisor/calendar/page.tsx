@@ -22,6 +22,7 @@ import {
   Search,
 } from "lucide-react";
 import AddPlacementModal from "@/components/AddPlacementModal";
+import LoadingScreen from "@/components/ui/LoadingScreen";
 
 export default function SupervisorCalendar() {
   const [currentDate, setCurrentDate] = useState(new Date());
@@ -178,11 +179,7 @@ export default function SupervisorCalendar() {
   const days = [...paddingDays, ...realDays];
 
   if (!user && loading) {
-    return (
-      <div className="flex h-screen items-center justify-center bg-slate-50">
-        <Loader2 className="animate-spin text-indigo-600" size={48} />
-      </div>
-    );
+    return <LoadingScreen />;
   }
 
   return (

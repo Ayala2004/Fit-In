@@ -3,6 +3,7 @@
 import { X, Clock, CheckCircle, XCircle, Calendar } from "lucide-react";
 import { format } from "date-fns";
 import { he } from "date-fns/locale";
+import LoadingScreen from "./ui/LoadingScreen";
 
 interface Props {
   isOpen: boolean;
@@ -106,10 +107,7 @@ export default function RecentActivityModal({
         {/* Content */}
         <div className="overflow-y-auto p-6 space-y-6">
           {isLoading ? (
-            <div className="flex flex-col items-center justify-center py-20 text-gray-500">
-              <Clock className="animate-spin mb-4" size={36} />
-              <p className="text-sm">טוען פעילויות...</p>
-            </div>
+            <LoadingScreen message="טוען פעילויות..." />
           ) : sortedDates.length === 0 ? (
             <div className="text-center py-12">
               <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">

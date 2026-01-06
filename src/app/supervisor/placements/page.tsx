@@ -24,9 +24,10 @@ import {
   PlusCircle,
   Power,
 } from "lucide-react";
-import UserEditModal from "@/components/UserEditModal";
+import EditUserModal from "@/components/EditUserModal";
 import EditInstitutionModal from "@/components/EditInstitutionModal";
 import ReassignTeachersModal from "@/components/ReassignTeachersModal";
+import LoadingScreen from "@/components/ui/LoadingScreen";
 
 export default function DistrictManagementPage() {
   const [activeTab, setActiveTab] = useState<
@@ -52,6 +53,7 @@ export default function DistrictManagementPage() {
   const [showReassignModal, setShowReassignModal] = useState(false);
   const [orphanedTeachers, setOrphanedTeachers] = useState<any[]>([]);
   const [instructorsList, setInstructorsList] = useState<any[]>([]); // לצורך בחירה במודאל
+  const [isTabLoading, setIsTabLoading] = useState(false);
 
   const dayTranslations: Record<string, string> = {
     SUNDAY: "א'",
@@ -124,6 +126,19 @@ export default function DistrictManagementPage() {
       .then((res) => res.json())
       .then((data) => setInstructorsList(data));
   }, []);
+
+  const switchTab = async (tab: "STAFF" | "ALL_USERS" | "INSTITUTIONS") => {
+    setIsTabLoading(true);
+    setActiveTab(tab);
+    setSearchTerm("");
+
+    if (tab === "ALL_USERS") {
+      await loadAllUsers();
+    }
+
+    // אם בעתיד יש עוד טאבים עם טעינה — כאן
+    setIsTabLoading(false);
+  };
 
   const filteredAndSortedUsers = allUsers
     .filter((u) => {
@@ -202,12 +217,7 @@ export default function DistrictManagementPage() {
 
   // 4. טיפול במצבי טעינה ושגיאה (UI)
   if (loading) {
-    return (
-      <div className="min-h-screen flex flex-col items-center justify-center font-bold gap-4">
-        <Loader2 className="animate-spin text-indigo-600" size={48} />
-        <p>טוען נתוני מחוז...</p>
-      </div>
-    );
+    return <LoadingScreen message="טוען נתוני מחוז" />;
   }
 
   if (error) {
@@ -277,11 +287,8 @@ export default function DistrictManagementPage() {
       {/* Tab Switcher */}
       <div className="flex gap-4 p-1.5 bg-slate-100 rounded-3xl w-full max-w-md">
         <button
-          onClick={() => {
-            setActiveTab("STAFF");
-            setSearchTerm(""); // <--  איפוס שורת חיפוש
-          }}
-          className={`flex-1 py-3 rounded-2xl font-black text-sm transition-all ${
+          onClick={() => switchTab("STAFF")}
+          className={`tab-buttons  ${
             activeTab === "STAFF"
               ? "bg-white text-indigo-600 shadow-sm"
               : "text-slate-500 hover:text-slate-700"
@@ -290,25 +297,18 @@ export default function DistrictManagementPage() {
           צוות הדרכה
         </button>
         <button
-          onClick={() => {
-            setActiveTab("ALL_USERS");
-            setSearchTerm(""); // <--  איפוס שורת חיפוש
-            loadAllUsers();
-          }}
-          className={`flex-1 py-3 rounded-2xl font-black text-sm transition-all ${
+          onClick={() => switchTab("ALL_USERS")}
+          className={`tab-buttons ${
             activeTab === "ALL_USERS"
               ? "bg-white text-indigo-600 shadow-sm"
-              : "text-slate-500"
+              : "text-slate-500 hover:text-slate-700"
           }`}
         >
           ניהול כח אדם
         </button>
         <button
-          onClick={() => {
-            setActiveTab("INSTITUTIONS");
-            setSearchTerm("");
-          }}
-          className={`flex-1 py-3 rounded-2xl font-black text-sm transition-all ${
+          onClick={() => switchTab("INSTITUTIONS")}
+          className={`tab-buttons  ${
             activeTab === "INSTITUTIONS"
               ? "bg-white text-indigo-600 shadow-sm"
               : "text-slate-500 hover:text-slate-700"
@@ -444,7 +444,13 @@ export default function DistrictManagementPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50">
-                  {filteredAndSortedUsers.length > 0 ? (
+                  {isTabLoading ? (
+                    <tr>
+                      <td colSpan={6} className="p-20 text-center">
+                        <LoadingScreen />
+                      </td>
+                    </tr>
+                  ) : filteredAndSortedUsers.length > 0 ? (
                     filteredAndSortedUsers.map((u) => (
                       <tr
                         key={u.id}
@@ -621,7 +627,7 @@ export default function DistrictManagementPage() {
         />
       )}
       {selectedUserForEdit && (
-        <UserEditModal
+        <EditUserModal
           isOpen={!!selectedUserForEdit}
           user={selectedUserForEdit}
           onClose={() => setSelectedUserForEdit(null)}

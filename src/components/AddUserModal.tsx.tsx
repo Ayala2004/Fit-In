@@ -20,6 +20,9 @@ import {
 import ValidatedField from "./ValidatedField";
 import { validations } from "@/utils/validations";
 import FormInput from "./FormInput";
+import LoadingScreen from "./ui/LoadingScreen";
+import CustomDropdown from "./ui/CustomDropdown";
+import { InputChange } from "@/types";
 
 type AddUserFormData = {
   firstName: string;
@@ -51,11 +54,15 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }: any) {
     instructorId: "",
   });
 
-  const handleInputChange = (
-    e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>
-  ) => {
-    const { name, value } = e.target;
-    setFormData((prev) => ({ ...prev, [name]: value }));
+  const handleInputChange = (e: InputChange) => {
+    if ("target" in e) {
+      // Event רגיל
+      const { name, value } = e.target;
+      setFormData((prev) => ({ ...prev, [name]: value }));
+    } else {
+      // { name, value } מה־CustomDropdown
+      setFormData((prev) => ({ ...prev, [e.name]: e.value }));
+    }
   };
 
   const toggleFreeDay = (day: string) => {
@@ -440,27 +447,22 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }: any) {
                 {/* מדריכה מלווה - רק אם לא מדריכה */}
                 {!isInstructor && (
                   <div className="space-y-2">
-                    <label className="text-xs font-bold text-slate-500 mr-2">
-                      מדריכה מלווה
-                    </label>
                     <div className="relative">
-                      <select
-                        name="instructorId"
-                        required
+                      <CustomDropdown
+                        label="מדריכה מלווה"
+                        placeholder="בחרי מדריכה..."
                         value={formData.instructorId}
-                        onChange={handleInputChange}
-                        className="w-full pr-10 pl-4 py-3 bg-indigo-50/50 border-none rounded-xl focus:ring-2 focus:ring-indigo-500 font-bold text-indigo-700 outline-none appearance-none"
-                      >
-                        <option value="">בחרי מדריכה...</option>
-                        {instructors.map((i) => (
-                          <option key={i.id} value={i.id}>
-                            {i.firstName} {i.lastName}
-                          </option>
-                        ))}
-                      </select>
-                      <GraduationCap
-                        className="absolute right-3 top-1/2 -translate-y-1/2 text-indigo-400"
-                        size={16}
+                        options={instructors.map((i) => ({
+                          id: i.id,
+                          label: `${i.firstName} ${i.lastName}`,
+                        }))}
+                        onChange={(val) =>
+                          handleInputChange({
+                            name: "instructorId",
+                            value: val,
+                          })
+                        }
+                        icon={GraduationCap}
                       />
                     </div>
                   </div>
@@ -476,7 +478,11 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }: any) {
               disabled={loading || !hasSelectedRole}
               className="flex-[2] py-4 bg-indigo-600 text-white rounded-2xl font-black shadow-lg shadow-indigo-100 hover:bg-indigo-700 transition-all disabled:bg-slate-200 disabled:shadow-none active:scale-95"
             >
-              {loading ? "יוצר משתמשת..." : "סיום ורישום משתמשת"}
+              {loading ? (
+               "יוצר משתמשת..."
+              ) : (
+                "סיום ורישום משתמשת"
+              )}
             </button>
             <button
               type="button"

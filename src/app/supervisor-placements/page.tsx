@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { callApi } from '@/lib/api';
 import { Trash2, CheckCircle, AlertTriangle, RefreshCw } from 'lucide-react';
 import styles from './placement-management.module.css';
+import LoadingScreen from '@/components/ui/LoadingScreen';
 export default function PlacementsManagement() {
   const [placements, setPlacements] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -47,7 +48,7 @@ export default function PlacementsManagement() {
     }
   };
 
-  if (loading) return <div className="p-10 text-center">טוען נתונים...</div>;
+  if (loading) return <LoadingScreen />;
 
 return (
     <div className={styles.container}>

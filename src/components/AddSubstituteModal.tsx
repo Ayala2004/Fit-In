@@ -3,6 +3,7 @@ import { useState, useEffect } from "react";
 import { X, UserCheck, Clock, Info, Calendar } from "lucide-react";
 import FormInput from "./FormInput";
 import { validations } from "@/utils/validations";
+import LoadingScreen from "./ui/LoadingScreen";
 
 export default function AddSubstituteModal({
   isOpen,
@@ -256,7 +257,7 @@ export default function AddSubstituteModal({
             disabled={loading}
             className="w-full py-5 bg-slate-900 hover:bg-emerald-700 text-white rounded-2xl font-black shadow-lg active:scale-95 transition disabled:bg-slate-300"
           >
-            {loading ? "שומר..." : "סיום ורישום"}
+            {loading ? "שומר..."  : "סיום ורישום"}
           </button>
         </form>
       </div>
