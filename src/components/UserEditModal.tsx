@@ -490,6 +490,8 @@ export default function UserEditModal({
                       // 3. סינון רשימת הגננות עבור היום הספציפי הזה
                       const availableRotationsForThisDay = rotations.filter(
                         (rt) => {
+                          // בדיקה האם הגננת בכלל עובדת ביום הזה (workDays)
+                          const worksThisDay = rt.workDays?.includes(day.id);
                           // האם הגננת תפוסה ביום הזה בגן *אחר*?
                           const isBusyElsewhere =
                             rt.fixedRotationsAsRotation?.some(
@@ -497,7 +499,9 @@ export default function UserEditModal({
                                 assignment.day === day.id &&
                                 assignment.managerId !== user.id
                             );
-                          return !isBusyElsewhere;
+
+                          // תנאי הסף: עובדת ביום הזה וגם לא תפוסה בגן אחר
+                          return worksThisDay && !isBusyElsewhere;
                         }
                       );
 

@@ -116,7 +116,7 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }: any) {
       const payload = {
         ...formData,
         roles: selectedRoles,
-       rotationData: rotationData,
+        rotationData: rotationData,
         workDays: [
           "SUNDAY",
           "MONDAY",
@@ -310,10 +310,15 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }: any) {
                   // מציגים רק גננות שאין להן שום שיבוץ (assignment) ביום הזה
                   const availableRotationsForThisDay = rotations.filter(
                     (rt) => {
+                      // בדיקה שהיום נמצא בימי העבודה שלה
+                      const worksThisDay = rt.workDays?.includes(dayId);
+
+                      // בדיקה שהיא לא תפוסה כבר בגן אחר קבוע
                       const isBusyThisDay = rt.fixedRotationsAsRotation?.some(
                         (assignment: any) => assignment.day === dayId
                       );
-                      return !isBusyThisDay;
+
+                      return worksThisDay && !isBusyThisDay;
                     }
                   );
 

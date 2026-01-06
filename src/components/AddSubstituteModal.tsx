@@ -201,47 +201,46 @@ export default function AddSubstituteModal({
           </div>
 
           {/*כרגע מוותרת על ימי חופשה לרוטציה */}
-          {role === "SUBSTITUTE" && (
-            <div className="space-y-4 animate-in slide-in-from-top-4">
-              <div className="flex items-center gap-2 text-slate-900 font-black text-xs uppercase border-b pb-2">
-                <Calendar size={14} /> הגדרת ימי עבודה
-              </div>
 
-              {Object.keys(schedule).map((day) => (
-                <div
-                  key={day}
-                  className={`flex items-center gap-4 p-4 rounded-2xl border ${
+          <div className="space-y-4 animate-in slide-in-from-top-4">
+            <div className="flex items-center gap-2 text-slate-900 font-black text-xs uppercase border-b pb-2">
+              <Calendar size={14} /> הגדרת ימי עבודה
+            </div>
+
+            {Object.keys(schedule).map((day) => (
+              <div
+                key={day}
+                className={`flex items-center gap-4 p-4 rounded-2xl border ${
+                  schedule[day].active
+                    ? "bg-white border-emerald-100"
+                    : "bg-slate-50 border-slate-100 opacity-60"
+                }`}
+              >
+                <button
+                  type="button"
+                  onClick={() =>
+                    setSchedule({
+                      ...schedule,
+                      [day]: {
+                        ...schedule[day],
+                        active: !schedule[day].active,
+                      },
+                    })
+                  }
+                  className={`w-24 py-2 rounded-lg text-[10px] font-black ${
                     schedule[day].active
-                      ? "bg-white border-emerald-100"
-                      : "bg-slate-50 border-slate-100 opacity-60"
+                      ? "bg-slate-900 text-white"
+                      : "bg-slate-200 text-slate-400"
                   }`}
                 >
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setSchedule({
-                        ...schedule,
-                        [day]: {
-                          ...schedule[day],
-                          active: !schedule[day].active,
-                        },
-                      })
-                    }
-                    className={`w-24 py-2 rounded-lg text-[10px] font-black ${
-                      schedule[day].active
-                        ? "bg-slate-900 text-white"
-                        : "bg-slate-200 text-slate-400"
-                    }`}
-                  >
-                    {day}
-                  </button>
-                  <span className="text-sm font-bold text-slate-600">
-                    {schedule[day].active ? "יום עבודה פעיל" : "יום חופש"}
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
+                  {day}
+                </button>
+                <span className="text-sm font-bold text-slate-600">
+                  {schedule[day].active ? "יום עבודה פעיל" : "יום חופש"}
+                </span>
+              </div>
+            ))}
+          </div>
 
           {role === "SUBSTITUTE" && (
             <div className="p-6 bg-amber-50 rounded-2xl border border-amber-100 flex gap-4">

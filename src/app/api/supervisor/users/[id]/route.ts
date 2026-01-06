@@ -75,31 +75,46 @@ export async function PATCH(
     }
     // אם היא נשארה פעילה אבל נשלחו נתוני רוטציה חדשים (הקוד הקיים שלך)
     else if (updatedUser.roles.includes("MANAGER") && rotationData) {
-      // מחיקה של כל הרוטציות הקודמות של המשתמשת הזו
-      await prisma.fixedRotation.deleteMany({
-        where: { managerId: id },
+      // 1. שליפת כל גננות הרוטציה שמופיעות בבקשה
+      const teacherIds = Object.values(rotationData).filter(
+        (id) => id && id !== "REMOVE" && id !== ""
+      ) as string[];
+
+      const rotationTeachers = await prisma.user.findMany({
+        where: { id: { in: teacherIds } },
+        select: { id: true, workDays: true, firstName: true },
       });
 
-      // יצירת הרוטציות החדשות
-      const rotationsToCreate = Object.entries(rotationData)
-       .filter(([_, teacherId]) => 
-            teacherId && 
-            teacherId !== "" && 
-            teacherId !== "REMOVE"
-        )
-        .map(([day, teacherId]) => ({
+      // 2. בניית מערך השיבוצים - רק בזיכרון (Memory) בינתיים
+      const rotationsToCreate = [];
+
+      for (const [day, teacherId] of Object.entries(rotationData)) {
+        if (!teacherId || teacherId === "REMOVE" || teacherId === "") continue;
+
+        const teacher = rotationTeachers.find((t) => t.id === teacherId);
+
+        if (teacher && !teacher.workDays.includes(day as any)) {
+          console.error(`Error: ${teacher.firstName} does not work on ${day}`);
+          continue;
+        }
+
+        rotationsToCreate.push({
           managerId: id,
           day: day as any,
           rotationTeacherId: teacherId as string,
-        }));
+        });
+      }
 
+      // א. מוחקים את כל הרוטציות הקודמות של הגננת הזו
+      await prisma.fixedRotation.deleteMany({ where: { managerId: id } });
+
+      // ב. יוצרים את כל החדשות בבת אחת (רק אם יש כאלו)
       if (rotationsToCreate.length > 0) {
         await prisma.fixedRotation.createMany({
           data: rotationsToCreate,
         });
       }
     }
-
     return NextResponse.json(updatedUser);
   } catch (error: any) {
     console.error("Prisma Update Error Details:", error);
