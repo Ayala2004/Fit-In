@@ -17,8 +17,7 @@ import {
 import FormInput from "./FormInput";
 import ReassignTeachersModal from "./ReassignTeachersModal";
 import CustomDropdown from "./ui/CustomDropdown";
-
-
+import ReassignRotationModal from "./ReassignRotationModal";
 
 export default function EditUserModal({
   user,
@@ -29,13 +28,12 @@ export default function EditUserModal({
   const [loading, setLoading] = useState(false);
   const [instructors, setInstructors] = useState<any[]>([]);
   const [rotations, setRotations] = useState<any[]>([]);
-  const [isRoleOpen, setIsRoleOpen] = useState(false);
   const [rotationData, setRotationData] = useState<Record<string, string>>({});
-  const [isInstructorOpen, setIsInstructorOpen] = useState(false);
-  const [openRotationDay, setOpenRotationDay] = useState<string | null>(null);
   const [showReassignModal, setShowReassignModal] = useState(false);
   const [orphanedTeachers, setOrphanedTeachers] = useState([]);
   const [lastDisabledId, setLastDisabledId] = useState<string | null>(null);
+  const [showRotationMigration, setShowRotationMigration] = useState(false);
+  const [brokenRotations, setBrokenRotations] = useState([]);
 
   const [formData, setFormData] = useState({
     firstName: user.firstName || "",
@@ -167,10 +165,11 @@ export default function EditUserModal({
       const data = await res.json();
 
       if (res.ok) {
-        if (data.needsReassignment) {
-          setOrphanedTeachers(data.orphanedManagers);
-          setLastDisabledId(user.id); // <-- שמירת ה-ID של המדריכה שהרגע הושבתה
-          setShowReassignModal(true);
+        if (data.needsRotationMigration) {
+          setBrokenRotations(data.brokenRotations);
+          setShowRotationMigration(true);
+        } else if (data.needsReassignment) {
+          // ... הלוגיקה של המדריכות ...
         } else {
           onUpdateSuccess();
           onClose();
@@ -531,6 +530,17 @@ export default function EditUserModal({
                 onUpdateSuccess();
                 onClose();
               }
+            }}
+          />
+        )}
+        {showRotationMigration && (
+          <ReassignRotationModal
+            isOpen={showRotationMigration}
+            brokenRotations={brokenRotations}
+            onComplete={() => {
+              setShowRotationMigration(false);
+              onUpdateSuccess();
+              onClose();
             }}
           />
         )}

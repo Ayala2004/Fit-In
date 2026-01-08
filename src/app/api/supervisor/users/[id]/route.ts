@@ -182,10 +182,41 @@ export async function PATCH(
       });
     }
 
+    const isRotationTeacher = updatedUser.roles.includes("ROTATION");
+    let brokenRotations: any[] = [];
+
+    if (isRotationTeacher) {
+      // 2. נמצא את כל השיבוצים הקבועים שבהם היא רשומה,
+      // אבל הם בימים שבהם היא כבר לא עובדת (או שהיא הושבתה לגמרי)
+      brokenRotations = await prisma.fixedRotation.findMany({
+        where: {
+          rotationTeacherId: id,
+          OR: [
+            { manager: { isWorking: false } }, // הגנה נוספת
+            { day: { notIn: updatedUser.workDays } }, // היום כבר לא בלו"ז שלה
+            { rotationTeacher: { isWorking: false } }, // היא הושבתה
+          ],
+        },
+        include: {
+          manager: { select: { id: true, firstName: true, lastName: true } },
+        },
+      });
+
+      // 3. מחיקת השיבוצים השבורים מה-DB (כי הם כבר לא חוקיים)
+      if (brokenRotations.length > 0) {
+        await prisma.fixedRotation.deleteMany({
+          where: { id: { in: brokenRotations.map((br) => br.id) } },
+        });
+      }
+    }
+
     return NextResponse.json({
       user: updatedUser,
       needsReassignment: orphanedManagers.length > 0,
       orphanedManagers: orphanedManagers,
+      // הנתון החדש:
+      needsRotationMigration: brokenRotations.length > 0,
+      brokenRotations: brokenRotations,
     });
   } catch (error: any) {
     console.error("Prisma Update Error Details:", error);
