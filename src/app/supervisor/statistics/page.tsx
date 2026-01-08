@@ -136,8 +136,8 @@ export default function StatisticsPage() {
 
           <CustomDropdown
             placeholder="-- כל המשתמשות --"
+            label=""
             value={selectedUserId || ""}
-            editable={true}
             options={users.map((u) => ({
               id: u.id,
               label: `${u.firstName} ${u.lastName} (${
