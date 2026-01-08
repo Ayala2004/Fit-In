@@ -33,6 +33,15 @@ export default function AddSubstituteModal({
     FRIDAY: { active: true, instId: "" },
   });
 
+  const dayTranslations: Record<string, string> = {
+    SUNDAY: "ראשון",
+    MONDAY: "שני",
+    TUESDAY: "שלישי",
+    WEDNESDAY: "רביעי",
+    THURSDAY: "חמישי",
+    FRIDAY: "שישי",
+  };
+
   useEffect(() => {
     if (isOpen) {
       fetch("/api/test?type=allInstitutions")
@@ -100,6 +109,14 @@ export default function AddSubstituteModal({
         password: "",
         dateOfBirth: "",
       });
+      setSchedule({
+        SUNDAY: { active: true, instId: "" },
+        MONDAY: { active: true, instId: "" },
+        TUESDAY: { active: true, instId: "" },
+        WEDNESDAY: { active: true, instId: "" },
+        THURSDAY: { active: true, instId: "" },
+        FRIDAY: { active: true, instId: "" },
+      });
     } catch (err: any) {
       alert(err.message || "שגיאה ברישום");
     } finally {
@@ -108,7 +125,7 @@ export default function AddSubstituteModal({
   };
 
   if (!isOpen) return null;
-
+  console.log("Schedule state:", schedule);
   return (
     <div
       className="fixed inset-0 z-[150] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4"
@@ -122,7 +139,27 @@ export default function AddSubstituteModal({
             רישום גננת מחליפה או רוטציה
           </p>
           <button
-            onClick={onClose}
+            onClick={() => {
+              setFormDataState({
+                firstName: "",
+                lastName: "",
+                idNumber: "",
+                phoneNumber: "",
+                email: "",
+                password: "",
+                dateOfBirth: "",
+              });
+              setSchedule({
+                SUNDAY: { active: true, instId: "" },
+                MONDAY: { active: true, instId: "" },
+                TUESDAY: { active: true, instId: "" },
+                WEDNESDAY: { active: true, instId: "" },
+                THURSDAY: { active: true, instId: "" },
+                FRIDAY: { active: true, instId: "" },
+              });
+              setRole("SUBSTITUTE");
+              onClose();
+            }}
             className="absolute top-6 left-6 p-2 hover:bg-white/10 rounded-full"
           >
             <X size={24} />
@@ -200,46 +237,62 @@ export default function AddSubstituteModal({
               className="md:col-span-2"
             />
           </div>
-
-
-          <div className="space-y-4 animate-in slide-in-from-top-4">
-            <div className="flex items-center gap-2 text-slate-900 font-black text-xs uppercase border-b pb-2">
-              <Calendar size={14} /> הגדרת ימי עבודה
+          <div className="space-y-4">
+            <div className="flex items-center gap-2 text-slate-900 font-black text-sm pb-3 border-b-2 border-slate-200">
+              <Calendar size={16} className="text-indigo-600" />
+              הגדרת ימי עבודה
             </div>
 
-            {Object.keys(schedule).map((day) => (
-              <div
-                key={day}
-                className={`flex items-center gap-4 p-4 rounded-2xl border ${
-                  schedule[day].active
-                    ? "bg-white border-emerald-100"
-                    : "bg-slate-50 border-slate-100 opacity-60"
-                }`}
-              >
-                <button
-                  type="button"
-                  onClick={() =>
-                    setSchedule({
-                      ...schedule,
-                      [day]: {
-                        ...schedule[day],
-                        active: !schedule[day].active,
-                      },
-                    })
-                  }
-                  className={`w-24 py-2 rounded-lg text-[10px] font-black ${
+            <div className="grid gap-3">
+              {Object.keys(schedule).map((day) => (
+                <div
+                  key={day}
+                  className={`flex items-center justify-between p-4 rounded-xl border-2 transition-all ${
                     schedule[day].active
-                      ? "bg-slate-900 text-white"
-                      : "bg-slate-200 text-slate-400"
+                      ? "bg-emerald-50 border-emerald-200"
+                      : "bg-slate-50 border-slate-200"
                   }`}
                 >
-                  {day}
-                </button>
-                <span className="text-sm font-bold text-slate-600">
-                  {schedule[day].active ? "יום עבודה פעיל" : "יום חופש"}
-                </span>
-              </div>
-            ))}
+                  {/* Right side - Day info */}
+                  <div className="flex items-center gap-3">
+                    <div
+                      className={`w-2 h-2 rounded-full ${
+                        schedule[day].active ? "bg-emerald-500" : "bg-slate-400"
+                      }`}
+                    />
+                    <div>
+                      <p className="text-sm font-black text-slate-900">
+                        {dayTranslations[day]}
+                      </p>
+                      <p className="text-xs font-bold text-slate-500">
+                        {schedule[day].active ? "יום עבודה פעיל" : "יום חופש"}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Left side - Toggle button */}
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setSchedule({
+                        ...schedule,
+                        [day]: {
+                          ...schedule[day],
+                          active: !schedule[day].active,
+                        },
+                      })
+                    }
+                    className={`px-4 py-2 rounded-lg text-xs font-black transition-all ${
+                      schedule[day].active
+                        ? "bg-slate-900 text-white hover:bg-slate-800"
+                        : "bg-emerald-600 text-white hover:bg-emerald-700"
+                    }`}
+                  >
+                    {schedule[day].active ? "סמן כיום חופש" : "סמן כיום עבודה"}
+                  </button>
+                </div>
+              ))}
+            </div>
           </div>
 
           {role === "SUBSTITUTE" && (
@@ -256,7 +309,7 @@ export default function AddSubstituteModal({
             disabled={loading}
             className="w-full py-5 bg-slate-900 hover:bg-emerald-700 text-white rounded-2xl font-black shadow-lg active:scale-95 transition disabled:bg-slate-300"
           >
-            {loading ? "שומר..."  : "סיום ורישום"}
+            {loading ? "שומר..." : "סיום ורישום"}
           </button>
         </form>
       </div>

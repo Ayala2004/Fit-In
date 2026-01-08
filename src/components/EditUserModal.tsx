@@ -6,18 +6,19 @@ import {
   Award,
   Shield,
   Save,
-  CheckCircle2,
   Clock,
   User as UserIcon,
   Power,
   UserCheck,
   UserMinus,
-  ChevronDown,
   PersonStanding,
   RefreshCcw,
 } from "lucide-react";
 import FormInput from "./FormInput";
 import ReassignTeachersModal from "./ReassignTeachersModal";
+import CustomDropdown from "./ui/CustomDropdown";
+
+
 
 export default function EditUserModal({
   user,
@@ -314,53 +315,23 @@ export default function EditUserModal({
               <h4 className="font-black text-slate-700 flex items-center gap-2 text-lg border-b pb-2">
                 <Shield size={20} className="text-indigo-500" /> הגדרת תפקיד
               </h4>
-              <div className="relative dropdown">
-                <button
-                  type="button"
-                  onClick={() => setIsRoleOpen(!isRoleOpen)}
-                  className="w-full p-3 rounded-xl border-2 flex items-center justify-between font-bold text-sm bg-white"
-                >
-                  <span>
-                    {ALLOWED_ROLE_COMBINATIONS.find(
-                      (c) => c.id === getCurrentComboId()
-                    )?.label || "בחרי תפקיד"}
-                  </span>
-                  <ChevronDown
-                    size={18}
-                    className={isRoleOpen ? "rotate-180" : ""}
-                  />
-                </button>
-                {isRoleOpen && (
-                  <div className="absolute z-20 mt-2 w-full bg-white border rounded-xl shadow-lg overflow-hidden">
-                    {ALLOWED_ROLE_COMBINATIONS.map((combo) => {
-                      const isSelected = getCurrentComboId() === combo.id;
-                      return (
-                        <button
-                          key={combo.id}
-                          type="button"
-                          onClick={() => {
-                            handleComboSelect(combo.roles);
-                            setIsRoleOpen(false);
-                          }}
-                          className={`w-full p-3 text-right flex items-center justify-between text-sm font-bold transition ${
-                            isSelected
-                              ? "bg-indigo-50 text-indigo-700"
-                              : "hover:bg-slate-50 text-slate-600"
-                          }`}
-                        >
-                          {combo.label}
-                          {isSelected && (
-                            <CheckCircle2
-                              size={16}
-                              className="text-indigo-600"
-                            />
-                          )}
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
+
+              <CustomDropdown
+                label=""
+                searchable={false}
+                placeholder="בחרי תפקיד"
+                value={getCurrentComboId() || ""}
+                options={ALLOWED_ROLE_COMBINATIONS.map((combo) => ({
+                  id: combo.id,
+                  label: combo.label,
+                }))}
+                onChange={(id) => {
+                  const combo = ALLOWED_ROLE_COMBINATIONS.find(
+                    (c) => c.id === id
+                  );
+                  if (combo) handleComboSelect(combo.roles);
+                }}
+              />
             </div>
 
             {/* ימי עבודה / חופש */}
@@ -368,7 +339,7 @@ export default function EditUserModal({
               <h4 className="font-black text-slate-700 flex items-center gap-2 text-lg border-b pb-2">
                 <Clock size={20} className="text-indigo-500" /> ימי עבודה / חופש
               </h4>
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-6 gap-2">
+              <div className="grid grid-cols-6 gap-2">
                 {weekDays.map((day) => {
                   const isActive = formData.workDays.includes(day.id);
                   return (
@@ -419,224 +390,102 @@ export default function EditUserModal({
           {/* שיוך מדריכה / רוטציה */}
           {formData.roles.includes("MANAGER") && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-start">
-              {/* עמודה ימנית: מדריכה מלווה */}
+              {/* מדריכה מלווה */}
               <div className="space-y-4">
                 <div className="space-y-1">
-                  <h4 className="font-black text-slate-700 flex items-center gap-2 text-lg border-b pb-2">
+                  <h4 className="font-black text-slate-700 flex items-center gap-2 text-lg ">
                     <PersonStanding size={20} className="text-indigo-500" />{" "}
                     מדריכה מלווה
                   </h4>
                   <p className="text-[11px] text-slate-400 font-medium mb-2">
                     המדריכה האחראית על גננת האם
                   </p>
+                  <div className="border-b"></div>
 
-                  <div className="relative dropdown">
-                    <button
-                      type="button"
-                      onClick={() => setIsInstructorOpen(!isInstructorOpen)}
-                      className="w-full p-3 rounded-xl border-2 flex items-center justify-between font-bold text-sm bg-white"
-                    >
-                      <span>
-                        {instructors.find((i) => i.id === formData.instructorId)
-                          ? `${
-                              instructors.find(
-                                (i) => i.id === formData.instructorId
-                              )?.firstName
-                            } ${
-                              instructors.find(
-                                (i) => i.id === formData.instructorId
-                              )?.lastName
-                            }`
-                          : "בחרי מדריכה..."}
-                      </span>
-                      <ChevronDown
-                        size={18}
-                        className={isInstructorOpen ? "rotate-180" : ""}
-                      />
-                    </button>
-
-                    {isInstructorOpen && (
-                      <div className="absolute z-20 mt-2 w-full bg-white border rounded-xl shadow-lg overflow-hidden max-h-64 overflow-y-auto">
-                        {instructors.map((ins) => {
-                          const isSelected = ins.id === formData.instructorId;
-
-                          return (
-                            <button
-                              key={ins.id}
-                              type="button"
-                              onClick={() => {
-                                handleInputChange({
-                                  target: {
-                                    name: "instructorId",
-                                    value: ins.id,
-                                  },
-                                });
-                                setIsInstructorOpen(false);
-                              }}
-                              className={`w-full p-3 text-right flex items-center justify-between text-sm font-bold transition ${
-                                isSelected
-                                  ? "bg-indigo-50 text-indigo-700"
-                                  : "hover:bg-slate-50 text-slate-600"
-                              }`}
-                            >
-                              {ins.firstName} {ins.lastName}
-                              {isSelected && (
-                                <CheckCircle2
-                                  size={16}
-                                  className="text-indigo-600"
-                                />
-                              )}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    )}
+                  <div className="flex flex-col-1 pt-3 justify-start items-center">
+                    <span></span>
+                    <CustomDropdown
+                      label=""
+                      value={formData.instructorId || ""}
+                      placeholder="בחרי מדריכה..."
+                      options={instructors.map((i) => ({
+                        id: i.id,
+                        label: `${i.firstName} ${i.lastName}`,
+                      }))}
+                      onChange={(id) =>
+                        handleInputChange({
+                          target: { name: "instructorId", value: id },
+                        })
+                      }
+                    />
                   </div>
                 </div>
               </div>
 
-              {/* עמודה שמאלית: הגדרת רוטציה קבועה */}
+              {/* רוטציה קבועה */}
               <div className="space-y-4">
                 <div className="space-y-1">
-                  <h4 className="font-black text-slate-700 flex items-center gap-2 text-lg border-b pb-2">
-                    <RefreshCcw size={20} className="text-indigo-500" />{" "}
+                  <h4 className="font-black text-slate-700 flex items-center gap-2 text-lg ">
+                    <RefreshCcw size={20} className="text-indigo-500" />
+                    הגדרת רוטציה קבועה
                   </h4>
                   <p className="text-[11px] text-slate-400 font-medium mb-2">
                     שיבוץ גננת קבועה לימים שבהם גננת האם ביום חופשי.
                   </p>
+                  <div className="border-b"></div>
 
-                  <div className="grid grid-cols-1 gap-3 mt-4">
-                    {weekDays.map((day) => {
-                      // 1. האם זה יום חופשי של גננת האם? (יום שלא נבחר ב-workDays)
-                      const isFreeDay = !formData.workDays.includes(day.id);
-                      if (!isFreeDay) return null;
+                  {weekDays.map((day) => {
+                    const isFreeDay = !formData.workDays.includes(day.id);
+                    if (!isFreeDay) return null;
 
-                      // 2. מציאת גננת הרוטציה הנוכחית שמשובצת ביום הזה ב-DB
-                      const existingRotation =
-                        user.fixedRotationsAsManager?.find(
-                          (r: any) => r.day === day.id
-                        );
+                    const existingRotation = user.fixedRotationsAsManager?.find(
+                      (r: any) => r.day === day.id
+                    );
 
-                      // 3. סינון רשימת הגננות עבור היום הספציפי הזה
-                      const availableRotationsForThisDay = rotations.filter(
-                        (rt) => {
-                          // בדיקה האם הגננת בכלל עובדת ביום הזה (workDays)
-                          const worksThisDay = rt.workDays?.includes(day.id);
-                          // האם הגננת תפוסה ביום הזה בגן *אחר*?
-                          const isBusyElsewhere =
-                            rt.fixedRotationsAsRotation?.some(
-                              (assignment: any) =>
-                                assignment.day === day.id &&
-                                assignment.managerId !== user.id
-                            );
+                    const availableRotationsForThisDay = rotations.filter(
+                      (rt) => {
+                        const worksThisDay = rt.workDays?.includes(day.id);
+                        const isBusyElsewhere =
+                          rt.fixedRotationsAsRotation?.some(
+                            (assignment: any) =>
+                              assignment.day === day.id &&
+                              assignment.managerId !== user.id
+                          );
+                        return worksThisDay && !isBusyElsewhere;
+                      }
+                    );
 
-                          // תנאי הסף: עובדת ביום הזה וגם לא תפוסה בגן אחר
-                          return worksThisDay && !isBusyElsewhere;
-                        }
-                      );
+                    return (
+                      <div
+                        key={day.id}
+                        className="flex flex-col-1 pt-3 gap-2 justify-start items-center"
+                      >
+                        <span className="text-xs font-black text-black uppercase">
+                          מחליפה ליום {day.label}
+                        </span>
 
-                      return (
-                        <div
-                          key={day.id}
-                          className="flex flex-col gap-2 p-3 bg-white rounded-2xl border border-indigo-50 shadow-sm"
-                        >
-                          <div className="flex justify-between items-center px-1">
-                            <span className="text-xs font-black text-indigo-600 uppercase">
-                              יום {day.label}
-                            </span>
-                            {existingRotation && !rotationData[day.id] && (
-                              <span className="text-[10px] bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full font-bold">
-                                שיבוץ פעיל
-                              </span>
-                            )}
-                          </div>
-
-                          <div className="relative dropdown">
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setOpenRotationDay(
-                                  openRotationDay === day.id ? null : day.id
-                                )
-                              }
-                              className={`w-full p-2.5 rounded-xl border-2 flex items-center justify-between text-xs font-bold transition ${
-                                rotationData[day.id] || existingRotation
-                                  ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                                  : "bg-slate-50 text-slate-700"
-                              }`}
-                            >
-                              <span>
-                                {getRotationLabel(
-                                  day.id,
-                                  availableRotationsForThisDay,
-                                  existingRotation
-                                )}
-                              </span>
-
-                              <ChevronDown
-                                size={14}
-                                className={
-                                  openRotationDay === day.id ? "rotate-180" : ""
-                                }
-                              />
-                            </button>
-
-                            {openRotationDay === day.id && (
-                              <div className="absolute z-20 mt-2 w-full bg-white border rounded-xl shadow-lg overflow-hidden max-h-64 overflow-y-auto">
-                                {availableRotationsForThisDay.map((rt) => {
-                                  const isSelected =
-                                    rotationData[day.id] === rt.id;
-
-                                  return (
-                                    <button
-                                      key={rt.id}
-                                      type="button"
-                                      onClick={() => {
-                                        setRotationData({
-                                          ...rotationData,
-                                          [day.id]: rt.id,
-                                        });
-                                        setOpenRotationDay(null);
-                                      }}
-                                      className={`w-full p-3 text-right flex items-center justify-between text-sm font-bold transition ${
-                                        isSelected
-                                          ? "bg-indigo-50 text-indigo-700"
-                                          : "hover:bg-slate-50 text-slate-600"
-                                      }`}
-                                    >
-                                      {rt.firstName} {rt.lastName}
-                                      {isSelected && (
-                                        <CheckCircle2
-                                          size={14}
-                                          className="text-indigo-600"
-                                        />
-                                      )}
-                                    </button>
-                                  );
-                                })}
-
-                                {existingRotation && (
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setRotationData({
-                                        ...rotationData,
-                                        [day.id]: "REMOVE",
-                                      });
-                                      setOpenRotationDay(null);
-                                    }}
-                                    className="w-full p-3 text-right flex items-center justify-between text-sm font-bold text-red-600 hover:bg-red-50 transition"
-                                  >
-                                    ❌ הסרת גננת רוטציה ביום זה
-                                  </button>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
+                        <CustomDropdown
+                          label=""
+                          value={rotationData[day.id] || ""}
+                          placeholder={
+                            existingRotation
+                              ? `${existingRotation.firstName} ${existingRotation.lastName}`
+                              : "-- בחרי גננת --"
+                          }
+                          options={availableRotationsForThisDay.map((rt) => ({
+                            id: rt.id,
+                            label: `${rt.firstName} ${rt.lastName}`,
+                          }))}
+                          onChange={(id) =>
+                            setRotationData({
+                              ...rotationData,
+                              [day.id]: id,
+                            })
+                          }
+                        />
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             </div>

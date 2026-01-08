@@ -5,6 +5,8 @@ import { format, subMonths, subYears, startOfMonth } from "date-fns";
 import { BarChart3, Calendar, User, Info } from "lucide-react";
 import EditUserModal from "@/components/EditUserModal";
 import LoadingScreen from "@/components/ui/LoadingScreen";
+import CustomDatePicker from "@/components/ui/CustomDatePicker";
+import CustomDropdown from "@/components/ui/CustomDropdown";
 
 export default function StatisticsPage() {
   const [stats, setStats] = useState<any>(null);
@@ -108,19 +110,20 @@ export default function StatisticsPage() {
           <label className="block text-sm font-black text-slate-700 flex items-center gap-2">
             <Calendar size={16} className="text-indigo-500" /> טווח תאריכים
           </label>
+
           <div className="flex gap-2 p-1 bg-slate-50 rounded-2xl">
-            <input
-              type="date"
+            <CustomDatePicker
+              label=""
               value={startDate}
-              onChange={(e) => handleDateChange("start", e.target.value)}
-              className="w-full bg-transparent border-none text-sm font-bold focus:ring-0 text-slate-600 cursor-pointer"
+              onChange={(val) => handleDateChange("start", val)}
             />
+
             <div className="w-px h-6 bg-slate-200 self-center" />
-            <input
-              type="date"
+
+            <CustomDatePicker
+              label=""
               value={endDate}
-              onChange={(e) => handleDateChange("end", e.target.value)}
-              className="w-full bg-transparent border-none text-sm font-bold focus:ring-0 text-slate-600 cursor-pointer"
+              onChange={(val) => handleDateChange("end", val)}
             />
           </div>
         </div>
@@ -130,19 +133,19 @@ export default function StatisticsPage() {
           <label className="block text-sm font-black text-slate-700 flex items-center gap-2">
             <User size={16} className="text-indigo-500" /> בחירת גננת / מחליפה
           </label>
-          <select
-            value={selectedUserId}
-            onChange={(e) => setSelectedUserId(e.target.value)}
-            className="w-full p-3 bg-slate-50 rounded-2xl border-none text-sm font-bold text-slate-600 focus:ring-2 focus:ring-indigo-500 outline-none transition-all cursor-pointer"
-          >
-            <option value="">-- כל המשתמשות --</option>
-            {users.map((u) => (
-              <option key={u.id} value={u.id}>
-                {u.firstName} {u.lastName} (
-                {u.roles.includes("MANAGER") ? "גננת אם" : "צוות מחליף"})
-              </option>
-            ))}
-          </select>
+
+          <CustomDropdown
+            placeholder="-- כל המשתמשות --"
+            value={selectedUserId || ""}
+            editable={true}
+            options={users.map((u) => ({
+              id: u.id,
+              label: `${u.firstName} ${u.lastName} (${
+                u.roles.includes("MANAGER") ? "גננת אם" : "צוות מחליף"
+              })`,
+            }))}
+            onChange={(id) => setSelectedUserId(id)}
+          />
         </div>
 
         {/* קיצורים */}
@@ -157,6 +160,7 @@ export default function StatisticsPage() {
           >
             בחודש האחרון
           </button>
+
           <button
             onClick={() => handleShortcut("year")}
             className={`flex-1 rounded-2xl text-sm font-bold transition-all duration-300 border-2 ${

@@ -1,7 +1,11 @@
 "use client";
-import { useState, useRef, useEffect } from "react";
-import { ChevronDown, CheckCircle2, Search } from "lucide-react";
-import { Option } from "@/types";
+import { useState, useRef, useEffect, useMemo } from "react";
+import { ChevronDown, CheckCircle2, X } from "lucide-react";
+
+interface Option {
+  id: string;
+  label: string;
+}
 
 interface Props {
   label: string;
@@ -11,6 +15,7 @@ interface Props {
   placeholder?: string;
   icon?: any;
   inline?: boolean;
+  searchable?: boolean;
 }
 
 export default function CustomDropdown({
@@ -21,29 +26,53 @@ export default function CustomDropdown({
   placeholder,
   icon: Icon,
   inline,
+  searchable = true,
 }: Props) {
   const [isOpen, setIsOpen] = useState(false);
-  const [searchTerm, setSearchTerm] = useState("");
+  const [displayValue, setDisplayValue] = useState("");
   const containerRef = useRef<HTMLDivElement>(null);
+
+  const selectedOption = useMemo(
+    () => options.find((opt) => opt.id === value),
+    [options, value]
+  );
+
+  useEffect(() => {
+    if (selectedOption) {
+      setDisplayValue(selectedOption.label);
+    } else {
+      setDisplayValue("");
+    }
+  }, [selectedOption]);
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       if (
         containerRef.current &&
         !containerRef.current.contains(e.target as Node)
-      )
+      ) {
         setIsOpen(false);
+        setDisplayValue(selectedOption ? selectedOption.label : "");
+      }
     };
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
+  }, [selectedOption]);
 
-  const selectedOption = options.find((opt) => opt.id === value);
+  // סינון אופציות: רק אם searchable הוא true מבצעים פילטר
+  const filteredOptions = useMemo(() => {
+    if (!searchable) return options;
+    return options.filter((opt) =>
+      opt.label.toLowerCase().includes(displayValue.toLowerCase())
+    );
+  }, [options, displayValue, searchable]);
 
-  // סינון לפי חיפוש
-  const filteredOptions = options.filter((opt) =>
-    opt.label.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const handleClear = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onChange("");
+    setDisplayValue("");
+    setIsOpen(false);
+  };
 
   return (
     <div
@@ -51,41 +80,78 @@ export default function CustomDropdown({
       className={inline ? "relative" : "space-y-2 relative"}
     >
       {!inline && label && (
-        <label className="text-xs font-bold text-slate-500 mr-2">{label}</label>
+        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mr-1">
+          {label}
+        </label>
       )}
 
-      <div className="relative">
+      <div className="relative group">
         <input
           type="text"
-          value={selectedOption ? selectedOption.label : searchTerm}
+          value={displayValue}
+          readOnly={!searchable}
           placeholder={placeholder || "בחרי אפשרות..."}
-          onFocus={() => setIsOpen(true)}
-          onChange={(e) => {
-            setSearchTerm(e.target.value);
-            setIsOpen(true);
+          // פוקוס יפתח את הרשימה אוטומטית רק אם המשתמש הולך להקליד (searchable)
+          onFocus={() => {
+            if (searchable) setIsOpen(true);
           }}
-          className="w-full pr-8 p-3.5 rounded-2xl border-2 border-indigo-200 text-sm font-bold focus:ring-2 focus:ring-indigo-500 outline-none"
+          // הקליק ינהל את הטוגל רק אם אנחנו במצב בחירה בלבד
+          onClick={() => {
+            if (!searchable) {
+              setIsOpen(!isOpen);
+            } else {
+              setIsOpen(true);
+            }
+          }}
+          onChange={(e) => {
+            if (searchable) {
+              setDisplayValue(e.target.value);
+              setIsOpen(true);
+            }
+          }}
+          className={`w-full p-3.5 bg-slate-50 border-2 rounded-2xl text-sm font-bold text-slate-700 outline-none transition-all pr-10 pl-10 
+    ${searchable ? "cursor-text" : "cursor-pointer"} 
+    ${
+      isOpen
+        ? "border-indigo-500 bg-white ring-4 ring-indigo-50"
+        : "border-slate-100"
+    }`}
         />
 
         {Icon && (
           <Icon
             size={18}
-            className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400"
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-indigo-500 pointer-events-none"
           />
         )}
 
-        <ChevronDown
-          size={18}
-          className={`absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 transition-transform ${
-            isOpen ? "rotate-180" : ""
-          }`}
-          onClick={() => setIsOpen(!isOpen)}
-        />
+        <div className="absolute left-3 top-1/2 -translate-y-1/2 flex items-center gap-1">
+          {/* מציגים X רק אם יש ערך ורק אם השדה ניתן לחיפוש (או אם רוצים לאפשר איפוס מהיר) */}
+          {displayValue && searchable && (
+            <button
+              type="button"
+              onClick={handleClear}
+              className="p-1 hover:bg-slate-200 rounded-full text-slate-400 transition-colors"
+            >
+              <X size={14} />
+            </button>
+          )}
+          <ChevronDown
+            size={18}
+            className={`text-slate-400 transition-transform cursor-pointer ${
+              isOpen ? "rotate-180" : ""
+            }`}
+            onClick={(e) => {
+              e.stopPropagation();
+              setIsOpen(!isOpen);
+            }}
+          />
+        </div>
       </div>
 
       {isOpen && (
-        <div className="absolute z-[100] mt-2 w-full bg-white border border-slate-100 rounded-2xl shadow-xl overflow-hidden max-h-60 animate-in fade-in slide-in-from-top-2">
-          <div className="p-2">
+        <div className="absolute z-[110] mt-2 right-0 w-full bg-white border border-slate-200 rounded-[2rem] shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200">
+          <div className="p-2 max-h-60 overflow-y-auto custom-calendar-scroll">
             {filteredOptions.length > 0 ? (
               filteredOptions.map((opt) => (
                 <button
@@ -93,24 +159,26 @@ export default function CustomDropdown({
                   type="button"
                   onClick={() => {
                     onChange(opt.id);
-                    setSearchTerm("");
+                    setDisplayValue(opt.label);
                     setIsOpen(false);
                   }}
-                  className={`w-full p-3 text-right flex items-center justify-between text-sm font-bold transition-colors ${
+                  className={`w-full p-4 rounded-xl text-right flex items-center justify-between text-sm font-bold transition-all mb-1 ${
                     value === opt.id
-                      ? "bg-indigo-50 text-indigo-700"
-                      : "hover:bg-slate-50 text-slate-600"
+                      ? "bg-indigo-600 text-white shadow-lg shadow-indigo-200"
+                      : "hover:bg-indigo-50 text-slate-600"
                   }`}
                 >
                   {opt.label}
                   {value === opt.id && (
-                    <CheckCircle2 size={16} className="text-indigo-600" />
+                    <CheckCircle2 size={16} className="text-white" />
                   )}
                 </button>
               ))
             ) : (
-              <div className="p-3 text-slate-400 text-sm italic">
-                לא נמצאו תוצאות
+              <div className="p-8 text-slate-400 text-sm text-center font-bold italic">
+                {searchable
+                  ? `לא נמצאו תוצאות ל-"${displayValue}"`
+                  : "אין אופציות זמינות"}
               </div>
             )}
           </div>
