@@ -201,7 +201,6 @@ export default function AddSubstituteModal({
             />
           </div>
 
-          {/*כרגע מוותרת על ימי חופשה לרוטציה */}
 
           <div className="space-y-4 animate-in slide-in-from-top-4">
             <div className="flex items-center gap-2 text-slate-900 font-black text-xs uppercase border-b pb-2">

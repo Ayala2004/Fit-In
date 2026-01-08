@@ -10,31 +10,50 @@ interface Props {
   onChange: (id: string) => void;
   placeholder?: string;
   icon?: any;
+  inline?: boolean;
 }
 
-export default function CustomDropdown({ label, options, value, onChange, placeholder, icon: Icon }: Props) {
+export default function CustomDropdown({
+  label,
+  options,
+  value,
+  onChange,
+  placeholder,
+  icon: Icon,
+  inline,
+}: Props) {
   const [isOpen, setIsOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) setIsOpen(false);
+      if (
+        containerRef.current &&
+        !containerRef.current.contains(e.target as Node)
+      )
+        setIsOpen(false);
     };
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  const selectedOption = options.find(opt => opt.id === value);
+  const selectedOption = options.find((opt) => opt.id === value);
 
   // סינון לפי חיפוש
-  const filteredOptions = options.filter(opt =>
+  const filteredOptions = options.filter((opt) =>
     opt.label.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   return (
-    <div className="space-y-2 relative" ref={containerRef}>
-      <label className="text-xs font-bold text-slate-500 mr-2">{label}</label>
+    <div
+      ref={containerRef}
+      className={inline ? "relative" : "space-y-2 relative"}
+    >
+      {!inline && label && (
+        <label className="text-xs font-bold text-slate-500 mr-2">{label}</label>
+      )}
+
       <div className="relative">
         <input
           type="text"
@@ -45,12 +64,21 @@ export default function CustomDropdown({ label, options, value, onChange, placeh
             setSearchTerm(e.target.value);
             setIsOpen(true);
           }}
-          className="w-full pr-8 p-3.5 rounded-2xl border-2 text-sm font-bold focus:ring-2 focus:ring-indigo-500 outline-none"
+          className="w-full pr-8 p-3.5 rounded-2xl border-2 border-indigo-200 text-sm font-bold focus:ring-2 focus:ring-indigo-500 outline-none"
         />
-        {Icon && <Icon size={18} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" />}
+
+        {Icon && (
+          <Icon
+            size={18}
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400"
+          />
+        )}
+
         <ChevronDown
           size={18}
-          className={`absolute left-3  top-1/2 -translate-y-1/2 text-slate-400 transition-transform ${isOpen ? "rotate-180" : ""}`}
+          className={`absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 transition-transform ${
+            isOpen ? "rotate-180" : ""
+          }`}
           onClick={() => setIsOpen(!isOpen)}
         />
       </div>
@@ -69,15 +97,21 @@ export default function CustomDropdown({ label, options, value, onChange, placeh
                     setIsOpen(false);
                   }}
                   className={`w-full p-3 text-right flex items-center justify-between text-sm font-bold transition-colors ${
-                    value === opt.id ? "bg-indigo-50 text-indigo-700" : "hover:bg-slate-50 text-slate-600"
+                    value === opt.id
+                      ? "bg-indigo-50 text-indigo-700"
+                      : "hover:bg-slate-50 text-slate-600"
                   }`}
                 >
                   {opt.label}
-                  {value === opt.id && <CheckCircle2 size={16} className="text-indigo-600" />}
+                  {value === opt.id && (
+                    <CheckCircle2 size={16} className="text-indigo-600" />
+                  )}
                 </button>
               ))
             ) : (
-              <div className="p-3 text-slate-400 text-sm italic">לא נמצאו תוצאות</div>
+              <div className="p-3 text-slate-400 text-sm italic">
+                לא נמצאו תוצאות
+              </div>
             )}
           </div>
         </div>

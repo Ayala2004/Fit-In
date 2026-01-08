@@ -207,7 +207,7 @@ export default function AddPlacementModal({
                 placeholder="בחרי גננת..."
                 value={selectedAbsentId}
                 onChange={(id) => setSelectedAbsentId(id)}
-                icon={activeTab === "MANAGER" ? User: RefreshCcw} // אפשר לשים אייקון אם רוצים     
+                icon={activeTab === "MANAGER" ? User : RefreshCcw} // אפשר לשים אייקון אם רוצים
                 options={
                   activeTab === "MANAGER"
                     ? data.managers.map((m) => ({
@@ -263,31 +263,20 @@ export default function AddPlacementModal({
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mr-1">
                 גננת מחליפה
               </label>
-              <div className="relative">
-                <select
-                  value={selectedSubId}
-                  onChange={(e) => setSelectedSubId(e.target.value)}
-                  className="w-full pr-10 pl-4 py-3 bg-slate-50 border-none rounded-xl focus:ring-2 focus:ring-slate-500 font-bold text-slate-700 appearance-none text-sm shadow-inner"
-                >
-                  <option value="">בחרי מחליפה...</option>
-                  {getSubOptions().map((s) => (
-                    <option
-                      key={s.id}
-                      value={s.id}
-                      className={
-                        s.isMainManager ? "text-indigo-700 font-black" : ""
-                      }
-                    >
-                      {s.firstName} {s.lastName}{" "}
-                      {s.isMainManager ? "(גננת אם)" : ""}
-                    </option>
-                  ))}
-                </select>
-                <UserPlus
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500"
-                  size={16}
-                />
-              </div>
+
+              <CustomDropdown
+                label="" // כי כבר יש label חיצוני
+                placeholder="בחרי מחליפה..."
+                value={selectedSubId}
+                onChange={(id) => setSelectedSubId(id)}
+                icon={UserPlus}
+                options={getSubOptions().map((s) => ({
+                  id: s.id,
+                  label: `${s.firstName} ${s.lastName} ${
+                    s.isMainManager ? "(גננת אם)" : ""
+                  }`,
+                }))}
+              />
             </div>
           )}
 

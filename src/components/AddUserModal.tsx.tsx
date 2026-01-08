@@ -166,7 +166,7 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }: any) {
 
   return (
     <div
-      className="fixed inset-0 z-[150] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 overflow-y-auto animate-in fade-in duration-300"
+      className="fixed inset-0 z-[150] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 overflow-y-scroll animate-in fade-in duration-300"
       dir="rtl"
     >
       <div className="bg-white w-full max-w-2xl rounded-[2.5rem] shadow-2xl my-auto overflow-hidden flex flex-col max-h-[95vh] border border-slate-100">
@@ -186,7 +186,22 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }: any) {
               </p>
             </div>
             <button
-              onClick={onClose}
+              onClick={() => {
+                setFormData({
+                  firstName: "",
+                  lastName: "",
+                  idNumber: "",
+                  phoneNumber: "",
+                  email: "",
+                  password: "",
+                  dateOfBirth: "",
+                  instructorId: "",
+                });
+                setSelectedRoles([]);
+                setFreeDays([]);
+                setRotationData({})
+                onClose();
+              }}
               className="p-2 hover:bg-white/10 rounded-full transition-colors"
             >
               <X size={24} />
@@ -332,34 +347,36 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }: any) {
                   return (
                     <div
                       key={dayId}
-                      className="flex items-center justify-between p-4 bg-indigo-50/30 rounded-2xl border border-indigo-100 shadow-sm transition-all hover:bg-indigo-50/50"
+                      className="flex items-center justify-between gap-4 p-4 bg-indigo-50/30 rounded-2xl border border-indigo-100 shadow-sm transition-all hover:bg-indigo-50/50"
                     >
-                      <div className="flex flex-col">
-                        <span className="text-[10px] font-black text-indigo-400 uppercase tracking-tighter">
+                      <div className="flex items-center gap-3 text-right">
+                        <span className="text-[10px] font-black text-indigo-400 uppercase tracking-tighter whitespace-nowrap">
                           יום {dayNames[dayId]}
                         </span>
-                        <span className="text-sm font-bold text-slate-700">
+
+                        <span className="text-sm font-bold text-slate-700 whitespace-nowrap">
                           גננת משלימה קבועה
                         </span>
                       </div>
 
-                      <select
-                        className="w-48 p-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold shadow-sm outline-none focus:ring-2 focus:ring-indigo-500 transition-all cursor-pointer"
-                        value={rotationData[dayId] || ""}
-                        onChange={(e) =>
-                          setRotationData({
-                            ...rotationData,
-                            [dayId]: e.target.value,
-                          })
-                        }
-                      >
-                        <option value="">-- בחרי גננת פנויה --</option>
-                        {availableRotationsForThisDay.map((rt) => (
-                          <option key={rt.id} value={rt.id}>
-                            {rt.firstName} {rt.lastName}
-                          </option>
-                        ))}
-                      </select>
+                      <div className="w-48 shrink-0">
+                        <CustomDropdown
+                          
+                          label=""
+                          value={rotationData[dayId] || ""}
+                          placeholder="חפשי גננת פנויה"
+                          options={availableRotationsForThisDay.map((rt) => ({
+                            id: rt.id,
+                            label: `${rt.firstName} ${rt.lastName}`,
+                          }))}
+                          onChange={(id) =>
+                            setRotationData({
+                              ...rotationData,
+                              [dayId]: id,
+                            })
+                          }
+                        />
+                      </div>
                     </div>
                   );
                 })}
@@ -420,28 +437,12 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }: any) {
                 />
 
                 {/* תאריך לידה */}
-                <div
-                  className={`space-y-2 ${
-                    isInstructor ? "col-span-2" : "col-span-1"
-                  }`}
-                >
-                  <label className="text-xs font-bold text-slate-500 mr-2">
-                    תאריך לידה
-                  </label>
-                  <div className="relative">
-                    <input
-                      name="dateOfBirth"
-                      type="date"
-                      required
-                      value={formData.dateOfBirth}
-                      onChange={handleInputChange}
-                      className="w-full pr-10 pl-4 py-3 bg-slate-50 border-none rounded-xl focus:ring-2 focus:ring-indigo-500 font-medium"
-                    />
-                    <Calendar
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400"
-                      size={16}
-                    />
-                  </div>
+                <div className={isInstructor ? "col-span-2" : "col-span-1"}>
+                  <FormInput
+                    kind="dateOfBirth"
+                    value={formData.dateOfBirth}
+                    onChange={handleInputChange}
+                  />
                 </div>
 
                 {/* מדריכה מלווה - רק אם לא מדריכה */}
@@ -478,11 +479,7 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }: any) {
               disabled={loading || !hasSelectedRole}
               className="flex-[2] py-4 bg-indigo-600 text-white rounded-2xl font-black shadow-lg shadow-indigo-100 hover:bg-indigo-700 transition-all disabled:bg-slate-200 disabled:shadow-none active:scale-95"
             >
-              {loading ? (
-               "יוצר משתמשת..."
-              ) : (
-                "סיום ורישום משתמשת"
-              )}
+              {loading ? "יוצר משתמשת..." : "סיום ורישום משתמשת"}
             </button>
             <button
               type="button"
