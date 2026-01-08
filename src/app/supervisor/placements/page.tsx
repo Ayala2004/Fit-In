@@ -170,8 +170,19 @@ export default function DistrictManagementPage() {
         fullName.includes(searchTerm.toLowerCase()) ||
         idNumber.includes(searchTerm);
 
-      const matchesRole =
-        selectedRoleFilter === "ALL" || roles.includes(selectedRoleFilter);
+      let matchesRole = false;
+
+      if (selectedRoleFilter === "ALL") {
+        matchesRole = true;
+      } else if (selectedRoleFilter === "NO_ROTATION") {
+        // גננת אם שאין לה אף רוטציה רשומה
+        matchesRole =
+          u.roles.includes("MANAGER") &&
+          (!u.fixedRotationsAsManager ||
+            u.fixedRotationsAsManager.length === 0);
+      } else {
+        matchesRole = u.roles.includes(selectedRoleFilter);
+      }
 
       return matchesSearch && matchesRole;
     })
@@ -202,6 +213,11 @@ export default function DistrictManagementPage() {
       color: "bg-purple-100 text-purple-600",
     },
     { id: "MANAGER", label: "גננות אם", color: "bg-pink-50 text-pink-400" },
+    {
+      id: "NO_ROTATION",
+      label: "גננות ללא רוטציה ⚠️",
+      color: "bg-red-50 text-red-600 border-red-200",
+    },
     {
       id: "ROTATION",
       label: "גננות רוטציה",
@@ -439,19 +455,37 @@ export default function DistrictManagementPage() {
             <span className="text-xs font-black text-slate-400 w-full mb-1 mr-2">
               סנני לפי תפקיד:
             </span>
-            {roleFilters.map((filter) => (
-              <button
-                key={filter.id}
-                onClick={() => setSelectedRoleFilter(filter.id)}
-                className={`px-4 py-2 rounded-xl text-xs font-black transition-all ${
-                  selectedRoleFilter === filter.id
-                    ? `${filter.color} ring-2 ring-offset-1 ring-current`
-                    : "bg-slate-50 text-slate-400 hover:bg-slate-100"
-                }`}
-              >
-                {filter.label}
-              </button>
-            ))}
+            {roleFilters.map((filter) => {
+              // חישוב כמות במידה וזה הפילטר של "ללא רוטציה"
+              const count =
+                filter.id === "NO_ROTATION"
+                  ? allUsers.filter(
+                      (u) =>
+                        u.roles.includes("MANAGER") &&
+                        (!u.fixedRotationsAsManager ||
+                          u.fixedRotationsAsManager.length === 0)
+                    ).length
+                  : null;
+
+              return (
+                <button
+                  key={filter.id}
+                  onClick={() => setSelectedRoleFilter(filter.id)}
+                  className={`px-4 py-2 rounded-xl text-xs font-black transition-all flex items-center gap-2 ${
+                    selectedRoleFilter === filter.id
+                      ? `${filter.color} ring-2 ring-offset-1 ring-current`
+                      : "bg-slate-50 text-slate-400 hover:bg-slate-100"
+                  }`}
+                >
+                  {filter.label}
+                  {count !== null && count > 0 && (
+                    <span className="bg-red-500 text-white px-1.5 py-0.5 rounded-full text-[10px]">
+                      {count}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
           </div>
 
           {/* הטבלה */}
