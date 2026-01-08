@@ -32,7 +32,7 @@ import LoadingScreen from "@/components/ui/LoadingScreen";
 export default function DistrictManagementPage() {
   const [activeTab, setActiveTab] = useState<
     "STAFF" | "INSTITUTIONS" | "ALL_USERS"
-  >("STAFF");
+  >("ALL_USERS");
   const [allUsers, setAllUsers] = useState<any[]>([]);
   const [staffData, setStaffData] = useState<any[]>([]);
   const [institutions, setInstitutions] = useState<any[]>([]);
@@ -63,6 +63,14 @@ export default function DistrictManagementPage() {
     THURSDAY: "ה'",
     FRIDAY: "ו'",
   };
+  const allWeekDays = [
+    "SUNDAY",
+    "MONDAY",
+    "TUESDAY",
+    "WEDNESDAY",
+    "THURSDAY",
+    "FRIDAY",
+  ];
   // 2. פונקציות טעינה
   const loadData = async () => {
     setLoading(true);
@@ -102,7 +110,16 @@ export default function DistrictManagementPage() {
 
   // טעינה ראשונית
   useEffect(() => {
-    loadData();
+    const initFetch = async () => {
+      await loadData(); // טוען מוסדות ומדריכות
+
+      // אם הטאב הנוכחי הוא ALL_USERS, נטען גם את כל המשתמשים
+      if (activeTab === "ALL_USERS") {
+        await loadAllUsers();
+      }
+    };
+
+    initFetch();
   }, []);
 
   useEffect(() => {
@@ -142,12 +159,20 @@ export default function DistrictManagementPage() {
 
   const filteredAndSortedUsers = allUsers
     .filter((u) => {
-      const fullName = `${u.firstName} ${u.lastName}`.toLowerCase();
+      // הגנה: וודאי שהשדות קיימים לפני ביצוע toLowerCase
+      const firstName = u.firstName || "";
+      const lastName = u.lastName || "";
+      const idNumber = u.idNumber || "";
+      const roles = u.roles || [];
+
+      const fullName = `${firstName} ${lastName}`.toLowerCase();
       const matchesSearch =
         fullName.includes(searchTerm.toLowerCase()) ||
-        u.idNumber.includes(searchTerm);
+        idNumber.includes(searchTerm);
+
       const matchesRole =
-        selectedRoleFilter === "ALL" || u.roles.includes(selectedRoleFilter);
+        selectedRoleFilter === "ALL" || roles.includes(selectedRoleFilter);
+
       return matchesSearch && matchesRole;
     })
     .sort((a, b) => {
@@ -287,16 +312,6 @@ export default function DistrictManagementPage() {
       {/* Tab Switcher */}
       <div className="flex gap-4 p-1.5 bg-slate-100 rounded-3xl w-full max-w-md">
         <button
-          onClick={() => switchTab("STAFF")}
-          className={`tab-buttons  ${
-            activeTab === "STAFF"
-              ? "bg-white text-indigo-600 shadow-sm"
-              : "text-slate-500 hover:text-slate-700"
-          }`}
-        >
-          צוות הדרכה
-        </button>
-        <button
           onClick={() => switchTab("ALL_USERS")}
           className={`tab-buttons ${
             activeTab === "ALL_USERS"
@@ -315,6 +330,16 @@ export default function DistrictManagementPage() {
           }`}
         >
           מוסדות
+        </button>
+        <button
+          onClick={() => switchTab("STAFF")}
+          className={`tab-buttons  ${
+            activeTab === "STAFF"
+              ? "bg-white text-indigo-600 shadow-sm"
+              : "text-slate-500 hover:text-slate-700"
+          }`}
+        >
+          צוות הדרכה
         </button>
       </div>
 
@@ -439,6 +464,9 @@ export default function DistrictManagementPage() {
                     <th className="p-5">תפקיד</th>
                     <th className="p-5">ת.ז</th>
                     <th className="p-5">טלפון</th>
+                    <th className="p-5">ימי חופש</th>
+                    <th className="p-5">מדריכה</th>
+                    <th className="p-5">גננת רוטציה</th>
                     <th className="p-5">סטטוס</th>
                     <th className="p-5 text-center">פעולות</th>
                   </tr>
@@ -451,77 +479,157 @@ export default function DistrictManagementPage() {
                       </td>
                     </tr>
                   ) : filteredAndSortedUsers.length > 0 ? (
-                    filteredAndSortedUsers.map((u) => (
-                      <tr
-                        key={u.id}
-                        className="hover:bg-slate-50/50 transition-colors group"
-                      >
-                        <td className="p-5 font-bold text-slate-700">
-                          {highlightText(
-                            `${u.firstName} ${u.lastName}`,
-                            searchTerm
-                          )}
-                        </td>
-                        <td className="p-5">
-                          <div className="flex flex-wrap gap-1">
-                            {u.roles.map((r: any) => (
-                              <span
-                                key={r}
-                                className={`text-[10px] px-2 py-0.5 rounded-md font-black ${
-                                  r === "MANAGER"
-                                    ? "bg-pink-50 text-pink-400"
-                                    : r === "INSTRUCTOR"
-                                    ? "bg-purple-100 text-purple-600"
-                                    : r === "ROTATION"
-                                    ? "bg-emerald-50 text-emerald-600"
-                                    : "bg-sky-100 text-sky-600"
-                                }`}
-                              >
-                                {r === "MANAGER"
-                                  ? "גננת אם"
-                                  : r === "SUBSTITUTE"
-                                  ? "מחליפה"
-                                  : r === "INSTRUCTOR"
-                                  ? "מדריכה"
-                                  : "רוטציה"}
-                              </span>
-                            ))}
-                          </div>
-                        </td>
-                        <td className="p-5 text-sm font-mono text-slate-500">
-                          {u.idNumber}
-                        </td>
-                        <td
-                          className="p-5 text-sm text-slate-600 font-medium"
-                          dir="ltr"
+                    filteredAndSortedUsers.map((u) => {
+                      const userWorkDays = u.workDays || [];
+                      const freeDays = allWeekDays
+                        .filter((d) => !userWorkDays.includes(d))
+                        .map((d) => dayTranslations[d]);
+                      return (
+                        <tr
+                          key={u.id}
+                          className="hover:bg-slate-50/50 transition-colors group"
                         >
-                          {u.phoneNumber}
-                        </td>
-                        <td className="p-5">
-                          <div className="flex items-center gap-2">
-                            <span
-                              className={`w-2 h-2 rounded-full ${
-                                u.isWorking
-                                  ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]"
-                                  : "bg-red-500"
-                              }`}
-                            />
-                            <span className="text-[10px] font-bold text-slate-400">
-                              {u.isWorking ? "פעילה" : "לא פעילה"}
-                            </span>
-                          </div>
-                        </td>
-                        <td className="p-5 text-center">
-                          <button
-                            onClick={() => setSelectedUserForEdit(u)}
-                            className="p-2 bg-indigo-50 text-slate-600 rounded-lg hover:bg-indigo-600 hover:text-white transition-all shadow-sm"
-                            title="עריכת פרטים"
+                          <td className="p-5 font-bold text-slate-700">
+                            {highlightText(
+                              `${u.firstName} ${u.lastName}`,
+                              searchTerm
+                            )}
+                          </td>
+                          <td className="p-5">
+                            <div className="flex flex-wrap gap-1">
+                              {u.roles.map((r: any) => (
+                                <span
+                                  key={r}
+                                  className={`text-[10px] px-2 py-0.5 rounded-md font-black ${
+                                    r === "MANAGER"
+                                      ? "bg-pink-50 text-pink-400"
+                                      : r === "INSTRUCTOR"
+                                      ? "bg-purple-100 text-purple-600"
+                                      : r === "ROTATION"
+                                      ? "bg-emerald-50 text-emerald-600"
+                                      : "bg-sky-100 text-sky-600"
+                                  }`}
+                                >
+                                  {r === "MANAGER"
+                                    ? "גננת אם"
+                                    : r === "SUBSTITUTE"
+                                    ? "מחליפה"
+                                    : r === "INSTRUCTOR"
+                                    ? "מדריכה"
+                                    : "רוטציה"}
+                                </span>
+                              ))}
+                            </div>
+                          </td>
+                          <td className="p-5 text-sm font-mono text-slate-500">
+                            {u.idNumber}
+                          </td>
+                          <td
+                            className="p-5 text-sm text-slate-600 font-medium"
+                            dir="ltr"
                           >
-                            <Edit3 size={14} />
-                          </button>
-                        </td>
-                      </tr>
-                    ))
+                            {u.phoneNumber}
+                          </td>
+                          <td className="p-5">
+                            <div className="flex gap-1">
+                              {freeDays.length > 0 ? (
+                                freeDays.map((d, i) => (
+                                  <span
+                                    key={i}
+                                    className="w-6 h-6 flex items-center justify-center bg-slate-100 text-slate-600 rounded-md text-[10px] font-black border border-slate-200"
+                                  >
+                                    {d}
+                                  </span>
+                                ))
+                              ) : (
+                                <span className="text-[10px] text-slate-300 font-bold italic">
+                                  ללא
+                                </span>
+                              )}
+                            </div>
+                          </td>
+
+                          {/* עמודה חדשה: מדריכה מלווה (רק לגננות אם) */}
+                          <td className="p-5 text-sm">
+                            {u.roles.includes("MANAGER") ? (
+                              u.instructor ? (
+                                <span className="text-slate-700 font-medium">
+                                  {u.instructor.firstName}{" "}
+                                  {u.instructor.lastName}
+                                </span>
+                              ) : (
+                                <span className="text-amber-500 font-bold text-xs italic">
+                                  לא שויכה
+                                </span>
+                              )
+                            ) : (
+                              <span className="text-slate-300">-</span>
+                            )}
+                          </td>
+
+                          <td className="p-5 text-sm">
+                            {u.roles.includes("MANAGER") ? (
+                              u.fixedRotationsAsManager &&
+                              u.fixedRotationsAsManager.length > 0 ? (
+                                <div className="flex flex-col gap-1">
+                                  {/* מקבצים את שמות גננות הרוטציה (אם יש כמה בימים שונים) */}
+                                  {Array.from(
+                                    new Set<string>(
+                                      u.fixedRotationsAsManager
+                                        .map((r: any) =>
+                                          `${
+                                            r.rotationTeacher?.firstName ?? ""
+                                          } ${
+                                            r.rotationTeacher?.lastName ?? ""
+                                          }`.trim()
+                                        )
+                                        .filter(Boolean)
+                                    )
+                                  ).map((name, idx) => (
+                                    <span
+                                      key={idx}
+                                      className="text-indigo-600 font-bold"
+                                    >
+                                      {name}
+                                    </span>
+                                  ))}
+                                </div>
+                              ) : (
+                                <span className="text-red-400 font-bold italic">
+                                  אין רוטציה
+                                </span>
+                              )
+                            ) : (
+                              <span className="text-slate-300">-</span> // אם זו לא גננת אם
+                            )}
+                          </td>
+
+                          <td className="p-5">
+                            <div className="flex items-center gap-2">
+                              <span
+                                className={`w-2 h-2 rounded-full ${
+                                  u.isWorking
+                                    ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]"
+                                    : "bg-red-500"
+                                }`}
+                              />
+                              <span className="text-[10px] font-bold text-slate-400">
+                                {u.isWorking ? "פעילה" : "לא פעילה"}
+                              </span>
+                            </div>
+                          </td>
+                          <td className="p-5 text-center">
+                            <button
+                              onClick={() => setSelectedUserForEdit(u)}
+                              className="p-2 bg-indigo-50 text-slate-600 rounded-lg hover:bg-indigo-600 hover:text-white transition-all shadow-sm"
+                              title="עריכת פרטים"
+                            >
+                              <Edit3 size={14} />
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })
                   ) : (
                     <tr>
                       <td

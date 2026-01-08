@@ -267,7 +267,7 @@ export default function AddInstitutionModal({
               className="flex-[2] py-4 bg-indigo-600 text-white rounded-2xl font-black shadow-lg shadow-indigo-100 hover:bg-indigo-700 transition-all disabled:bg-slate-200 disabled:shadow-none active:scale-95 flex items-center justify-center gap-2"
             >
               {loading ? (
-                <LoadingScreen message="מקים גן..." />
+                "מקים גן..." 
                 
               ) : (
                 <>

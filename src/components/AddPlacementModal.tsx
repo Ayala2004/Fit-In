@@ -44,8 +44,23 @@ export default function AddPlacementModal({
   useEffect(() => {
     if (isOpen && date) {
       fetch(`/api/supervisor/managers?date=${date.toISOString()}`)
-        .then((res) => res.json())
-        .then(setData);
+        .then((res) => {
+          if (!res.ok) throw new Error("שגיאה בטעינת נתונים");
+          return res.json();
+        })
+        .then((fetchedData) => {
+          // וודאי שהנתונים שחזרו באמת מכילים את המערכים הדרושים
+          setData({
+            managers: fetchedData.managers || [],
+            substitutes: fetchedData.substitutes || [],
+            rotations: fetchedData.rotations || [],
+          });
+        })
+        .catch((err) => {
+          console.error(err);
+          // במקרה שגיאה - נשאר עם מערכים ריקים ולא ניתן ל-data להיות undefined
+          setData({ managers: [], substitutes: [], rotations: [] });
+        });
     }
   }, [isOpen, date]);
 
@@ -139,7 +154,7 @@ export default function AddPlacementModal({
 
   return (
     <div
-      className="fixed inset-0 z-[110] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4"
+      className="fixed inset-0 z-[110] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 "
       dir="rtl"
     >
       <div className="bg-white w-full max-w-md rounded-[2.5rem] shadow-2xl overflow-hidden border border-slate-100 animate-in fade-in zoom-in-95 duration-200">
@@ -210,13 +225,13 @@ export default function AddPlacementModal({
                 icon={activeTab === "MANAGER" ? User : RefreshCcw} // אפשר לשים אייקון אם רוצים
                 options={
                   activeTab === "MANAGER"
-                    ? data.managers.map((m) => ({
+                    ? (data?.managers || []).map((m) => ({
                         id: m.id,
                         label: `${m.firstName} ${m.lastName} (${
                           m.mainManagedInstitutions?.[0]?.name || ""
                         })`,
                       }))
-                    : data.rotations.map((r) => ({
+                    : (data?.rotations || []).map((r) => ({
                         id: r.rotationTeacher.id,
                         label: `${r.rotationTeacher.firstName} ${
                           r.rotationTeacher.lastName
@@ -270,7 +285,7 @@ export default function AddPlacementModal({
                 value={selectedSubId}
                 onChange={(id) => setSelectedSubId(id)}
                 icon={UserPlus}
-                options={getSubOptions().map((s) => ({
+                options={(getSubOptions() || []).map((s) => ({
                   id: s.id,
                   label: `${s.firstName} ${s.lastName} ${
                     s.isMainManager ? "(גננת אם)" : ""

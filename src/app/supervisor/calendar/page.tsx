@@ -22,7 +22,6 @@ import {
   Search,
 } from "lucide-react";
 import AddPlacementModal from "@/components/AddPlacementModal";
-import LoadingScreen from "@/components/ui/LoadingScreen";
 
 export default function SupervisorCalendar() {
   const [currentDate, setCurrentDate] = useState(new Date());
@@ -178,8 +177,55 @@ export default function SupervisorCalendar() {
   const paddingDays = Array.from({ length: startWeekDay }, () => null);
   const days = [...paddingDays, ...realDays];
 
+  // src/app/supervisor/calendar/page.tsx
+
+ const getPlacementColor = (p: any) => {
+  if (p.status === "OPEN") return "bg-amber-50 border-amber-200 text-amber-700";
+  if (p.status === "CANCELLED") return "bg-red-50 border-red-200 text-red-700";
+
+  const subId = p.substituteId ? String(p.substituteId) : null;
+  const mainTeacherRoles = p.mainTeacher?.roles || [];
+  const instManagerId = p.institution?.mainManagerId ? String(p.institution.mainManagerId) : null;
+
+  // פתרון בטוח ליום בשבוע - תמיד יחזיר אנגלית באותיות גדולות (SUNDAY, MONDAY...)
+  const daysEnum = ["SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"];
+  const dayOfWeek = daysEnum[new Date(p.date).getDay()];
+
+  // מקרה 1+2: גננת רוטציה חסרה (הנעדרת היא בסטטוס ROTATION)
+  if (mainTeacherRoles.includes("ROTATION")) {
+    if (subId === instManagerId) {
+      return "bg-indigo-200 border-indigo-400 text-indigo-900 shadow-sm"; // אם מחליפה רוטציה
+    }
+    return "bg-purple-200 border-purple-400 text-purple-900 shadow-sm"; // מחליפה אחרת לרוטציה
+  }
+
+  // מקרה 3+4: גננת אם חסרה (הנעדרת היא בסטטוס MANAGER)
+  if (mainTeacherRoles.includes("MANAGER")) {
+    // שליפת רשימת הרוטציות הקבועות של מנהלת הגן (גננת האם)
+    const fixedRotations = p.institution?.mainManager?.fixedRotationsAsManager || [];
+    
+    // בדיקה: האם המחליפה שהגיעה היא הרוטציה הקבועה ליום הספציפי הזה?
+    const isHerFixedRotation = fixedRotations.some((r: any) => {
+      return String(r.rotationTeacherId) === subId;
+    });
+
+    if (isHerFixedRotation) {
+      return "bg-slate-300 border-slate-400 text-slate-900 shadow-sm"; // רוטציה קבועה מחליפה אם
+    }
+    
+    // מקרה 4: גננת אם הוחלפה ע"י מישהי אחרת (לבן)
+    return "bg-white border-slate-200 text-slate-700";
+  }
+
+  return "bg-white border-slate-100 text-slate-700";
+};
+
   if (!user && loading) {
-    return <LoadingScreen />;
+    return (
+      <div className="flex h-screen items-center justify-center bg-slate-50">
+        <Loader2 className="animate-spin text-indigo-600" size={48} />
+      </div>
+    );
   }
 
   return (
@@ -220,6 +266,26 @@ export default function SupervisorCalendar() {
           </div>
         </div>
 
+        {/* Legend / מפת צבעים */}
+        <div className="bg-white p-4 rounded-2xl mb-6 shadow-sm border border-slate-100 flex flex-wrap gap-4 text-xs font-bold justify-center md:justify-start">
+          <div className="flex items-center gap-2">
+            <div className="w-4 h-4 bg-indigo-200 border border-indigo-400 rounded"></div>
+            <span>אם מחליפה רוטציה</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-4 h-4 bg-purple-200 border border-purple-400 rounded"></div>
+            <span>מחליפה לרוטציה</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-4 h-4 bg-slate-200 border border-slate-400 rounded"></div>
+            <span>רוטציה קבועה מחליפה אם</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-4 h-4 bg-white border border-slate-200 rounded"></div>
+            <span>מחליפה חיצונית לאם</span>
+          </div>
+        </div>
+
         {/* Calendar Grid */}
         <div className="bg-white rounded-[2.5rem] shadow-xl border border-slate-200 overflow-hidden">
           <div className="grid grid-cols-7 bg-slate-50/50 border-b border-slate-200">
@@ -257,7 +323,7 @@ export default function SupervisorCalendar() {
               return (
                 <div
                   key={day.toString()}
-                  className={`min-h-[150px] border-l border-b border-slate-100 p-3 flex flex-col transition-all ${
+                  className={`min-h-37.5 border-l border-b border-slate-100 p-5 flex flex-col transition-all ${
                     isSaturday ? "bg-slate-50/50" : "hover:bg-indigo-50/5"
                   }`}
                 >
@@ -292,67 +358,54 @@ export default function SupervisorCalendar() {
                   ) : (
                     <div className="flex-1 space-y-2 overflow-y-auto overflow-x-hidden custom-calendar-scroll">
                       {" "}
-                      <div className="flex-1 space-y-2 overflow-y-auto overflow-x-hidden custom-calendar-scroll">
-                        {dayPlacements.map((p: any) => {
-                          // בדיקה האם הגננת שחסרה (mainTeacher) היא גננת רוטציה
-                          const isRotationAbsent =
-                            p.mainTeacher?.roles?.includes("ROTATION");
+                      {dayPlacements.map((p: any) => {
+                        const colorClass = getPlacementColor(p); // חישוב הצבע
 
-                          return (
-                            <div
-                              key={p.id}
-                              className={`group relative p-2 rounded-xl border transition-all cursor-pointer shadow-sm hover:shadow-md ${
-                                isRotationAbsent
-                                  ? "bg-blue-50 border-blue-200 hover:border-blue-400" // כחול בהיר לרוטציה
-                                  : "bg-white border-slate-100 hover:border-indigo-300" // לבן לגננת אם
-                              }`}
-                              onClick={() => setEditingPlacement(p)}
-                            >
-                              <div className="text-[14px] font-bold text-slate-700 leading-tight">
-                                {p.mainTeacher?.firstName}{" "}
-                                {p.mainTeacher?.lastName}
-                              </div>
-
-                              <div
-                                className={`text-[12px] mt-1 flex items-center gap-1.5 ${
-                                  p.status === "OPEN"
-                                    ? "text-amber-600 font-bold"
-                                    : p.status === "CANCELLED"
-                                    ? "text-red-500 font-bold"
-                                    : "text-emerald-600 font-bold"
-                                }`}
-                              >
-                                <div
-                                  className={`w-1.5 h-1.5 rounded-full ${
-                                    p.status === "OPEN"
-                                      ? "bg-amber-500 animate-pulse"
-                                      : p.status === "CANCELLED"
-                                      ? "bg-red-500"
-                                      : "bg-emerald-500"
-                                  }`}
-                                />
-                                {p.status === "OPEN"
-                                  ? "ממתין"
-                                  : p.status === "CANCELLED"
-                                  ? "סגור"
-                                  : p.substitute
-                                  ? `${p.substitute.firstName} ${p.substitute.lastName[0]}.`
-                                  : "משובץ"}
-                              </div>
-
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleDelete(p.id);
-                                }}
-                                className="absolute -top-1.5 -left-1.5 opacity-0 group-hover:opacity-100 bg-white text-red-500 p-1 rounded-full shadow-md border border-red-50 hover:bg-red-500 hover:text-white transition-all"
-                              >
-                                <X size={10} />
-                              </button>
+                        return (
+                          <div
+                            key={p.id}
+                            // התיקון כאן: הסרנו את bg-white ו-border-slate-100 הקבועים והשתמשנו ב-colorClass
+                            className={`group relative p-2 rounded-xl border shadow-sm hover:shadow-md transition-all cursor-pointer ${colorClass}`}
+                            onClick={() => setEditingPlacement(p)}
+                          >
+                            <div className="text-[14px] font-bold leading-tight">
+                              {p.mainTeacher?.firstName}{" "}
+                              {p.mainTeacher?.lastName}
                             </div>
-                          );
-                        })}
-                      </div>
+
+                            <div
+                              className={`text-[12px] mt-1 flex items-center gap-1.5 font-bold`}
+                            >
+                              <div
+                                className={`w-1.5 h-1.5 rounded-full ${
+                                  p.status === "OPEN"
+                                    ? "bg-amber-500 animate-pulse"
+                                    : p.status === "CANCELLED"
+                                    ? "bg-red-500"
+                                    : "bg-emerald-500"
+                                }`}
+                              />
+                              {p.status === "OPEN"
+                                ? "ממתין"
+                                : p.status === "CANCELLED"
+                                ? "סגור"
+                                : p.substitute
+                                ? `${p.substitute.firstName} ${p.substitute.lastName[0]}.`
+                                : "משובץ"}
+                            </div>
+
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDelete(p.id);
+                              }}
+                              className="absolute -top-1.5 -left-1.5 opacity-0 group-hover:opacity-100 bg-white text-red-500 p-1 rounded-full shadow-md border border-red-50 hover:bg-red-500 hover:text-white transition-all"
+                            >
+                              <X size={10} />
+                            </button>
+                          </div>
+                        );
+                      })}
                     </div>
                   )}
                 </div>

@@ -462,15 +462,31 @@ export async function PATCH(
 ==============================
 FILE: src/app\api\supervisor\instructors\route.ts
 ==============================
-import { NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
+import { NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { getSession } from "@/lib/auth";
+
 export async function GET() {
+  const session = await getSession();
+  if (!session)
+    return NextResponse.json({ message: "לא מורשה" }, { status: 401 });
+
   const instructors = await prisma.user.findMany({
-    where: { roles: { has: 'INSTRUCTOR' } },
-    select: { id: true, firstName: true, lastName: true }
+    where: {
+      roles: { has: "INSTRUCTOR" },
+      supervisorId: session.id, // חשוב להביא רק מדריכות ששייכות למפקחת הזו
+      isWorking: true, // <-- להחזיר רק מדריכות פעילות
+    },
+    select: {
+      id: true,
+      firstName: true,
+      lastName: true,
+      isWorking: true, // <-- הוספנו את השדה הזה
+    },
   });
   return NextResponse.json(instructors);
 }
+
 ==============================
 FILE: src/app\api\supervisor\managers\route.ts
 ==============================
@@ -522,7 +538,7 @@ export async function GET(req: Request) {
           gte: new Date(new Date(selectedDate).setHours(0, 0, 0, 0)),
           lte: new Date(new Date(selectedDate).setHours(23, 59, 59, 999)),
         },
-        status: { not: "CANCELLED" }
+        // status: { not: "CANCELLED" }
       },
       select: { mainTeacherId: true, substituteId: true }
     });
@@ -992,6 +1008,36 @@ const busyInPlacements = await prisma.placement.findMany({
   }
 }
 ==============================
+FILE: src/app\api\supervisor\users\bulk-reassign\route.ts
+==============================
+import { NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { getSession } from "@/lib/auth";
+
+export async function PATCH(req: Request) {
+  const session = await getSession();
+  if (!session || !session.roles.includes("SUPERVISOR")) {
+    return NextResponse.json({ message: "לא מורשה" }, { status: 401 });
+  }
+
+  try {
+    const { managerIds, newInstructorId } = await req.json();
+
+    if (!managerIds || !newInstructorId) {
+      return NextResponse.json({ message: "נתונים חסרים" }, { status: 400 });
+    }
+
+    await prisma.user.updateMany({
+      where: { id: { in: managerIds } },
+      data: { instructorId: newInstructorId }
+    });
+
+    return NextResponse.json({ success: true, count: managerIds.length });
+  } catch (error) {
+    return NextResponse.json({ message: "שגיאה בעדכון המוני" }, { status: 500 });
+  }
+}
+==============================
 FILE: src/app\api\supervisor\users\[id]\route.ts
 ==============================
 import { NextResponse } from "next/server";
@@ -1010,8 +1056,50 @@ export async function PATCH(
   }
 
   try {
-    const body = await req.json();
     const { id } = await params;
+    const body = await req.json();
+
+    // בדיקת "המדריכה האחרונה"
+    if (
+      body.isWorking === false ||
+      (body.roles && !body.roles.includes("INSTRUCTOR"))
+    ) {
+      // האם המשתמשת הזו היא מדריכה כרגע?
+      const currentUser = await prisma.user.findUnique({
+        where: { id },
+        include: { subordinatesIns: true }, // גננות שמשויכות אליה
+      });
+
+      if (currentUser?.roles.includes("INSTRUCTOR")) {
+        // כמה מדריכות פעילות אחרות נשארו למפקחת הזו?
+        const activeInstructorsCount = await prisma.user.count({
+          where: {
+            supervisorId: session.id,
+            roles: { has: "INSTRUCTOR" },
+            isWorking: true,
+            id: { not: id }, // לא לספור את זו שאנחנו עורכים
+          },
+        });
+
+        // אם אין מדריכות אחרות אבל יש גננות במחוז
+        if (activeInstructorsCount === 0) {
+          // נבדוק אם יש בכלל גננות במחוז (של המפקחת הזו)
+          const totalManagersInDistrict = await prisma.user.count({
+            where: { supervisorId: session.id, roles: { has: "MANAGER" } },
+          });
+
+          if (totalManagersInDistrict > 0) {
+            return NextResponse.json(
+              {
+                message:
+                  "לא ניתן להשבית את המדריכה האחרונה במחוז כל עוד ישנן גננות אם. עלייך להגדיר מדריכה פעילה אחרת תחילה.",
+              },
+              { status: 400 }
+            );
+          }
+        }
+      }
+    }
 
     // 1. פירוק השדות - אנחנו מוציאים כל מה שהוא לא שדה פשוט ב-User
     const {
@@ -1071,32 +1159,76 @@ export async function PATCH(
     }
     // אם היא נשארה פעילה אבל נשלחו נתוני רוטציה חדשים (הקוד הקיים שלך)
     else if (updatedUser.roles.includes("MANAGER") && rotationData) {
-      // מחיקה של כל הרוטציות הקודמות של המשתמשת הזו
-      await prisma.fixedRotation.deleteMany({
-        where: { managerId: id },
+      // 1. שליפת כל גננות הרוטציה שמופיעות בבקשה
+      const teacherIds = Object.values(rotationData).filter(
+        (id) => id && id !== "REMOVE" && id !== ""
+      ) as string[];
+
+      const rotationTeachers = await prisma.user.findMany({
+        where: { id: { in: teacherIds } },
+        select: { id: true, workDays: true, firstName: true },
       });
 
-      // יצירת הרוטציות החדשות
-      const rotationsToCreate = Object.entries(rotationData)
-       .filter(([_, teacherId]) => 
-            teacherId && 
-            teacherId !== "" && 
-            teacherId !== "REMOVE"
-        )
-        .map(([day, teacherId]) => ({
+      // 2. בניית מערך השיבוצים - רק בזיכרון (Memory) בינתיים
+      const rotationsToCreate = [];
+
+      for (const [day, teacherId] of Object.entries(rotationData)) {
+        if (!teacherId || teacherId === "REMOVE" || teacherId === "") continue;
+
+        const teacher = rotationTeachers.find((t) => t.id === teacherId);
+
+        if (teacher && !teacher.workDays.includes(day as any)) {
+          console.error(`Error: ${teacher.firstName} does not work on ${day}`);
+          continue;
+        }
+
+        rotationsToCreate.push({
           managerId: id,
           day: day as any,
           rotationTeacherId: teacherId as string,
-        }));
+        });
+      }
 
+      // א. מוחקים את כל הרוטציות הקודמות של הגננת הזו
+      await prisma.fixedRotation.deleteMany({ where: { managerId: id } });
+      // ב. יוצרים את כל החדשות בבת אחת (רק אם יש כאלו)
       if (rotationsToCreate.length > 0) {
         await prisma.fixedRotation.createMany({
           data: rotationsToCreate,
         });
       }
     }
+    // בדיקה: האם המשתמשת המעודכנת הפכה ללא פעילה או איבדה תפקיד מדריכה?
 
-    return NextResponse.json(updatedUser);
+    const wasInstructor =
+      body.roles?.includes("INSTRUCTOR") || body.roles.includes("INSTRUCTOR");
+    const isNoLongerActiveInstructor =
+      wasInstructor &&
+      (updatedUser.isWorking === false ||
+        !updatedUser.roles.includes("INSTRUCTOR"));
+    // אם היא כבר לא מדריכה פעילה, נבדוק אם יש גננות שמשויכות אליה
+    let orphanedManagers: any[] = [];
+
+    // רק אם היא באמת הפסיקה להיות מדריכה, נחפש מי נשאר יתום תחתיה
+    if (isNoLongerActiveInstructor) {
+      orphanedManagers = await prisma.user.findMany({
+        where: {
+          instructorId: id,
+          isWorking: true,
+          id: { not: id }, // לא לכלול את עצמה
+          NOT: {
+            roles: { has: "INSTRUCTOR" },
+          }, // גננות שהן לא מדריכות בעצמן
+        },
+        select: { id: true, firstName: true, lastName: true },
+      });
+    }
+
+    return NextResponse.json({
+      user: updatedUser,
+      needsReassignment: orphanedManagers.length > 0,
+      orphanedManagers: orphanedManagers,
+    });
   } catch (error: any) {
     console.error("Prisma Update Error Details:", error);
     return NextResponse.json(
@@ -1466,6 +1598,17 @@ body {
 
 .check-icon {
   color: #4f46e5;
+}
+
+.tab-buttons{
+  flex: 1;
+  padding-top: 0.75rem;   /* py-3 */
+  padding-bottom: 0.75rem;
+  border-radius: 1rem;    /* rounded-2xl */
+  font-weight: 800;       /* font-black */
+  font-size: 0.875rem;    /* text-sm */
+  transition: all 0.15s ease-in-out; /* transition-all */
+  cursor: pointer;
 }
 
 ==============================
@@ -2091,6 +2234,7 @@ export default function SupervisorCalendar() {
                     isSameDay(new Date(p.date), day)
                   )
                 : [];
+                
 
               return (
                 <div
@@ -2130,67 +2274,53 @@ export default function SupervisorCalendar() {
                   ) : (
                     <div className="flex-1 space-y-2 overflow-y-auto overflow-x-hidden custom-calendar-scroll">
                       {" "}
-                      <div className="flex-1 space-y-2 overflow-y-auto overflow-x-hidden custom-calendar-scroll">
-                        {dayPlacements.map((p: any) => {
-                          // בדיקה האם הגננת שחסרה (mainTeacher) היא גננת רוטציה
-                          const isRotationAbsent =
-                            p.mainTeacher?.roles?.includes("ROTATION");
-
-                          return (
+                      {dayPlacements.map((p: any) => (
+                        
+                        <div  
+                        key={p.id}
+                        className="group relative p-2 rounded-xl border border-slate-100 bg-white shadow-sm hover:border-indigo-300 hover:shadow-md transition-all cursor-pointer"
+                        onClick={() => setEditingPlacement(p)}
+                        >
+                          <div className="text-[14px] font-bold text-slate-700 leading-tight">
+                            {p.mainTeacher?.firstName} {p.mainTeacher?.lastName}
+                          </div>
+                          <div
+                            className={`text-[12px] mt-1 flex items-center gap-1.5 ${
+                              p.status === "OPEN"
+                                ? "text-amber-600 font-bold"
+                                : p.status === "CANCELLED"
+                                ? "text-red-500 font-bold"
+                                : "text-emerald-600 font-bold"
+                            }`}
+                          >
                             <div
-                              key={p.id}
-                              className={`group relative p-2 rounded-xl border transition-all cursor-pointer shadow-sm hover:shadow-md ${
-                                isRotationAbsent
-                                  ? "bg-blue-50 border-blue-200 hover:border-blue-400" // כחול בהיר לרוטציה
-                                  : "bg-white border-slate-100 hover:border-indigo-300" // לבן לגננת אם
-                              }`}
-                              onClick={() => setEditingPlacement(p)}
-                            >
-                              <div className="text-[14px] font-bold text-slate-700 leading-tight">
-                                {p.mainTeacher?.firstName}{" "}
-                                {p.mainTeacher?.lastName}
-                              </div>
-
-                              <div
-                                className={`text-[12px] mt-1 flex items-center gap-1.5 ${
-                                  p.status === "OPEN"
-                                    ? "text-amber-600 font-bold"
-                                    : p.status === "CANCELLED"
-                                    ? "text-red-500 font-bold"
-                                    : "text-emerald-600 font-bold"
-                                }`}
-                              >
-                                <div
-                                  className={`w-1.5 h-1.5 rounded-full ${
-                                    p.status === "OPEN"
-                                      ? "bg-amber-500 animate-pulse"
-                                      : p.status === "CANCELLED"
-                                      ? "bg-red-500"
-                                      : "bg-emerald-500"
-                                  }`}
-                                />
-                                {p.status === "OPEN"
-                                  ? "ממתין"
+                              className={`w-1.5 h-1.5 rounded-full ${
+                                p.status === "OPEN"
+                                  ? "bg-amber-500 animate-pulse"
                                   : p.status === "CANCELLED"
-                                  ? "סגור"
-                                  : p.substitute
-                                  ? `${p.substitute.firstName} ${p.substitute.lastName[0]}.`
-                                  : "משובץ"}
-                              </div>
-
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleDelete(p.id);
-                                }}
-                                className="absolute -top-1.5 -left-1.5 opacity-0 group-hover:opacity-100 bg-white text-red-500 p-1 rounded-full shadow-md border border-red-50 hover:bg-red-500 hover:text-white transition-all"
-                              >
-                                <X size={10} />
-                              </button>
-                            </div>
-                          );
-                        })}
-                      </div>
+                                  ? "bg-red-500"
+                                  : "bg-emerald-500"
+                              }`}
+                            />
+                            {p.status === "OPEN"
+                              ? "ממתין"
+                              : p.status === "CANCELLED"
+                              ? "סגור"
+                              : p.substitute
+                              ? `${p.substitute.firstName} ${p.substitute.lastName[0]}.`
+                              : "משובץ"}
+                          </div>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDelete(p.id);
+                            }}
+                            className="absolute -top-1.5 -left-1.5 opacity-0 group-hover:opacity-100 bg-white text-red-500 p-1 rounded-full shadow-md border border-red-50 hover:bg-red-500 hover:text-white transition-all"
+                          >
+                            <X size={10} />
+                          </button>
+                        </div>
+                      ))}
                     </div>
                   )}
                 </div>
@@ -2374,6 +2504,7 @@ import {
 } from "lucide-react";
 import PlacementModal from "@/components/PlacementModal";
 import RecentActivityModal from "@/components/RecentActivityModal";
+import LoadingScreen from "@/components/ui/LoadingScreen";
 
 export default function SupervisorDashboardPage() {
   const [dashboardData, setDashboardData] = useState<any>(null);
@@ -2392,10 +2523,9 @@ export default function SupervisorDashboardPage() {
       setLoading(false);
     } catch (e) {
       console.error(e);
+    } finally {
+      setLoading(false);
     }
-     finally {
-    setLoading(false); 
-  }
   };
 
   const loadFullHistory = async () => {
@@ -2436,12 +2566,7 @@ export default function SupervisorDashboardPage() {
     }
   };
 
-  if (loading)
-    return (
-      <div className="flex items-center justify-center min-h-screen font-bold text-black">
-        טוען...
-      </div>
-    );
+  if (loading) return <LoadingScreen />;
 
   const buildSixDisplayDays = (start: Date) => {
     const days: Date[] = [];
@@ -2458,10 +2583,6 @@ export default function SupervisorDashboardPage() {
   };
 
   const displayDaysWithoutSaturday = buildSixDisplayDays(new Date());
-
-  const displayDays = Array.from({ length: 6 }).map((_, i) =>
-    addDays(new Date(), i)
-  );
 
   return (
     <div
@@ -2529,58 +2650,71 @@ export default function SupervisorDashboardPage() {
             })}
           </div>
         </section>
-      {/* --- חדש: סקציית דיווחים מהעבר (Pending Updates) --- */}
-      {dashboardData.pendingUpdates.length > 0 && (
-        <section className="bg-amber-50 rounded-[2rem] border-2 border-amber-100 p-6 animate-pulse-slow mb-5">
-          <div className="flex items-center justify-between mb-6">
-            <div className="flex items-center gap-3">
-              <div className="p-2 bg-amber-500 rounded-lg text-white shadow-lg shadow-amber-200">
-                <History size={20} />
-              </div>
-              <div>
-                <h2 className="text-lg font-black text-amber-900 leading-none">השלמת דיווחים מהעבר</h2>
-                <p className="text-amber-700 text-xs font-medium mt-1">ישנם אירועים שעברו וטרם עודכנו בסטטוס סופי</p>
-              </div>
-            </div>
-            <span className="bg-amber-200 text-amber-900 text-xs font-black px-3 py-1 rounded-full">
-              {dashboardData.pendingUpdates.length} משימות
-            </span>
-          </div>
-
-          <div className="grid gap-3">
-            {dashboardData.pendingUpdates.map((update: any) => (
-              <div key={update.id} className="bg-white/80 backdrop-blur-sm rounded-2xl p-4 flex items-center justify-between border border-amber-200 hover:border-amber-400 transition-all shadow-sm group">
-                <div className="flex items-center gap-4">
-                  <div className="w-10 h-10 bg-amber-100 rounded-xl flex items-center justify-center text-amber-600">
-                    <AlertTriangle size={20} />
-                  </div>
-                  <div>
-                    <h4 className="font-bold text-slate-800 text-sm">{update.institution.name}</h4>
-                    <p className="text-xs text-slate-500">
-                      בתאריך: <span className="font-bold">{new Date(update.date).toLocaleDateString("he-IL")}</span> | גננת: {update.mainTeacher.firstName}
-                    </p>
-                  </div>
+        {/* --- חדש: סקציית דיווחים מהעבר (Pending Updates) --- */}
+        {dashboardData.pendingUpdates.length > 0 && (
+          <section className="bg-amber-50 rounded-[2rem] border-2 border-amber-100 p-6 animate-pulse-slow mb-5">
+            <div className="flex items-center justify-between mb-6">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-amber-500 rounded-lg text-white shadow-lg shadow-amber-200">
+                  <History size={20} />
                 </div>
-                <button
-                  onClick={() => {
-                    setSelectedPlacement(update);
-                    setIsModalOpen(true);
-                  }}
-                  className="px-4 py-2 bg-amber-600 text-white text-xs font-black rounded-xl hover:bg-amber-700 transition-colors shadow-md shadow-amber-100"
-                >
-                  עדכני עכשיו
-                </button>
+                <div>
+                  <h2 className="text-lg font-black text-amber-900 leading-none">
+                    השלמת דיווחים מהעבר
+                  </h2>
+                  <p className="text-amber-700 text-xs font-medium mt-1">
+                    ישנם אירועים שעברו וטרם עודכנו בסטטוס סופי
+                  </p>
+                </div>
               </div>
-            ))}
-          </div>
-        </section>
-      )}
+              <span className="bg-amber-200 text-amber-900 text-xs font-black px-3 py-1 rounded-full">
+                {dashboardData.pendingUpdates.length} משימות
+              </span>
+            </div>
+
+            <div className="grid gap-3">
+              {dashboardData.pendingUpdates.map((update: any) => (
+                <div
+                  key={update.id}
+                  className="bg-white/80 backdrop-blur-sm rounded-2xl p-4 flex items-center justify-between border border-amber-200 hover:border-amber-400 transition-all shadow-sm group"
+                >
+                  <div className="flex items-center gap-4">
+                    <div className="w-10 h-10 bg-amber-100 rounded-xl flex items-center justify-center text-amber-600">
+                      <AlertTriangle size={20} />
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-slate-800 text-sm">
+                        {update.institution.name}
+                      </h4>
+                      <p className="text-xs text-slate-500">
+                        בתאריך:{" "}
+                        <span className="font-bold">
+                          {new Date(update.date).toLocaleDateString("he-IL")}
+                        </span>{" "}
+                        | גננת: {update.mainTeacher.firstName}
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setSelectedPlacement(update);
+                      setIsModalOpen(true);
+                    }}
+                    className="px-4 py-2 bg-amber-600 text-white text-xs font-black rounded-xl hover:bg-amber-700 transition-colors shadow-md shadow-amber-100"
+                  >
+                    עדכני עכשיו
+                  </button>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           {/* Main Column: Urgent Alerts */}
           <div className="lg:col-span-2 space-y-6">
             <div className="flex items-center justify-between px-2">
               <h2 className="text-xl font-black text-slate-800 flex items-center gap-3">
-              🚨  קריאות דחופות 
+                🚨 קריאות דחופות
                 <span className="bg-red-500 text-white text-[12px] px-2 py-0.5 rounded-full font-bold">
                   {Array.isArray(dashboardData?.urgentAlerts)
                     ? dashboardData.urgentAlerts.length
@@ -2650,8 +2784,7 @@ export default function SupervisorDashboardPage() {
             </div>
             <section className="space-y-6">
               <h2 className="text-xl font-black text-slate-800 flex items-center gap-3 px-2">
-
-               🗓️ בקשות פתוחות לחודש הקרוב
+                🗓️ בקשות פתוחות לחודש הקרוב
                 <span className="bg-amber-500 text-white text-[12px] px-2 py-0.5 rounded-full font-bold">
                   {dashboardData.openMonthlyRequests.length}
                 </span>
@@ -2672,10 +2805,10 @@ export default function SupervisorDashboardPage() {
                           {req.institution.name}
                         </h3>
                         <p className="text-xs text-slate-500">
-                        <span className="text-sm font-medium italic">
-                          בתאריך: {new Date(req.date).toLocaleDateString("he-IL")}
-                        </span>
-                      
+                          <span className="text-sm font-medium italic">
+                            בתאריך:{" "}
+                            {new Date(req.date).toLocaleDateString("he-IL")}
+                          </span>
                         </p>
                       </div>
                     </div>
@@ -2747,7 +2880,7 @@ export default function SupervisorDashboardPage() {
                 onClick={loadFullHistory} // קריאה לפונקציה החדשה
                 className="w-full py-4 bg-slate-50 border-t border-slate-100 text-sm font-black text-indigo-600 hover:bg-indigo-50 transition-colors flex items-center justify-center gap-2"
               >
-                {loadingHistory ? "טוען..." : "צפה בהיסטוריה המלאה"}
+                {loadingHistory ? <LoadingScreen /> : "צפה בהיסטוריה המלאה"}
                 <ChevronLeft size={16} />
               </button>
             </div>
@@ -2774,6 +2907,7 @@ export default function SupervisorDashboardPage() {
     </div>
   );
 }
+
 ==============================
 FILE: src/app\supervisor\placements\page.tsx
 ==============================
@@ -2801,9 +2935,12 @@ import {
   Loader2,
   User2Icon,
   PlusCircle,
+  Power,
 } from "lucide-react";
-import UserEditModal from "@/components/UserEditModal";
+import EditUserModal from "@/components/EditUserModal";
 import EditInstitutionModal from "@/components/EditInstitutionModal";
+import ReassignTeachersModal from "@/components/ReassignTeachersModal";
+import LoadingScreen from "@/components/ui/LoadingScreen";
 
 export default function DistrictManagementPage() {
   const [activeTab, setActiveTab] = useState<
@@ -2826,6 +2963,11 @@ export default function DistrictManagementPage() {
   const [isAddInstitutionOpen, setIsAddInstitutionOpen] = useState(false);
   const [activeInstructor, setActiveInstructor] = useState<any>(null);
   const [selectedPlacement, setSelectedPlacement] = useState<any>(null);
+  const [showReassignModal, setShowReassignModal] = useState(false);
+  const [orphanedTeachers, setOrphanedTeachers] = useState<any[]>([]);
+  const [instructorsList, setInstructorsList] = useState<any[]>([]); // לצורך בחירה במודאל
+  const [isTabLoading, setIsTabLoading] = useState(false);
+
   const dayTranslations: Record<string, string> = {
     SUNDAY: "א'",
     MONDAY: "ב'",
@@ -2875,6 +3017,41 @@ export default function DistrictManagementPage() {
   useEffect(() => {
     loadData();
   }, []);
+
+  useEffect(() => {
+    const checkOrphans = async () => {
+      try {
+        const res = await fetch("/api/supervisor/dashboard");
+        const data = await res.json();
+        if (data.orphanedManagers?.length > 0) {
+          setOrphanedTeachers(data.orphanedManagers);
+          setShowReassignModal(true);
+        }
+      } catch (err) {
+        console.error("Failed to check for orphaned managers", err);
+      }
+    };
+    checkOrphans();
+  }, []);
+  // טעינת מדריכות בטעינה ראשונית כדי שיהיו זמינות למודאל
+  useEffect(() => {
+    fetch("/api/supervisor/instructors")
+      .then((res) => res.json())
+      .then((data) => setInstructorsList(data));
+  }, []);
+
+  const switchTab = async (tab: "STAFF" | "ALL_USERS" | "INSTITUTIONS") => {
+    setIsTabLoading(true);
+    setActiveTab(tab);
+    setSearchTerm("");
+
+    if (tab === "ALL_USERS") {
+      await loadAllUsers();
+    }
+
+    // אם בעתיד יש עוד טאבים עם טעינה — כאן
+    setIsTabLoading(false);
+  };
 
   const filteredAndSortedUsers = allUsers
     .filter((u) => {
@@ -2938,6 +3115,11 @@ export default function DistrictManagementPage() {
       )
   );
 
+  const sortedInstructors = [...filteredStaff].sort((a, b) => {
+    if (a.isWorking === b.isWorking) return 0;
+    return a.isWorking ? -1 : 1;
+  });
+
   const filteredInstitutions = (
     Array.isArray(institutions) ? institutions : []
   ).filter(
@@ -2948,12 +3130,7 @@ export default function DistrictManagementPage() {
 
   // 4. טיפול במצבי טעינה ושגיאה (UI)
   if (loading) {
-    return (
-      <div className="min-h-screen flex flex-col items-center justify-center font-bold gap-4">
-        <Loader2 className="animate-spin text-indigo-600" size={48} />
-        <p>טוען נתוני מחוז...</p>
-      </div>
-    );
+    return <LoadingScreen message="טוען נתוני מחוז" />;
   }
 
   if (error) {
@@ -3023,8 +3200,8 @@ export default function DistrictManagementPage() {
       {/* Tab Switcher */}
       <div className="flex gap-4 p-1.5 bg-slate-100 rounded-3xl w-full max-w-md">
         <button
-          onClick={() => setActiveTab("STAFF")}
-          className={`flex-1 py-3 rounded-2xl font-black text-sm transition-all ${
+          onClick={() => switchTab("STAFF")}
+          className={`tab-buttons  ${
             activeTab === "STAFF"
               ? "bg-white text-indigo-600 shadow-sm"
               : "text-slate-500 hover:text-slate-700"
@@ -3033,21 +3210,18 @@ export default function DistrictManagementPage() {
           צוות הדרכה
         </button>
         <button
-          onClick={() => {
-            setActiveTab("ALL_USERS");
-            loadAllUsers();
-          }}
-          className={`flex-1 py-3 rounded-2xl font-black text-sm transition-all ${
+          onClick={() => switchTab("ALL_USERS")}
+          className={`tab-buttons ${
             activeTab === "ALL_USERS"
               ? "bg-white text-indigo-600 shadow-sm"
-              : "text-slate-500"
+              : "text-slate-500 hover:text-slate-700"
           }`}
         >
           ניהול כח אדם
         </button>
         <button
-          onClick={() => setActiveTab("INSTITUTIONS")}
-          className={`flex-1 py-3 rounded-2xl font-black text-sm transition-all ${
+          onClick={() => switchTab("INSTITUTIONS")}
+          className={`tab-buttons  ${
             activeTab === "INSTITUTIONS"
               ? "bg-white text-indigo-600 shadow-sm"
               : "text-slate-500 hover:text-slate-700"
@@ -3075,29 +3249,69 @@ export default function DistrictManagementPage() {
       {/* STAFF TAB */}
       {activeTab === "STAFF" && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {filteredStaff.map((instructor) => (
+          {sortedInstructors.map((instructor) => (
             <div
               key={instructor.id}
               onClick={() => setActiveInstructor(instructor)}
-              className="group bg-white rounded-[2rem] border border-slate-100 shadow-sm hover:shadow-xl transition-all cursor-pointer overflow-hidden flex flex-col"
+              className={`group rounded-[2rem] border transition-all overflow-hidden flex flex-col ${
+                instructor.isWorking
+                  ? "bg-white border-slate-100 hover:shadow-xl shadow-sm cursor-pointer "
+                  : "bg-red-50/50 border-red-100 opacity-90 cursor-not-allowed" // צבע אדום בהיר ללא פעילות
+              }`}
             >
               <div className="p-8 pb-4">
-                <div className="px-3 py-1 bg-indigo-50 text-indigo-600 text-[10px] font-black uppercase rounded-lg inline-block mb-4">
-                  מדריכה
+                <div className="flex justify-between items-start">
+                  <div
+                    className={`px-3 py-1 text-[10px] font-black uppercase rounded-lg inline-block mb-4 ${
+                      instructor.isWorking
+                        ? "bg-indigo-50 text-indigo-600"
+                        : "bg-red-100 text-red-600"
+                    }`}
+                  >
+                    {instructor.isWorking ? "מדריכה" : "מדריכה - לא פעילה"}
+                  </div>
                 </div>
-                <h3 className="text-xl font-black text-slate-800">
+
+                <h3
+                  className={`text-xl font-black ${
+                    instructor.isWorking ? "text-slate-800" : "text-red-900"
+                  }`}
+                >
                   {instructor.firstName} {instructor.lastName}
                 </h3>
                 <p className="text-slate-400 text-sm mb-6">
                   {instructor.email}
                 </p>
-                <div className="inline-flex items-center gap-3 px-5 py-3 bg-slate-50 rounded-2xl border border-slate-100 w-full font-bold text-slate-700">
-                  <Users size={18} className="text-indigo-500" />{" "}
+
+                <div
+                  className={`inline-flex items-center gap-3 px-5 py-3 rounded-2xl border w-full font-bold ${
+                    instructor.isWorking
+                      ? "bg-slate-50 border-slate-100 text-slate-700"
+                      : "bg-red-100/50 border-red-200 text-red-800"
+                  }`}
+                >
+                  <Users
+                    size={18}
+                    className={
+                      instructor.isWorking ? "text-indigo-500" : "text-red-500"
+                    }
+                  />{" "}
                   {instructor.subordinatesIns?.length || 0} גננות אם
                 </div>
               </div>
-              <div className="mt-auto p-6 bg-slate-50/50 border-t flex justify-between items-center text-sm font-bold text-slate-500 group-hover:text-indigo-600 transition-colors">
-                <span>צפייה בפרטים ושיבוץ</span>
+
+              <div
+                className={`mt-auto p-6 border-t flex justify-between items-center text-sm font-bold transition-colors ${
+                  instructor.isWorking
+                    ? "bg-slate-50/50 text-slate-500 group-hover:text-indigo-600"
+                    : "bg-red-100/30 text-red-500"
+                }`}
+              >
+                <span>
+                  {instructor.isWorking
+                    ? "צפייה בגננות האם המשויכות"
+                    : "מדריכה מושבתת"}
+                </span>
                 <ChevronLeft size={18} />
               </div>
             </div>
@@ -3143,7 +3357,13 @@ export default function DistrictManagementPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50">
-                  {filteredAndSortedUsers.length > 0 ? (
+                  {isTabLoading ? (
+                    <tr>
+                      <td colSpan={6} className="p-20 text-center">
+                        <LoadingScreen />
+                      </td>
+                    </tr>
+                  ) : filteredAndSortedUsers.length > 0 ? (
                     filteredAndSortedUsers.map((u) => (
                       <tr
                         key={u.id}
@@ -3287,8 +3507,7 @@ export default function DistrictManagementPage() {
                             className="flex items-center gap-2 bg-slate-50 p-2 rounded-xl border border-slate-100/50"
                           >
                             <span className="w-fit h-fit p-2 flex items-center justify-center text-[13px] font-black text-indigo-600 ">
-                              ביום: {" "}
-                              {dayTranslations[rot.day]}
+                              ביום: {dayTranslations[rot.day]}
                             </span>
                             <span className="text-xs font-bold text-slate-700">
                               {rot.rotationTeacher?.firstName}{" "}
@@ -3321,7 +3540,7 @@ export default function DistrictManagementPage() {
         />
       )}
       {selectedUserForEdit && (
-        <UserEditModal
+        <EditUserModal
           isOpen={!!selectedUserForEdit}
           user={selectedUserForEdit}
           onClose={() => setSelectedUserForEdit(null)}
@@ -3354,6 +3573,23 @@ export default function DistrictManagementPage() {
           onSuccess={loadData}
         />
       )}
+      {showReassignModal && (
+        <ReassignTeachersModal
+          isOpen={showReassignModal}
+          teachers={orphanedTeachers}
+          instructors={instructorsList}
+          isForced={true} // גורם להשתלטות על המסך
+          onClose={() => setShowReassignModal(false)}
+          onComplete={(remaining?: any) => {
+            if (remaining && remaining.length > 0) {
+              setOrphanedTeachers(remaining);
+            } else {
+              setShowReassignModal(false);
+              loadData(); // רענון הנתונים הכללי בדף
+            }
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -3365,13 +3601,11 @@ FILE: src/app\supervisor\statistics\page.tsx
 
 import { useState, useEffect, useMemo } from "react";
 import { format, subMonths, subYears, startOfMonth } from "date-fns";
-import {
-  BarChart3,
-  Calendar,
-  User,
-  Info,
-} from "lucide-react";
-import UserEditModal from "@/components/UserEditModal";
+import { BarChart3, Calendar, User, Info } from "lucide-react";
+import EditUserModal from "@/components/EditUserModal";
+import LoadingScreen from "@/components/ui/LoadingScreen";
+import CustomDatePicker from "@/components/ui/CustomDatePicker";
+import CustomDropdown from "@/components/ui/CustomDropdown";
 
 export default function StatisticsPage() {
   const [stats, setStats] = useState<any>(null);
@@ -3397,24 +3631,23 @@ export default function StatisticsPage() {
   }, []);
 
   // שליפת הנתונים מהשרת
-const fetchStats = async () => {
-  try {
-    setLoading(true);
-    const params = new URLSearchParams({
-      start: startDate,
-      end: endDate,
-      ...(selectedUserId && { userId: selectedUserId }),
-    });
-    const res = await fetch(`/api/supervisor/stats?${params}`);
-    const data = await res.json();
-    setStats(data);
-  } catch (err) {
-    console.error("Failed to fetch stats", err);
-  } finally {
-    setLoading(false);
-  }
-};
-
+  const fetchStats = async () => {
+    try {
+      setLoading(true);
+      const params = new URLSearchParams({
+        start: startDate,
+        end: endDate,
+        ...(selectedUserId && { userId: selectedUserId }),
+      });
+      const res = await fetch(`/api/supervisor/stats?${params}`);
+      const data = await res.json();
+      setStats(data);
+    } catch (err) {
+      console.error("Failed to fetch stats", err);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   // קריאה ראשונית וכל שינוי בטווח/משתמשת
   useEffect(() => {
@@ -3476,19 +3709,20 @@ const fetchStats = async () => {
           <label className="block text-sm font-black text-slate-700 flex items-center gap-2">
             <Calendar size={16} className="text-indigo-500" /> טווח תאריכים
           </label>
+
           <div className="flex gap-2 p-1 bg-slate-50 rounded-2xl">
-            <input
-              type="date"
+            <CustomDatePicker
+              label=""
               value={startDate}
-              onChange={(e) => handleDateChange("start", e.target.value)}
-              className="w-full bg-transparent border-none text-sm font-bold focus:ring-0 text-slate-600 cursor-pointer"
+              onChange={(val) => handleDateChange("start", val)}
             />
+
             <div className="w-px h-6 bg-slate-200 self-center" />
-            <input
-              type="date"
+
+            <CustomDatePicker
+              label=""
               value={endDate}
-              onChange={(e) => handleDateChange("end", e.target.value)}
-              className="w-full bg-transparent border-none text-sm font-bold focus:ring-0 text-slate-600 cursor-pointer"
+              onChange={(val) => handleDateChange("end", val)}
             />
           </div>
         </div>
@@ -3498,19 +3732,19 @@ const fetchStats = async () => {
           <label className="block text-sm font-black text-slate-700 flex items-center gap-2">
             <User size={16} className="text-indigo-500" /> בחירת גננת / מחליפה
           </label>
-          <select
-            value={selectedUserId}
-            onChange={(e) => setSelectedUserId(e.target.value)}
-            className="w-full p-3 bg-slate-50 rounded-2xl border-none text-sm font-bold text-slate-600 focus:ring-2 focus:ring-indigo-500 outline-none transition-all cursor-pointer"
-          >
-            <option value="">-- כל המשתמשות --</option>
-            {users.map((u) => (
-              <option key={u.id} value={u.id}>
-                {u.firstName} {u.lastName} (
-                {u.roles.includes("MANAGER") ? "גננת אם" : "צוות מחליף"})
-              </option>
-            ))}
-          </select>
+
+          <CustomDropdown
+            placeholder="-- כל המשתמשות --"
+            label=""
+            value={selectedUserId || ""}
+            options={users.map((u) => ({
+              id: u.id,
+              label: `${u.firstName} ${u.lastName} (${
+                u.roles.includes("MANAGER") ? "גננת אם" : "צוות מחליף"
+              })`,
+            }))}
+            onChange={(id) => setSelectedUserId(id)}
+          />
         </div>
 
         {/* קיצורים */}
@@ -3525,6 +3759,7 @@ const fetchStats = async () => {
           >
             בחודש האחרון
           </button>
+
           <button
             onClick={() => handleShortcut("year")}
             className={`flex-1 rounded-2xl text-sm font-bold transition-all duration-300 border-2 ${
@@ -3579,7 +3814,7 @@ const fetchStats = async () => {
         </>
       )}
       {isDetailsOpen && selectedUser && (
-        <UserEditModal
+        <EditUserModal
           user={selectedUser}
           isOpen={isDetailsOpen}
           onClose={() => {
@@ -3588,7 +3823,7 @@ const fetchStats = async () => {
           }}
         />
       )}
-
+      {loading && <LoadingScreen />}
       {/* Empty State */}
       {!loading && stats?.total === 0 && (
         <div className="bg-white p-20 rounded-[3rem] border-2 border-dashed border-slate-100 text-center">
@@ -3732,6 +3967,7 @@ import { useState, useEffect } from 'react';
 import { callApi } from '@/lib/api';
 import { Trash2, CheckCircle, AlertTriangle, RefreshCw } from 'lucide-react';
 import styles from './placement-management.module.css';
+import LoadingScreen from '@/components/ui/LoadingScreen';
 export default function PlacementsManagement() {
   const [placements, setPlacements] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -3775,7 +4011,7 @@ export default function PlacementsManagement() {
     }
   };
 
-  if (loading) return <div className="p-10 text-center">טוען נתונים...</div>;
+  if (loading) return <LoadingScreen />;
 
 return (
     <div className={styles.container}>
@@ -3847,6 +4083,7 @@ import {
   Sparkles,
   Building,
 } from "lucide-react";
+import LoadingScreen from "./ui/LoadingScreen";
 
 export default function AddInstitutionModal({
   isOpen,
@@ -3858,21 +4095,19 @@ export default function AddInstitutionModal({
   const [loading, setLoading] = useState(false);
   const [selectedId, setSelectedId] = useState(""); // <--- הוספת State לבחירה
 
-  useEffect(() => {
-    if (isOpen) {
-      fetch("/api/supervisor/managers")
-        .then((res) => res.json())
-        .then((data) => setManagers(Array.isArray(data) ? data : []));
-    }
-  }, [isOpen]);
 
-  useEffect(() => {
-    if (isOpen) {
-      fetch("/api/supervisor/managers")
-        .then((res) => res.json())
-        .then((data) => setManagers(Array.isArray(data) ? data : []));
-    }
-  }, [isOpen]);
+
+ useEffect(() => {
+  if (isOpen) {
+    fetch("/api/supervisor/managers")
+      .then((res) => res.json())
+      .then((data) => {
+        console.log("Managers fetched:", data); // בדיקה
+        setManagers(Array.isArray(data) ? data : []);
+      });
+  }
+}, [isOpen]);
+
 
   const filteredManagers = managers.filter((m) =>
     `${m.firstName} ${m.lastName}`
@@ -4102,7 +4337,8 @@ export default function AddInstitutionModal({
               className="flex-[2] py-4 bg-indigo-600 text-white rounded-2xl font-black shadow-lg shadow-indigo-100 hover:bg-indigo-700 transition-all disabled:bg-slate-200 disabled:shadow-none active:scale-95 flex items-center justify-center gap-2"
             >
               {loading ? (
-                "מקים גן..."
+                <LoadingScreen message="מקים גן..." />
+                
               ) : (
                 <>
                   <Sparkles size={18} />
@@ -4140,23 +4376,8 @@ import {
   GraduationCap,
   RefreshCcw,
 } from "lucide-react";
-
-interface Teacher {
-  id: string;
-  firstName: string;
-  lastName: string;
-  mainManagedInstitutions?: { id: string; name: string }[];
-}
-
-interface RotationRecord {
-  rotationTeacher: { id: string; firstName: string; lastName: string };
-  manager: {
-    id: string;
-    firstName: string;
-    lastName: string;
-    mainManagedInstitutions: { id: string; name: string }[];
-  };
-}
+import { Teacher, RotationRecord } from "@/types";
+import CustomDropdown from "./ui/CustomDropdown";
 
 interface Props {
   isOpen: boolean;
@@ -4282,230 +4503,6 @@ export default function AddPlacementModal({
   if (!isOpen) return null;
 
   return (
-    // <div
-    //   className="fixed inset-0 z-[110] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4"
-    //   dir="rtl"
-    // >
-    //   {/* טאבים לבחירה מי נעדרת */}
-    //   <div className="flex bg-slate-100 p-1">
-    //     <button
-    //       onClick={() => {
-    //         setActiveTab("MANAGER");
-    //         setSelectedAbsentId("");
-    //       }}
-    //       className={`flex-1 py-3 text-sm font-black rounded-t-2xl transition-all ${
-    //         activeTab === "MANAGER"
-    //           ? "bg-white text-indigo-600"
-    //           : "text-slate-400"
-    //       }`}
-    //     >
-    //       היעדרות גננת אם
-    //     </button>
-    //     <button
-    //       onClick={() => {
-    //         setActiveTab("ROTATION");
-    //         setSelectedAbsentId("");
-    //       }}
-    //       className={`flex-1 py-3 text-sm font-black rounded-t-2xl transition-all ${
-    //         activeTab === "ROTATION"
-    //           ? "bg-white text-indigo-600"
-    //           : "text-slate-400"
-    //       }`}
-    //     >
-    //       היעדרות גננת רוטציה
-    //     </button>
-    //   </div>
-    //   <div className="bg-white w-full max-w-md rounded-[2.5rem] shadow-2xl overflow-hidden border border-slate-100 animate-in fade-in zoom-in-95 duration-200">
-    //     {/* Header */}
-    //     <div className="p-8 bg-slate-900 text-white relative">
-    //       <div className="flex justify-between items-center">
-    //         <div>
-    //           <h2 className="text-2xl font-black">הוספת דיווח</h2>
-    //           <p className="text-slate-400 text-sm mt-1">
-    //             {new Date(date).toLocaleString("IL-he")}
-    //           </p>
-    //         </div>
-    //         <button
-    //           onClick={onClose}
-    //           className="p-2 hover:bg-white/10 rounded-full"
-    //         >
-    //           <X size={22} />
-    //         </button>
-    //       </div>
-    //     </div>
-
-    //     <form onSubmit={handleSubmit} className="p-8 space-y-6">
-    //       <div className="space-y-2">
-    //         <label className="text-xs font-bold text-slate-500 mr-2">
-    //           {activeTab === "MANAGER"
-    //             ? "בחירת גננת אם שחסרה"
-    //             : "בחירת גננת רוטציה שחסרה"}
-    //         </label>
-    //         <select
-    //           value={selectedAbsentId}
-    //           onChange={(e) => setSelectedAbsentId(e.target.value)}
-    //           className="input-standard appearance-none"
-    //         >
-    //           <option value="">בחרי...</option>
-    //           {activeTab === "MANAGER"
-    //             ? data.managers.map((m: any) => (
-    //                 <option key={m.id} value={m.id}>
-    //                   {m.firstName} {m.lastName} (
-    //                   {m.mainManagedInstitutions?.[0]?.name})
-    //                 </option>
-    //               ))
-    //             : data.rotations.map((r: any) => (
-    //                 <option
-    //                   key={r.rotationTeacher.id}
-    //                   value={r.rotationTeacher.id}
-    //                 >
-    //                   {r.rotationTeacher.firstName} {r.rotationTeacher.lastName}{" "}
-    //                   (גן {r.manager.mainManagedInstitutions?.[0]?.name})
-    //                 </option>
-    //               ))}
-    //         </select>
-    //       </div>
-
-    //       {/* בחירת מחליפה - כאן הלוגיקה משתנה */}
-    //       {mode === "assign" && (
-    //         <div className="space-y-2">
-    //           <label className="text-xs font-bold text-slate-500 mr-2">
-    //             גננת מחליפה
-    //           </label>
-    //           <select
-    //             value={selectedSubId}
-    //             onChange={(e) => setSelectedSubId(e.target.value)}
-    //             className="input-standard appearance-none bg-emerald-50"
-    //           >
-    //             <option value="">בחרי מחליפה...</option>
-    //             {getSubOptions().map((s: any) => (
-    //               <option
-    //                 key={s.id}
-    //                 value={s.id}
-    //                 className={
-    //                   s.isMainManager ? "font-black text-indigo-700" : ""
-    //                 }
-    //               >
-    //                 {s.firstName} {s.lastName}
-    //               </option>
-    //             ))}
-    //           </select>
-    //         </div>
-    //       )}
-    //       {/* גננת אם */}
-    //       {/* <div className="space-y-2">
-    //         <label className="text-xs font-bold text-slate-500 mr-2">
-    //           גננת אם (נעדרת)
-    //         </label>
-    //         <div className="relative">
-    //           <select
-    //             value={selectedManagerId}
-    //             onChange={(e) => setSelectedManagerId(e.target.value)}
-    //             className="w-full pr-10 pl-4 py-3 bg-slate-50 border-none rounded-xl focus:ring-2 focus:ring-indigo-500 font-medium appearance-none"
-    //           >
-    //             <option value="">בחרי גננת…</option>
-    //             {data.managers.map((m) => (
-    //               <option key={m.id} value={m.id}>
-    //                 {m.firstName} {m.lastName} (
-    //                 {m.mainManagedInstitutions?.[0]?.name || "ללא גן"})
-    //               </option>
-    //             ))}
-    //           </select>
-    //           <GraduationCap
-    //             className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400"
-    //             size={16}
-    //           />
-    //         </div>
-    //       </div> */}
-
-    //       {/* מצב */}
-    //       <div className="space-y-2">
-    //         <label className="text-xs font-bold text-slate-500 mr-2">
-    //           סוג דיווח
-    //         </label>
-    //         <div className="grid grid-cols-3 gap-2 bg-slate-100 p-1 rounded-2xl">
-    //           {[
-    //             { key: "pending", label: "דיווח", icon: Clock },
-    //             { key: "assign", label: "שיבוץ", icon: UserPlus },
-    //             { key: "closed", label: "סגירה", icon: Home },
-    //           ].map(({ key, label, icon: Icon }) => (
-    //             <button
-    //               key={key}
-    //               type="button"
-    //               onClick={() => setMode(key as any)}
-    //               className={`flex flex-col items-center gap-1 p-3 rounded-xl text-[11px] font-bold transition-all ${
-    //                 mode === key
-    //                   ? "bg-white shadow text-indigo-600"
-    //                   : "text-slate-500"
-    //               }`}
-    //             >
-    //               <Icon size={18} />
-    //               {label}
-    //             </button>
-    //           ))}
-    //         </div>
-    //       </div>
-
-    //       {/* שדות דינמיים */}
-    //       {mode === "assign" && (
-    //         <div className="space-y-2 animate-in slide-in-from-top-2">
-    //           <label className="text-xs font-bold text-slate-500 mr-2">
-    //             גננת מחליפה
-    //           </label>
-    //           <div className="relative">
-    //             <select
-    //               value={selectedSubId}
-    //               onChange={(e) => setSelectedSubId(e.target.value)}
-    //               className="w-full pr-10 pl-4 py-3 bg-emerald-50 border-none rounded-xl focus:ring-2 focus:ring-emerald-500 font-medium appearance-none"
-    //             >
-    //               <option value="">בחרי מחליפה…</option>
-    //               {data.substitutes.map((s) => (
-    //                 <option key={s.id} value={s.id}>
-    //                   {s.firstName} {s.lastName}
-    //                 </option>
-    //               ))}
-    //             </select>
-    //             <UserPlus
-    //               className="absolute right-3 top-1/2 -translate-y-1/2 text-emerald-400"
-    //               size={16}
-    //             />
-    //           </div>
-    //         </div>
-    //       )}
-
-    //       {mode === "pending" && (
-    //         <div className="p-4 bg-amber-50 border border-amber-100 rounded-xl text-xs text-amber-800 flex gap-2 items-center">
-    //           <Clock size={14} /> יישמר במצב ממתין.
-    //         </div>
-    //       )}
-
-    //       {mode === "closed" && (
-    //         <div className="p-4 bg-red-50 border border-red-100 rounded-xl text-xs text-red-800 flex gap-2 items-center">
-    //           <Check size={14} /> הגן יסומן כסגור.
-    //         </div>
-    //       )}
-
-    //       {/* Footer */}
-    //       <div className="flex gap-4 pt-4">
-    //         <button
-    //           type="submit"
-    //           disabled={loading}
-    //           className="flex-[2] py-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl font-black shadow-lg shadow-indigo-100 active:scale-95 transition"
-    //         >
-    //           {loading ? "שומר..." : "אישור"}
-    //         </button>
-    //         <button
-    //           type="button"
-    //           onClick={onClose}
-    //           className="flex-1 py-4 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-2xl font-bold"
-    //         >
-    //           ביטול
-    //         </button>
-    //       </div>
-    //     </form>
-    //   </div>
-    // </div>
-
     <div
       className="fixed inset-0 z-[110] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4"
       dir="rtl"
@@ -4547,9 +4544,7 @@ export default function AddPlacementModal({
         <div className="p-6 bg-white border-b border-slate-50">
           <div className="flex justify-between items-center">
             <div>
-              <h2 className="text-xl font-black text-slate-800">
-                הוספת דיווח 
-              </h2>
+              <h2 className="text-xl font-black text-slate-800">הוספת דיווח</h2>
               <p className="text-slate-400 text-xs mt-1">
                 לתאריך {new Date(date).toLocaleDateString("he-IL")}
               </p>
@@ -4572,41 +4567,30 @@ export default function AddPlacementModal({
                 : "גננת רוטציה (נעדרת)"}
             </label>
             <div className="relative">
-              <select
+              <CustomDropdown
+                label="בחרי גננת"
+                placeholder="בחרי גננת..."
                 value={selectedAbsentId}
-                onChange={(e) => setSelectedAbsentId(e.target.value)}
-                className="w-full pr-10 pl-4 py-3 bg-slate-50 border-none rounded-xl focus:ring-2 focus:ring-indigo-500 font-bold text-slate-700 appearance-none text-sm"
-              >
-                <option value="">בחרי גננת...</option>
-                {activeTab === "MANAGER"
-                  ? data.managers.map((m) => (
-                      <option key={m.id} value={m.id}>
-                        {m.firstName} {m.lastName} (
-                        {m.mainManagedInstitutions?.[0]?.name})
-                      </option>
-                    ))
-                  : data.rotations.map((r) => (
-                      <option
-                        key={r.rotationTeacher.id}
-                        value={r.rotationTeacher.id}
-                      >
-                        {r.rotationTeacher.firstName}{" "}
-                        {r.rotationTeacher.lastName} (גן{" "}
-                        {r.manager.mainManagedInstitutions?.[0]?.name})
-                      </option>
-                    ))}
-              </select>
-              {activeTab === "MANAGER" ? (
-                <GraduationCap
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400"
-                  size={16}
-                />
-              ) : (
-                <RefreshCcw
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400"
-                  size={16}
-                />
-              )}
+                onChange={(id) => setSelectedAbsentId(id)}
+                icon={activeTab === "MANAGER" ? User : RefreshCcw} // אפשר לשים אייקון אם רוצים
+                options={
+                  activeTab === "MANAGER"
+                    ? data.managers.map((m) => ({
+                        id: m.id,
+                        label: `${m.firstName} ${m.lastName} (${
+                          m.mainManagedInstitutions?.[0]?.name || ""
+                        })`,
+                      }))
+                    : data.rotations.map((r) => ({
+                        id: r.rotationTeacher.id,
+                        label: `${r.rotationTeacher.firstName} ${
+                          r.rotationTeacher.lastName
+                        } (גן ${
+                          r.manager.mainManagedInstitutions?.[0]?.name || ""
+                        })`,
+                      }))
+                }
+              />
             </div>
           </div>
 
@@ -4644,31 +4628,20 @@ export default function AddPlacementModal({
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mr-1">
                 גננת מחליפה
               </label>
-              <div className="relative">
-                <select
-                  value={selectedSubId}
-                  onChange={(e) => setSelectedSubId(e.target.value)}
-                  className="w-full pr-10 pl-4 py-3 bg-slate-50 border-none rounded-xl focus:ring-2 focus:ring-slate-500 font-bold text-slate-700 appearance-none text-sm shadow-inner"
-                >
-                  <option value="">בחרי מחליפה...</option>
-                  {getSubOptions().map((s) => (
-                    <option
-                      key={s.id}
-                      value={s.id}
-                      className={
-                        s.isMainManager ? "text-indigo-700 font-black" : ""
-                      }
-                    >
-                      {s.firstName} {s.lastName}{" "}
-                      {s.isMainManager ? "(גננת אם)" : ""}
-                    </option>
-                  ))}
-                </select>
-                <UserPlus
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500"
-                  size={16}
-                />
-              </div>
+
+              <CustomDropdown
+                label="" // כי כבר יש label חיצוני
+                placeholder="בחרי מחליפה..."
+                value={selectedSubId}
+                onChange={(id) => setSelectedSubId(id)}
+                icon={UserPlus}
+                options={getSubOptions().map((s) => ({
+                  id: s.id,
+                  label: `${s.firstName} ${s.lastName} ${
+                    s.isMainManager ? "(גננת אם)" : ""
+                  }`,
+                }))}
+              />
             </div>
           )}
 
@@ -4703,6 +4676,7 @@ import { useState, useEffect } from "react";
 import { X, UserCheck, Clock, Info, Calendar } from "lucide-react";
 import FormInput from "./FormInput";
 import { validations } from "@/utils/validations";
+import LoadingScreen from "./ui/LoadingScreen";
 
 export default function AddSubstituteModal({
   isOpen,
@@ -4731,6 +4705,15 @@ export default function AddSubstituteModal({
     THURSDAY: { active: true, instId: "" },
     FRIDAY: { active: true, instId: "" },
   });
+
+  const dayTranslations: Record<string, string> = {
+    SUNDAY: "ראשון",
+    MONDAY: "שני",
+    TUESDAY: "שלישי",
+    WEDNESDAY: "רביעי",
+    THURSDAY: "חמישי",
+    FRIDAY: "שישי",
+  };
 
   useEffect(() => {
     if (isOpen) {
@@ -4799,6 +4782,14 @@ export default function AddSubstituteModal({
         password: "",
         dateOfBirth: "",
       });
+      setSchedule({
+        SUNDAY: { active: true, instId: "" },
+        MONDAY: { active: true, instId: "" },
+        TUESDAY: { active: true, instId: "" },
+        WEDNESDAY: { active: true, instId: "" },
+        THURSDAY: { active: true, instId: "" },
+        FRIDAY: { active: true, instId: "" },
+      });
     } catch (err: any) {
       alert(err.message || "שגיאה ברישום");
     } finally {
@@ -4807,7 +4798,7 @@ export default function AddSubstituteModal({
   };
 
   if (!isOpen) return null;
-
+  console.log("Schedule state:", schedule);
   return (
     <div
       className="fixed inset-0 z-[150] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4"
@@ -4821,7 +4812,27 @@ export default function AddSubstituteModal({
             רישום גננת מחליפה או רוטציה
           </p>
           <button
-            onClick={onClose}
+            onClick={() => {
+              setFormDataState({
+                firstName: "",
+                lastName: "",
+                idNumber: "",
+                phoneNumber: "",
+                email: "",
+                password: "",
+                dateOfBirth: "",
+              });
+              setSchedule({
+                SUNDAY: { active: true, instId: "" },
+                MONDAY: { active: true, instId: "" },
+                TUESDAY: { active: true, instId: "" },
+                WEDNESDAY: { active: true, instId: "" },
+                THURSDAY: { active: true, instId: "" },
+                FRIDAY: { active: true, instId: "" },
+              });
+              setRole("SUBSTITUTE");
+              onClose();
+            }}
             className="absolute top-6 left-6 p-2 hover:bg-white/10 rounded-full"
           >
             <X size={24} />
@@ -4899,23 +4910,40 @@ export default function AddSubstituteModal({
               className="md:col-span-2"
             />
           </div>
+          <div className="space-y-4">
+            <div className="flex items-center gap-2 text-slate-900 font-black text-sm pb-3 border-b-2 border-slate-200">
+              <Calendar size={16} className="text-indigo-600" />
+              הגדרת ימי עבודה
+            </div>
 
-          {/*כרגע מוותרת על ימי חופשה לרוטציה */}
-          {role === "SUBSTITUTE" && (
-            <div className="space-y-4 animate-in slide-in-from-top-4">
-              <div className="flex items-center gap-2 text-slate-900 font-black text-xs uppercase border-b pb-2">
-                <Calendar size={14} /> הגדרת ימי עבודה
-              </div>
-
+            <div className="grid gap-3">
               {Object.keys(schedule).map((day) => (
                 <div
                   key={day}
-                  className={`flex items-center gap-4 p-4 rounded-2xl border ${
+                  className={`flex items-center justify-between p-4 rounded-xl border-2 transition-all ${
                     schedule[day].active
-                      ? "bg-white border-emerald-100"
-                      : "bg-slate-50 border-slate-100 opacity-60"
+                      ? "bg-emerald-50 border-emerald-200"
+                      : "bg-slate-50 border-slate-200"
                   }`}
                 >
+                  {/* Right side - Day info */}
+                  <div className="flex items-center gap-3">
+                    <div
+                      className={`w-2 h-2 rounded-full ${
+                        schedule[day].active ? "bg-emerald-500" : "bg-slate-400"
+                      }`}
+                    />
+                    <div>
+                      <p className="text-sm font-black text-slate-900">
+                        {dayTranslations[day]}
+                      </p>
+                      <p className="text-xs font-bold text-slate-500">
+                        {schedule[day].active ? "יום עבודה פעיל" : "יום חופש"}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Left side - Toggle button */}
                   <button
                     type="button"
                     onClick={() =>
@@ -4927,21 +4955,18 @@ export default function AddSubstituteModal({
                         },
                       })
                     }
-                    className={`w-24 py-2 rounded-lg text-[10px] font-black ${
+                    className={`px-4 py-2 rounded-lg text-xs font-black transition-all ${
                       schedule[day].active
-                        ? "bg-slate-900 text-white"
-                        : "bg-slate-200 text-slate-400"
+                        ? "bg-slate-900 text-white hover:bg-slate-800"
+                        : "bg-emerald-600 text-white hover:bg-emerald-700"
                     }`}
                   >
-                    {day}
+                    {schedule[day].active ? "סמן כיום חופש" : "סמן כיום עבודה"}
                   </button>
-                  <span className="text-sm font-bold text-slate-600">
-                    {schedule[day].active ? "יום עבודה פעיל" : "יום חופש"}
-                  </span>
                 </div>
               ))}
             </div>
-          )}
+          </div>
 
           {role === "SUBSTITUTE" && (
             <div className="p-6 bg-amber-50 rounded-2xl border border-amber-100 flex gap-4">
@@ -4990,6 +5015,9 @@ import {
 import ValidatedField from "./ValidatedField";
 import { validations } from "@/utils/validations";
 import FormInput from "./FormInput";
+import LoadingScreen from "./ui/LoadingScreen";
+import CustomDropdown from "./ui/CustomDropdown";
+import { InputChange } from "@/types";
 
 type AddUserFormData = {
   firstName: string;
@@ -5021,11 +5049,15 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }: any) {
     instructorId: "",
   });
 
-  const handleInputChange = (
-    e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>
-  ) => {
-    const { name, value } = e.target;
-    setFormData((prev) => ({ ...prev, [name]: value }));
+  const handleInputChange = (e: InputChange) => {
+    if ("target" in e) {
+      // Event רגיל
+      const { name, value } = e.target;
+      setFormData((prev) => ({ ...prev, [name]: value }));
+    } else {
+      // { name, value } מה־CustomDropdown
+      setFormData((prev) => ({ ...prev, [e.name]: e.value }));
+    }
   };
 
   const toggleFreeDay = (day: string) => {
@@ -5086,7 +5118,7 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }: any) {
       const payload = {
         ...formData,
         roles: selectedRoles,
-       rotationData: rotationData,
+        rotationData: rotationData,
         workDays: [
           "SUNDAY",
           "MONDAY",
@@ -5129,7 +5161,7 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }: any) {
 
   return (
     <div
-      className="fixed inset-0 z-[150] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 overflow-y-auto animate-in fade-in duration-300"
+      className="fixed inset-0 z-[150] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 overflow-y-scroll animate-in fade-in duration-300"
       dir="rtl"
     >
       <div className="bg-white w-full max-w-2xl rounded-[2.5rem] shadow-2xl my-auto overflow-hidden flex flex-col max-h-[95vh] border border-slate-100">
@@ -5149,7 +5181,22 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }: any) {
               </p>
             </div>
             <button
-              onClick={onClose}
+              onClick={() => {
+                setFormData({
+                  firstName: "",
+                  lastName: "",
+                  idNumber: "",
+                  phoneNumber: "",
+                  email: "",
+                  password: "",
+                  dateOfBirth: "",
+                  instructorId: "",
+                });
+                setSelectedRoles([]);
+                setFreeDays([]);
+                setRotationData({})
+                onClose();
+              }}
               className="p-2 hover:bg-white/10 rounded-full transition-colors"
             >
               <X size={24} />
@@ -5280,44 +5327,51 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }: any) {
                   // מציגים רק גננות שאין להן שום שיבוץ (assignment) ביום הזה
                   const availableRotationsForThisDay = rotations.filter(
                     (rt) => {
+                      // בדיקה שהיום נמצא בימי העבודה שלה
+                      const worksThisDay = rt.workDays?.includes(dayId);
+
+                      // בדיקה שהיא לא תפוסה כבר בגן אחר קבוע
                       const isBusyThisDay = rt.fixedRotationsAsRotation?.some(
                         (assignment: any) => assignment.day === dayId
                       );
-                      return !isBusyThisDay;
+
+                      return worksThisDay && !isBusyThisDay;
                     }
                   );
 
                   return (
                     <div
                       key={dayId}
-                      className="flex items-center justify-between p-4 bg-indigo-50/30 rounded-2xl border border-indigo-100 shadow-sm transition-all hover:bg-indigo-50/50"
+                      className="flex items-center justify-between gap-4 p-4 bg-indigo-50/30 rounded-2xl border border-indigo-100 shadow-sm transition-all hover:bg-indigo-50/50"
                     >
-                      <div className="flex flex-col">
-                        <span className="text-[10px] font-black text-indigo-400 uppercase tracking-tighter">
+                      <div className="flex items-center gap-3 text-right">
+                        <span className="text-[10px] font-black text-indigo-400 uppercase tracking-tighter whitespace-nowrap">
                           יום {dayNames[dayId]}
                         </span>
-                        <span className="text-sm font-bold text-slate-700">
+
+                        <span className="text-sm font-bold text-slate-700 whitespace-nowrap">
                           גננת משלימה קבועה
                         </span>
                       </div>
 
-                      <select
-                        className="w-48 p-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold shadow-sm outline-none focus:ring-2 focus:ring-indigo-500 transition-all cursor-pointer"
-                        value={rotationData[dayId] || ""}
-                        onChange={(e) =>
-                          setRotationData({
-                            ...rotationData,
-                            [dayId]: e.target.value,
-                          })
-                        }
-                      >
-                        <option value="">-- בחרי גננת פנויה --</option>
-                        {availableRotationsForThisDay.map((rt) => (
-                          <option key={rt.id} value={rt.id}>
-                            {rt.firstName} {rt.lastName}
-                          </option>
-                        ))}
-                      </select>
+                      <div className="w-48 shrink-0">
+                        <CustomDropdown
+                          
+                          label=""
+                          value={rotationData[dayId] || ""}
+                          placeholder="חפשי גננת פנויה"
+                          options={availableRotationsForThisDay.map((rt) => ({
+                            id: rt.id,
+                            label: `${rt.firstName} ${rt.lastName}`,
+                          }))}
+                          onChange={(id) =>
+                            setRotationData({
+                              ...rotationData,
+                              [dayId]: id,
+                            })
+                          }
+                        />
+                      </div>
                     </div>
                   );
                 })}
@@ -5378,54 +5432,33 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }: any) {
                 />
 
                 {/* תאריך לידה */}
-                <div
-                  className={`space-y-2 ${
-                    isInstructor ? "col-span-2" : "col-span-1"
-                  }`}
-                >
-                  <label className="text-xs font-bold text-slate-500 mr-2">
-                    תאריך לידה
-                  </label>
-                  <div className="relative">
-                    <input
-                      name="dateOfBirth"
-                      type="date"
-                      required
-                      value={formData.dateOfBirth}
-                      onChange={handleInputChange}
-                      className="w-full pr-10 pl-4 py-3 bg-slate-50 border-none rounded-xl focus:ring-2 focus:ring-indigo-500 font-medium"
-                    />
-                    <Calendar
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400"
-                      size={16}
-                    />
-                  </div>
+                <div className={isInstructor ? "col-span-2" : "col-span-1"}>
+                  <FormInput
+                    kind="dateOfBirth"
+                    value={formData.dateOfBirth}
+                    onChange={handleInputChange}
+                  />
                 </div>
 
                 {/* מדריכה מלווה - רק אם לא מדריכה */}
                 {!isInstructor && (
                   <div className="space-y-2">
-                    <label className="text-xs font-bold text-slate-500 mr-2">
-                      מדריכה מלווה
-                    </label>
                     <div className="relative">
-                      <select
-                        name="instructorId"
-                        required
+                      <CustomDropdown
+                        label="מדריכה מלווה"
+                        placeholder="בחרי מדריכה..."
                         value={formData.instructorId}
-                        onChange={handleInputChange}
-                        className="w-full pr-10 pl-4 py-3 bg-indigo-50/50 border-none rounded-xl focus:ring-2 focus:ring-indigo-500 font-bold text-indigo-700 outline-none appearance-none"
-                      >
-                        <option value="">בחרי מדריכה...</option>
-                        {instructors.map((i) => (
-                          <option key={i.id} value={i.id}>
-                            {i.firstName} {i.lastName}
-                          </option>
-                        ))}
-                      </select>
-                      <GraduationCap
-                        className="absolute right-3 top-1/2 -translate-y-1/2 text-indigo-400"
-                        size={16}
+                        options={instructors.map((i) => ({
+                          id: i.id,
+                          label: `${i.firstName} ${i.lastName}`,
+                        }))}
+                        onChange={(val) =>
+                          handleInputChange({
+                            name: "instructorId",
+                            value: val,
+                          })
+                        }
+                        icon={GraduationCap}
                       />
                     </div>
                   </div>
@@ -5458,173 +5491,12 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }: any) {
 }
 
 ==============================
-FILE: src/components\CalendarView.tsx
-==============================
-"use client";
-import { useState, useEffect } from "react";
-import {
-  format,
-  startOfMonth,
-  endOfMonth,
-  eachDayOfInterval,
-  addMonths,
-  subMonths,
-  isSameDay,
-} from "date-fns";
-import { he } from "date-fns/locale";
-
-export default function CalendarView({
-  supervisorId,
-}: {
-  supervisorId: string;
-}) {
-  const [currentDate, setCurrentDate] = useState(new Date());
-  const [placements, setPlacements] = useState([]);
-
-  // פונקציה להבאת נתונים
-  const fetchMonthData = async () => {
-    const month = currentDate.getMonth() + 1;
-    const year = currentDate.getFullYear();
-    const res = await fetch(
-      `/api/calendar?month=${month}&year=${year}&supervisorId=${supervisorId}`
-    );
-    const data = await res.json();
-    setPlacements(data);
-  };
-
-  useEffect(() => {
-    fetchMonthData();
-  }, [currentDate]);
-
-  const days = eachDayOfInterval({
-    start: startOfMonth(currentDate),
-    end: endOfMonth(currentDate),
-  });
-
-  const handleDelete = async (id: string) => {
-    if (!confirm("האם את בטוחה שברצונך למחוק את הדיווח הזה לצמיתות?")) return;
-
-    try {
-      const res = await fetch(`/api/calendar`, {
-        method: "DELETE",
-        headers: { "Content-...": "application/json" },
-        body: JSON.stringify({ id }),
-      });
-
-      if (res.ok) {
-        // עדכון ה-State המקומי כדי שהדיווח ייעלם מהמסך מיד
-        setPlacements((prev) => prev.filter((p: any) => p.id !== id));
-        alert("הדיווח נמחק בהצלחה");
-      } else {
-        alert("שגיאה במחיקת הדיווח");
-      }
-    } catch (error) {
-      console.error("Delete error:", error);
-      alert("תקלה בתקשורת עם השרת");
-    }
-  };
-
-  return (
-    <div className="p-6 bg-white rounded-2xl shadow-xl">
-      {/* כותרת וניווט */}
-      <div className="flex justify-between items-center mb-8">
-        <button
-          onClick={() => setCurrentDate(subMonths(currentDate, 1))}
-          className="p-2 border rounded hover:bg-gray-50"
-        >
-          חודש הקודם
-        </button>
-        <h2 className="text-2xl font-bold capitalize">
-          {format(currentDate, "MMMM yyyy", { locale: he })}
-        </h2>
-        <button
-          onClick={() => setCurrentDate(addMonths(currentDate, 1))}
-          className="p-2 border rounded hover:bg-gray-50"
-        >
-          חודש הבא
-        </button>
-      </div>
-
-      {/* גריד הלוח */}
-      <div className="grid grid-cols-7 gap-2 border-t border-r">
-        {["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת"].map(
-          (day) => (
-            <div
-              key={day}
-              className="p-2 text-center font-bold bg-gray-100 border-l border-b"
-            >
-              {day}
-            </div>
-          )
-        )}
-
-        {days.map((day) => {
-          const isSaturday = day.getDay() === 6;
-          const dayPlacements = placements.filter((p: any) =>
-            isSameDay(new Date(p.date), day)
-          );
-
-          return (
-            <div
-              key={day.toString()}
-              className={`min-h-[120px] p-2 border-l border-b transition-colors ${
-                isSaturday ? "bg-gray-100 text-gray-400" : "hover:bg-blue-50/30"
-              }`}
-            >
-              <span className="text-sm font-medium">{format(day, "d")}</span>
-
-              {isSaturday ? (
-                <div className="mt-4 text-center font-bold text-gray-500">
-                  יום מנוחה
-                </div>
-              ) : (
-                <div className="mt-2 space-y-1">
-                  {dayPlacements.map((p: any) => (
-                    <div
-                      key={p.id}
-                      className="text-[10px] p-1.5 bg-white border rounded shadow-sm group relative"
-                    >
-                      <p>
-                        <strong>גננת אם:</strong> {p.mainTeacher.firstName}
-                      </p>
-                      <p
-                        className={
-                          p.status === "OPEN"
-                            ? "text-red-500 font-bold"
-                            : "text-green-600"
-                        }
-                      >
-                        <strong>מחליפה:</strong>{" "}
-                        {p.substitute
-                          ? p.substitute.firstName
-                          : p.status === "CANCELLED"
-                          ? "גן סגור"
-                          : "ממתין לעדכון"}
-                      </p>
-                      <button
-                        onClick={() => handleDelete(p.id)}
-                        className="hidden group-hover:block absolute top-0 left-0 bg-red-100 text-red-600 px-1 rounded"
-                      >
-                        X
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-==============================
 FILE: src/components\EditInstitutionModal.tsx
 ==============================
 "use client";
 import { useState, useEffect } from "react";
 import { X, Building2, MapPin, Hash, User, Save, Loader2, Search, Info } from "lucide-react";
+import LoadingScreen from "./ui/LoadingScreen";
 
 export default function EditInstitutionModal({ isOpen, onClose, onSuccess, institution }: any) {
   const [managers, setManagers] = useState<any[]>([]);
@@ -5760,7 +5632,7 @@ export default function EditInstitutionModal({ isOpen, onClose, onSuccess, insti
 
           <div className="flex gap-4 pt-4">
             <button type="submit" disabled={loading} className="flex-[2] py-4 bg-indigo-600 text-white rounded-2xl font-black shadow-lg hover:bg-indigo-700 transition-all flex items-center justify-center gap-2">
-              {loading ? <Loader2 className="animate-spin" /> : <><Save size={18} /> שמירת שינויים</>}
+              {loading ? <LoadingScreen /> : <><Save size={18} /> שמירת שינויים</>}
             </button>
             <button type="button" onClick={onClose} className="flex-1 py-4 bg-slate-100 text-slate-600 rounded-2xl font-bold">ביטול</button>
           </div>
@@ -5770,6 +5642,550 @@ export default function EditInstitutionModal({ isOpen, onClose, onSuccess, insti
   );
 }
 ==============================
+FILE: src/components\EditUserModal.tsx
+==============================
+"use client";
+
+import { useState, useEffect } from "react";
+import {
+  X,
+  Award,
+  Shield,
+  Save,
+  Clock,
+  User as UserIcon,
+  Power,
+  UserCheck,
+  UserMinus,
+  PersonStanding,
+  RefreshCcw,
+} from "lucide-react";
+import FormInput from "./FormInput";
+import ReassignTeachersModal from "./ReassignTeachersModal";
+import CustomDropdown from "./ui/CustomDropdown";
+
+
+
+export default function EditUserModal({
+  user,
+  isOpen,
+  onClose,
+  onUpdateSuccess,
+}: any) {
+  const [loading, setLoading] = useState(false);
+  const [instructors, setInstructors] = useState<any[]>([]);
+  const [rotations, setRotations] = useState<any[]>([]);
+  const [isRoleOpen, setIsRoleOpen] = useState(false);
+  const [rotationData, setRotationData] = useState<Record<string, string>>({});
+  const [isInstructorOpen, setIsInstructorOpen] = useState(false);
+  const [openRotationDay, setOpenRotationDay] = useState<string | null>(null);
+  const [showReassignModal, setShowReassignModal] = useState(false);
+  const [orphanedTeachers, setOrphanedTeachers] = useState([]);
+  const [lastDisabledId, setLastDisabledId] = useState<string | null>(null);
+
+  const [formData, setFormData] = useState({
+    firstName: user.firstName || "",
+    lastName: user.lastName || "",
+    email: user.email || "",
+    idNumber: user.idNumber || "",
+    phoneNumber: user.phoneNumber || "",
+    roles: user.roles || [],
+    isWorking: user.isWorking ?? true,
+    instructorId: user.instructorId || "",
+    workDays: user.workDays || [
+      "SUNDAY",
+      "MONDAY",
+      "TUESDAY",
+      "WEDNESDAY",
+      "THURSDAY",
+      "FRIDAY",
+    ],
+    rotationTeacherId: user.rotationTeacherId || "",
+    dateOfBirth: user.dateOfBirth || "",
+  });
+
+  const ALLOWED_ROLE_COMBINATIONS = [
+    { id: "MANAGER_ONLY", label: "גננת אם בלבד", roles: ["MANAGER"] },
+    { id: "INSTRUCTOR_ONLY", label: "מדריכה בלבד", roles: ["INSTRUCTOR"] },
+    {
+      id: "MANAGER_INSTRUCTOR",
+      label: "גננת אם וגם מדריכה",
+      roles: ["MANAGER", "INSTRUCTOR"],
+    },
+    { id: "SUBSTITUTE_ONLY", label: "מחליפה בלבד", roles: ["SUBSTITUTE"] },
+    { id: "ROTATION_ONLY", label: "רוטציה בלבד", roles: ["ROTATION"] },
+  ];
+
+  const weekDays = [
+    { id: "SUNDAY", label: "א'" },
+    { id: "MONDAY", label: "ב'" },
+    { id: "TUESDAY", label: "ג'" },
+    { id: "WEDNESDAY", label: "ד'" },
+    { id: "THURSDAY", label: "ה'" },
+    { id: "FRIDAY", label: "ו'" },
+  ];
+
+  useEffect(() => {
+    if (!isOpen || !user) return;
+
+    // טעינת מדריכות
+    fetch("/api/supervisor/instructors")
+      .then((res) => res.json())
+      .then((data) => setInstructors(Array.isArray(data) ? data : []));
+
+    // טעינת גננות רוטציה
+    fetch("/api/supervisor/users-stats")
+      .then((res) => res.json())
+      .then((data) => {
+        setRotations(data.filter((u: any) => u.roles.includes("ROTATION")));
+      });
+
+    // ⬅️ אתחול נכון של rotationData מתוך הנתון של המשתמשת
+    const mapping: Record<string, string> = {};
+    if (
+      user.fixedRotationsAsManager &&
+      Array.isArray(user.fixedRotationsAsManager)
+    ) {
+      user.fixedRotationsAsManager.forEach((r: any) => {
+        mapping[r.day] = r.rotationTeacherId;
+      });
+    }
+
+    setRotationData(mapping);
+
+    setRotationData(mapping);
+  }, [user, isOpen]);
+
+  const getCurrentComboId = () => {
+    const combo = ALLOWED_ROLE_COMBINATIONS.find(
+      (c) =>
+        c.roles.length === formData.roles.length &&
+        c.roles.every((r) => formData.roles.includes(r))
+    );
+    return combo ? combo.id : null;
+  };
+
+  const handleInputChange = (e: any) => {
+    const { name, value } = e.target;
+    setFormData((prev) => ({ ...prev, [name]: value }));
+  };
+
+  const toggleWorkDay = (dayId: string) => {
+    setFormData((prev: any) => ({
+      ...prev,
+      workDays: prev.workDays.includes(dayId)
+        ? prev.workDays.filter((d: string) => d !== dayId)
+        : [...prev.workDays, dayId],
+    }));
+  };
+
+  const handleUpdate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+
+    try {
+      // 1. יצירת עותק נקי של נתוני הרוטציה
+      const cleanedRotationData = { ...rotationData };
+
+      // 2. טיפול באופציית REMOVE:
+      // אנחנו עוברים על כל הימים, ואם נבחר REMOVE, נהפוך אותו לערך ריק
+      // כדי שהשרת ידע לא ליצור את השיבוץ הזה מחדש
+      Object.keys(cleanedRotationData).forEach((day) => {
+        if (cleanedRotationData[day] === "REMOVE") {
+          cleanedRotationData[day] = "";
+        }
+      });
+
+      const payload = {
+        ...formData,
+        rotationData: cleanedRotationData, // שולחים את הנתונים המנוקים
+        dateOfBirth: formData.dateOfBirth
+          ? new Date(formData.dateOfBirth).toISOString()
+          : null,
+      };
+
+      const res = await fetch(`/api/supervisor/users/${user.id}`, {
+        method: "PATCH",
+        body: JSON.stringify(payload),
+        headers: { "Content-Type": "application/json" },
+      });
+
+      const data = await res.json();
+
+      if (res.ok) {
+        if (data.needsReassignment) {
+          setOrphanedTeachers(data.orphanedManagers);
+          setLastDisabledId(user.id); // <-- שמירת ה-ID של המדריכה שהרגע הושבתה
+          setShowReassignModal(true);
+        } else {
+          onUpdateSuccess();
+          onClose();
+        }
+      }
+    } catch (err) {
+      console.error("Update error:", err);
+      alert("שגיאת תקשורת עם השרת");
+    } finally {
+      setLoading(false);
+    }
+  };
+  const handleComboSelect = (roles: string[]) => {
+    setFormData((prev: any) => ({ ...prev, roles }));
+  };
+
+  const handleCancelDisabling = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/supervisor/users/${user.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isWorking: true }), // מחזירים לפעילה
+      });
+
+      if (res.ok) {
+        setShowReassignModal(false);
+        onUpdateSuccess();
+        onClose(); // סוגרים את הכל
+      }
+    } catch (err) {
+      alert("שגיאה בביטול ההשבתה");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (!isOpen) return null;
+  // פונקציית עזר להצגת שם הרוטציה הנוכחית אם יש
+  const getRotationLabel = (
+    dayId: string,
+    availableRotationsForThisDay: any[],
+    existingRotation: any
+  ) => {
+    const selectedId = rotationData[dayId];
+
+    if (selectedId === "REMOVE") return "❌ הסרת שיבוץ";
+
+    if (selectedId) {
+      const selected = availableRotationsForThisDay.find(
+        (r) => r.id === selectedId
+      );
+      if (selected) return `${selected.firstName} ${selected.lastName}`;
+    }
+
+    if (existingRotation) {
+      return `נוכחית: ${existingRotation.rotationTeacher.firstName} ${existingRotation.rotationTeacher.lastName}`;
+    }
+
+    return "-- בחרי גננת פנויה --";
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-150 bg-slate-900/60 backdrop-blur-sm p-4 flex items-center justify-center animate-in fade-in duration-300"
+      dir="rtl"
+    >
+      <div className="bg-white w-full max-w-3xl rounded-[2.5rem] shadow-2xl flex flex-col max-h-[95vh] border border-slate-100 overflow-hidden">
+        {/* Header */}
+        <div className="p-8 bg-slate-900 text-white flex justify-between items-center shrink-0">
+          <div className="flex items-center gap-4">
+            <div className="w-14 h-14 bg-indigo-600 rounded-2xl flex items-center justify-center shadow-lg">
+              <UserIcon size={30} />
+            </div>
+            <div>
+              <h2 className="text-2xl font-black">
+                {formData.firstName} {formData.lastName}
+              </h2>
+              <p className="text-slate-400 text-sm">ניהול ועריכת פרטי משתמשת</p>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-2 hover:bg-white/10 rounded-full transition-colors"
+          >
+            <X size={28} />
+          </button>
+        </div>
+
+        <form
+          onSubmit={handleUpdate}
+          className="flex-1 overflow-y-auto p-8 space-y-8 custom-calendar-scroll"
+        >
+          {/* פרטים אישיים */}
+          <section className="space-y-4">
+            <h4 className="font-black text-slate-700 flex items-center gap-2 text-lg border-b pb-2">
+              <Award size={20} className="text-indigo-500" /> פרטים אישיים
+            </h4>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <FormInput
+                name="firstName"
+                kind="firstName"
+                value={formData.firstName}
+                onChange={handleInputChange}
+              />
+              <FormInput
+                name="lastName"
+                kind="lastName"
+                value={formData.lastName}
+                onChange={handleInputChange}
+              />
+              <FormInput
+                name="idNumber"
+                kind="idNumber"
+                value={formData.idNumber}
+                onChange={handleInputChange}
+              />
+              <FormInput
+                name="phoneNumber"
+                kind="phone"
+                value={formData.phoneNumber}
+                onChange={handleInputChange}
+              />
+              <FormInput
+                name="email"
+                kind="email"
+                value={formData.email}
+                onChange={handleInputChange}
+              />
+              <FormInput
+                name="dateOfBirth"
+                kind="dateOfBirth"
+                value={formData.dateOfBirth || ""}
+                onChange={handleInputChange}
+              />
+            </div>
+          </section>
+
+          {/* הגדרת תפקידים */}
+          <section className="grid grid-cols-1 md:grid-cols-2 gap-8">
+            <div className="space-y-4">
+              <h4 className="font-black text-slate-700 flex items-center gap-2 text-lg border-b pb-2">
+                <Shield size={20} className="text-indigo-500" /> הגדרת תפקיד
+              </h4>
+
+              <CustomDropdown
+                label=""
+                searchable={false}
+                placeholder="בחרי תפקיד"
+                value={getCurrentComboId() || ""}
+                options={ALLOWED_ROLE_COMBINATIONS.map((combo) => ({
+                  id: combo.id,
+                  label: combo.label,
+                }))}
+                onChange={(id) => {
+                  const combo = ALLOWED_ROLE_COMBINATIONS.find(
+                    (c) => c.id === id
+                  );
+                  if (combo) handleComboSelect(combo.roles);
+                }}
+              />
+            </div>
+
+            {/* ימי עבודה / חופש */}
+            <div className="space-y-4">
+              <h4 className="font-black text-slate-700 flex items-center gap-2 text-lg border-b pb-2">
+                <Clock size={20} className="text-indigo-500" /> ימי עבודה / חופש
+              </h4>
+              <div className="grid grid-cols-6 gap-2">
+                {weekDays.map((day) => {
+                  const isActive = formData.workDays.includes(day.id);
+                  return (
+                    <button
+                      key={day.id}
+                      type="button"
+                      onClick={() => toggleWorkDay(day.id)}
+                      className={`w-14 h-14 rounded-2xl border-2 flex flex-col items-center justify-center transition-all ${
+                        isActive
+                          ? "bg-white border-slate-200 text-slate-700 hover:border-indigo-400"
+                          : "bg-red-50 border-red-500 text-red-700 shadow-sm"
+                      }`}
+                    >
+                      <span className="text-lg font-black">{day.label}</span>
+                      <span className="text-[8px] font-bold uppercase">
+                        {isActive ? "עבודה" : "חופש"}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </section>
+
+          {/* סטטוס עבודה */}
+          <section>
+            <h4 className="font-black text-slate-700 flex items-center gap-2 text-lg border-b pb-2">
+              <Power size={20} className="text-indigo-500" /> סטטוס עבודה
+            </h4>
+            <button
+              type="button"
+              onClick={() =>
+                setFormData((prev) => ({ ...prev, isWorking: !prev.isWorking }))
+              }
+              className={`w-full p-4 mt-2 rounded-2xl border-2 flex items-center justify-between transition-all ${
+                formData.isWorking
+                  ? "border-emerald-500 bg-emerald-50 text-emerald-700"
+                  : "border-red-500 bg-red-50 text-red-700"
+              }`}
+            >
+              <span className="font-black">
+                {formData.isWorking ? "עובדת פעילה" : "מושבתת / לא פעילה"}
+              </span>
+              {formData.isWorking ? <UserCheck /> : <UserMinus />}
+            </button>
+          </section>
+
+          {/* שיוך מדריכה / רוטציה */}
+          {formData.roles.includes("MANAGER") && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-start">
+              {/* מדריכה מלווה */}
+              <div className="space-y-4">
+                <div className="space-y-1">
+                  <h4 className="font-black text-slate-700 flex items-center gap-2 text-lg ">
+                    <PersonStanding size={20} className="text-indigo-500" />{" "}
+                    מדריכה מלווה
+                  </h4>
+                  <p className="text-[11px] text-slate-400 font-medium mb-2">
+                    המדריכה האחראית על גננת האם
+                  </p>
+                  <div className="border-b"></div>
+
+                  <div className="flex flex-col-1 pt-3 justify-start items-center">
+                    <span></span>
+                    <CustomDropdown
+                      label=""
+                      value={formData.instructorId || ""}
+                      placeholder="בחרי מדריכה..."
+                      options={instructors.map((i) => ({
+                        id: i.id,
+                        label: `${i.firstName} ${i.lastName}`,
+                      }))}
+                      onChange={(id) =>
+                        handleInputChange({
+                          target: { name: "instructorId", value: id },
+                        })
+                      }
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* רוטציה קבועה */}
+              <div className="space-y-4">
+                <div className="space-y-1">
+                  <h4 className="font-black text-slate-700 flex items-center gap-2 text-lg ">
+                    <RefreshCcw size={20} className="text-indigo-500" />
+                    הגדרת רוטציה קבועה
+                  </h4>
+                  <p className="text-[11px] text-slate-400 font-medium mb-2">
+                    שיבוץ גננת קבועה לימים שבהם גננת האם ביום חופשי.
+                  </p>
+                  <div className="border-b"></div>
+
+                  {weekDays.map((day) => {
+                    const isFreeDay = !formData.workDays.includes(day.id);
+                    if (!isFreeDay) return null;
+
+                    const existingRotation = user.fixedRotationsAsManager?.find(
+                      (r: any) => r.day === day.id
+                    );
+
+                    const availableRotationsForThisDay = rotations.filter(
+                      (rt) => {
+                        const worksThisDay = rt.workDays?.includes(day.id);
+                        const isBusyElsewhere =
+                          rt.fixedRotationsAsRotation?.some(
+                            (assignment: any) =>
+                              assignment.day === day.id &&
+                              assignment.managerId !== user.id
+                          );
+                        return worksThisDay && !isBusyElsewhere;
+                      }
+                    );
+
+                    return (
+                      <div
+                        key={day.id}
+                        className="flex flex-col-1 pt-3 gap-2 justify-start items-center"
+                      >
+                        <span className="text-xs font-black text-black uppercase">
+                          מחליפה ליום {day.label}
+                        </span>
+
+                        <CustomDropdown
+                          label=""
+                          value={rotationData[day.id] || ""}
+                          placeholder={
+                            existingRotation
+                              ? `${existingRotation.firstName} ${existingRotation.lastName}`
+                              : "-- בחרי גננת --"
+                          }
+                          options={availableRotationsForThisDay.map((rt) => ({
+                            id: rt.id,
+                            label: `${rt.firstName} ${rt.lastName}`,
+                          }))}
+                          onChange={(id) =>
+                            setRotationData({
+                              ...rotationData,
+                              [day.id]: id,
+                            })
+                          }
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Footer */}
+          <div className="pt-6 flex gap-4 mt-auto bottom-0 bg-white border-t border-slate-50">
+            <button
+              type="submit"
+              disabled={loading}
+              className="flex-[2] py-4 bg-indigo-600 text-white rounded-2xl font-black shadow-lg hover:bg-indigo-700 transition-all flex items-center justify-center gap-2"
+            >
+              {loading ? (
+                "מעדכן..."
+              ) : (
+                <>
+                  <Save size={20} /> שמירת כל השינויים
+                </>
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex-1 py-4 bg-slate-100 text-slate-600 rounded-2xl font-bold hover:bg-slate-200 transition-all"
+            >
+              ביטול
+            </button>
+          </div>
+        </form>
+        {showReassignModal && (
+          <ReassignTeachersModal
+            isOpen={showReassignModal}
+            teachers={orphanedTeachers}
+            instructors={instructors}
+            excludedId={lastDisabledId} // <-- שליחת ה-ID להחרגה
+            isForced={true}
+            onCancelDisabling={handleCancelDisabling}
+            onComplete={(remaining?: any) => {
+              if (remaining) {
+                setOrphanedTeachers(remaining);
+              } else {
+                setShowReassignModal(false);
+                onUpdateSuccess();
+                onClose();
+              }
+            }}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+==============================
 FILE: src/components\FormInput.tsx
 ==============================
 "use client";
@@ -5777,39 +6193,8 @@ FILE: src/components\FormInput.tsx
 import React, { InputHTMLAttributes } from "react";
 import { User, Mail, Phone, CreditCard, Lock, Calendar } from "lucide-react";
 import ValidatedField from "./ValidatedField";
-
-/* ===== טיפוסים ===== */
-
-type FieldKind =
-  | "firstName"
-  | "lastName"
-  | "email"
-  | "phone"
-  | "idNumber"
-  | "password"
-  | "dateOfBirth";
-
-type ValidatedName = "email" | "idNumber" | "phoneNumber";
-
-type BaseConfig = {
-  label: string;
-  placeholder: string;
-  icon: any;
-  name: string;
-  type?: string;
-  useValidation?: false;
-};
-
-type ValidatedConfig = {
-  label: string;
-  icon: any;
-  name: ValidatedName;
-  useValidation: true;
-};
-
-type FieldConfig = BaseConfig | ValidatedConfig;
-
-/* ===== קונפיג ===== */
+import { FieldConfig, FieldKind } from "@/types";
+import CustomDatePicker from "./ui/CustomDatePicker";
 
 const CONFIG: Record<FieldKind, FieldConfig> = {
   firstName: {
@@ -5854,7 +6239,7 @@ const CONFIG: Record<FieldKind, FieldConfig> = {
     label: "תאריך לידה",
     type: "date",
     icon: Calendar,
-    placeholder: "בחרי תאריך", 
+    placeholder: "בחרי תאריך",
   },
 };
 
@@ -5866,8 +6251,6 @@ interface FormInputProps extends InputHTMLAttributes<HTMLInputElement> {
   onChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
 }
 
-/* ===== קומפוננטה ===== */
-
 export default function FormInput({
   kind,
   value,
@@ -5876,7 +6259,21 @@ export default function FormInput({
 }: FormInputProps) {
   const config = CONFIG[kind];
   const Icon = config.icon;
+  const isLTR = ["password", "email", "phoneNumber", "idNumber"].includes(
+    config.name
+  );
 
+  if (kind === "dateOfBirth") {
+    return (
+      <CustomDatePicker
+        label={config.label}
+        value={value}
+        onChange={(val: any) =>
+          onChange({ target: { name: config.name, value: val } } as any)
+        }
+      />
+    );
+  }
   return (
     <div className="space-y-2">
       <label className="text-xs font-bold text-slate-500 mr-2">
@@ -5890,7 +6287,13 @@ export default function FormInput({
             label={config.label}
             value={value}
             onChange={onChange}
-            dir="ltr"
+            dir={
+              ["password", "email", "phoneNumber", "idNumber"].includes(
+                config.name
+              )
+                ? "ltr"
+                : "rtl"
+            }
           />
         ) : (
           <>
@@ -5902,10 +6305,22 @@ export default function FormInput({
               value={value}
               onChange={onChange}
               placeholder={config.placeholder}
+              dir={
+                ["password", "email", "phoneNumber", "idNumber"].includes(
+                  config.name
+                )
+                  ? "ltr"
+                  : "rtl"
+              }
               className="w-full px-4 py-3 bg-slate-50 border-none rounded-xl focus:ring-2 focus:ring-indigo-500 font-medium"
             />
+
             <Icon
-              className={`absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 ${config.name==="dateOfBirth" && "hidden"}`}
+              className={`absolute ${
+                isLTR ? "right-3" : "left-3"
+              } top-1/2 -translate-y-1/2 text-slate-400 ${
+                config.name === "dateOfBirth" ? "hidden" : ""
+              }`}
               size={16}
             />
           </>
@@ -6168,6 +6583,7 @@ import { useState, useEffect } from "react";
 import { X, Search, UserCheck, Loader2, AlertCircle, Home } from "lucide-react";
 import { format } from "date-fns";
 import { he } from "date-fns/locale";
+import LoadingScreen from "./ui/LoadingScreen";
 
 interface PlacementModalProps {
   placement: any;
@@ -6236,7 +6652,11 @@ export default function PlacementModal({
   };
 
   const handleCloseGarden = () => {
-    if (confirm(`האם את בטוחה שברצונך לסגור את גן ${placement.institution?.name} לתאריך זה?`)) {
+    if (
+      confirm(
+        `האם את בטוחה שברצונך לסגור את גן ${placement.institution?.name} לתאריך זה?`
+      )
+    ) {
       updatePlacement(null, "CANCELLED");
     }
   };
@@ -6250,22 +6670,30 @@ export default function PlacementModal({
   );
 
   return (
-    <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-[100] p-4 animate-in fade-in duration-300" dir="rtl">
+    <div
+      className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-[100] p-4 animate-in fade-in duration-300"
+      dir="rtl"
+    >
       <div className="bg-white w-full max-w-lg rounded-[2.5rem] shadow-2xl overflow-hidden flex flex-col max-h-[85vh] border border-slate-100">
-        
         {/* Header */}
         <div className="p-8 bg-slate-900 text-white flex justify-between items-center relative overflow-hidden shrink-0">
           <div className="absolute top-0 left-0 w-full h-full opacity-10 pointer-events-none">
             <div className="absolute -top-10 -right-10 w-32 h-32 bg-indigo-500 rounded-full blur-3xl"></div>
           </div>
-          
+
           <div className="relative z-10">
-            <h3 className="text-2xl font-black tracking-tight italic">עדכון סטטוס גן</h3>
+            <h3 className="text-2xl font-black tracking-tight italic">
+              עדכון סטטוס גן
+            </h3>
             <p className="text-slate-400 text-sm font-medium mt-1">
-              גן {placement.institution?.name} | {format(new Date(placement.date), "dd/MM/yyyy", { locale: he })}
+              גן {placement.institution?.name} |{" "}
+              {format(new Date(placement.date), "dd/MM/yyyy", { locale: he })}
             </p>
           </div>
-          <button onClick={onClose} className="relative z-10 p-2 hover:bg-white/10 rounded-full transition-colors">
+          <button
+            onClick={onClose}
+            className="relative z-10 p-2 hover:bg-white/10 rounded-full transition-colors"
+          >
             <X size={24} />
           </button>
         </div>
@@ -6277,7 +6705,10 @@ export default function PlacementModal({
             disabled={isProcessing}
             className="w-full flex items-center justify-center gap-3 p-4 bg-white rounded-2xl border-2 border-red-200 text-red-600 hover:bg-red-600 hover:text-white hover:border-red-600 transition-all shadow-sm group font-black uppercase text-sm tracking-widest disabled:opacity-50"
           >
-            <Home size={20} className="group-hover:scale-110 transition-transform" />
+            <Home
+              size={20}
+              className="group-hover:scale-110 transition-transform"
+            />
             סגירת הגן עקב חוסר במחליפה
           </button>
         </div>
@@ -6285,10 +6716,14 @@ export default function PlacementModal({
         {/* Search */}
         <div className="p-6 pb-2 shrink-0">
           <label className="block text-sm font-black text-slate-700 mb-3 flex items-center gap-2">
-            <UserCheck size={18} className="text-indigo-500" /> או שיבוץ מחליפה פנויה:
+            <UserCheck size={18} className="text-indigo-500" /> או שיבוץ מחליפה
+            פנויה:
           </label>
           <div className="relative group">
-            <Search className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-indigo-500 transition-colors" size={18} />
+            <Search
+              className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-indigo-500 transition-colors"
+              size={18}
+            />
             <input
               type="text"
               placeholder="חפשי לפי שם או טלפון..."
@@ -6302,15 +6737,16 @@ export default function PlacementModal({
         {/* List */}
         <div className="flex-1 overflow-y-auto px-6 pb-8 space-y-2 mt-4 custom-calendar-scroll">
           {loading ? (
-            <div className="flex flex-col items-center justify-center p-12 space-y-3">
-              <Loader2 className="animate-spin text-indigo-500 w-8 h-8" />
-              <p className="text-slate-400 text-sm font-bold">בודק זמינות מחליפות...</p>
-            </div>
+            <LoadingScreen message="בודק זמינות מחליפות..." />
           ) : filteredSubstitutes.length === 0 ? (
             <div className="text-center py-12 px-6 bg-slate-50 rounded-[2rem] border-2 border-dashed border-slate-200">
               <AlertCircle className="mx-auto text-slate-300 mb-4" size={32} />
-              <p className="text-slate-900 font-black text-lg">אין מחליפות פנויות</p>
-              <p className="text-slate-500 text-sm mt-1">לא נמצאו גננות שעובדות ביום זה</p>
+              <p className="text-slate-900 font-black text-lg">
+                אין מחליפות פנויות
+              </p>
+              <p className="text-slate-500 text-sm mt-1">
+                לא נמצאו גננות שעובדות ביום זה
+              </p>
             </div>
           ) : (
             filteredSubstitutes.map((sub) => (
@@ -6323,8 +6759,12 @@ export default function PlacementModal({
                     {sub.firstName[0]}
                   </div>
                   <div>
-                    <p className="font-black text-slate-800">{sub.firstName} {sub.lastName}</p>
-                    <p className="text-xs text-slate-400 font-medium">{sub.phoneNumber}</p>
+                    <p className="font-black text-slate-800">
+                      {sub.firstName} {sub.lastName}
+                    </p>
+                    <p className="text-xs text-slate-400 font-medium">
+                      {sub.phoneNumber}
+                    </p>
                   </div>
                 </div>
                 <button
@@ -6332,7 +6772,11 @@ export default function PlacementModal({
                   onClick={() => updatePlacement(sub.id, "ASSIGNED")}
                   className="px-5 py-2.5 bg-indigo-50 text-indigo-600 rounded-xl font-black text-xs hover:bg-indigo-600 hover:text-white transition-all active:scale-95 disabled:opacity-50"
                 >
-                  {isProcessing ? <Loader2 size={16} className="animate-spin" /> : "שבצי"}
+                  {isProcessing ? (
+                    <Loader2 size={16} className="animate-spin" />
+                  ) : (
+                    "שבצי"
+                  )}
                 </button>
               </div>
             ))
@@ -6342,6 +6786,185 @@ export default function PlacementModal({
     </div>
   );
 }
+
+==============================
+FILE: src/components\ReassignTeachersModal.tsx
+==============================
+"use client";
+import { useState } from "react";
+import {
+  X,
+  Users,
+  GraduationCap,
+  CheckCircle,
+  AlertTriangle,
+  Loader2,
+} from "lucide-react";
+import LoadingScreen from "./ui/LoadingScreen";
+
+export default function ReassignTeachersModal({
+  isOpen,
+  teachers,
+  instructors,
+  onComplete,
+  isForced = false,
+  onClose,
+  excludedId,
+  onCancelDisabling,
+}: any) {
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [newInstructorId, setNewInstructorId] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const toggleSelectAll = () => {
+    if (selectedIds.length === teachers.length) setSelectedIds([]);
+    else setSelectedIds(teachers.map((t: any) => t.id));
+  };
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]
+    );
+  };
+
+  const handleReassign = async () => {
+    if (!newInstructorId || selectedIds.length === 0) return;
+    setLoading(true);
+    try {
+      const res = await fetch("/api/supervisor/users/bulk-reassign", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ managerIds: selectedIds, newInstructorId }),
+      });
+      if (res.ok) {
+        const remaining = teachers.filter(
+          (t: any) => !selectedIds.includes(t.id)
+        );
+        if (remaining.length === 0) onComplete();
+        else {
+          // אם נשארו עוד, נעדכן את הרשימה (שיבוץ חלקי)
+          onComplete(remaining);
+          setSelectedIds([]);
+          setNewInstructorId("");
+        }
+      }
+    } catch (e) {
+      alert("שגיאה בשיבוץ מחדש");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-[200] bg-slate-900/80 backdrop-blur-md flex items-center justify-center p-4">
+      <div className="bg-white w-full max-w-2xl rounded-[2.5rem] shadow-2xl overflow-hidden flex flex-col max-h-[90vh] relative">
+        {/* כפתור סגירה - מופיע רק אם זה לא מצב כפוי */}
+        {!isForced && (
+          <button
+            onClick={onClose}
+            className="absolute top-5 left-5 text-white/80 hover:text-white bg-black/20 hover:bg-black/30 rounded-full p-2 transition z-10"
+          >
+            <X size={24} />
+          </button>
+        )}
+
+        {/* Header */}
+        <div className="p-8 bg-amber-500 text-white shrink-0">
+          <h2 className="text-2xl font-black flex items-center gap-3">
+            <AlertTriangle size={28} /> שיבוץ מחדש של גננות
+          </h2>
+          <p className="opacity-90 font-bold mt-1">
+            המדריכה הקודמת אינה פעילה. חובה להעביר את הגננות למדריכה חדשה.
+          </p>
+        </div>
+        <div className="p-6 flex-1 overflow-y-auto space-y-6">
+          <div className="flex justify-between items-center bg-slate-50 p-4 rounded-2xl">
+            <button
+              onClick={toggleSelectAll}
+              className="text-sm font-black text-indigo-600 hover:underline"
+            >
+              {selectedIds.length === teachers.length
+                ? "ביטול בחירת הכל"
+                : "בחר הכל"}
+            </button>
+            <span className="text-xs font-bold text-slate-500">
+              נבחרו {selectedIds.length} מתוך {teachers.length} גננות
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {teachers.map((t: any) => (
+              <div
+                key={t.id}
+                onClick={() => toggleSelect(t.id)}
+                className={`p-4 rounded-2xl border-2 cursor-pointer transition-all flex items-center gap-3 ${
+                  selectedIds.includes(t.id)
+                    ? "border-indigo-600 bg-indigo-50"
+                    : "border-slate-100 bg-white"
+                }`}
+              >
+                <div
+                  className={`w-5 h-5 rounded-md border-2 flex items-center justify-center ${
+                    selectedIds.includes(t.id)
+                      ? "bg-indigo-600 border-indigo-600"
+                      : "border-slate-300"
+                  }`}
+                >
+                  {selectedIds.includes(t.id) && (
+                    <CheckCircle size={14} className="text-white" />
+                  )}
+                </div>
+                <span className="font-bold text-slate-700">
+                  {t.firstName} {t.lastName}
+                </span>
+              </div>
+            ))}
+          </div>
+
+          <div className="space-y-3 pt-4 border-t">
+            <label className="text-sm font-black text-slate-700 block">
+              עבור הנבחרות, בחרי מדריכה חדשה:
+            </label>
+            <select
+              className="input-standard bg-slate-50"
+              value={newInstructorId}
+              onChange={(e) => setNewInstructorId(e.target.value)}
+            >
+              <option value="">-- בחרי מדריכה פעילה --</option>
+              {instructors
+                .filter((i: any) => i.isWorking === true && i.id !== excludedId) // סינון כפול
+                .map((i: any) => (
+                  <option key={i.id} value={i.id}>
+                    {i.firstName} {i.lastName}
+                  </option>
+                ))}
+            </select>
+          </div>
+        </div>
+        <div className="p-6 bg-slate-50 flex gap-4">
+          <button
+            onClick={handleReassign}
+            disabled={loading || selectedIds.length === 0 || !newInstructorId}
+            className="flex-1 py-4 bg-indigo-600 text-white rounded-2xl font-black shadow-lg disabled:bg-slate-300"
+          >
+            {loading ? <LoadingScreen /> : "בצע שיבוץ מחדש"}
+          </button>
+          {isForced && (
+            <button
+              onClick={onCancelDisabling}
+              className="flex-1 py-4 bg-white border-2 border-slate-200 text-slate-600 rounded-2xl font-black hover:bg-slate-50 transition-all"
+            >
+              בטל השבתה
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 ==============================
 FILE: src/components\RecentActivityModal.tsx
 ==============================
@@ -6350,6 +6973,7 @@ FILE: src/components\RecentActivityModal.tsx
 import { X, Clock, CheckCircle, XCircle, Calendar } from "lucide-react";
 import { format } from "date-fns";
 import { he } from "date-fns/locale";
+import LoadingScreen from "./ui/LoadingScreen";
 
 interface Props {
   isOpen: boolean;
@@ -6453,10 +7077,7 @@ export default function RecentActivityModal({
         {/* Content */}
         <div className="overflow-y-auto p-6 space-y-6">
           {isLoading ? (
-            <div className="flex flex-col items-center justify-center py-20 text-gray-500">
-              <Clock className="animate-spin mb-4" size={36} />
-              <p className="text-sm">טוען פעילויות...</p>
-            </div>
+            <LoadingScreen message="טוען פעילויות..." />
           ) : sortedDates.length === 0 ? (
             <div className="text-center py-12">
               <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
@@ -6522,647 +7143,682 @@ export default function RecentActivityModal({
 }
 
 ==============================
-FILE: src/components\UserEditModal.tsx
+FILE: src/components\ui\CustomDatePicker.tsx
 ==============================
 "use client";
 
 import { useState, useEffect } from "react";
 import {
-  X,
-  Award,
-  Shield,
-  Save,
-  CheckCircle2,
-  Clock,
-  User as UserIcon,
-  Power,
-  UserCheck,
-  UserMinus,
-  ChevronDown,
-  PersonStanding,
-  RefreshCcw,
-} from "lucide-react";
-import FormInput from "./FormInput";
+  format,
+  startOfMonth,
+  endOfMonth,
+  eachDayOfInterval,
+  isSameDay,
+  addMonths,
+  subMonths,
+  isAfter,
+  parse,
+  startOfDay,
+} from "date-fns";
+import { he } from "date-fns/locale";
+import { Calendar, ChevronRight, ChevronLeft, X } from "lucide-react";
 
-export default function UserEditModal({
-  user,
-  isOpen,
-  onClose,
-  onUpdateSuccess,
-}: any) {
-  const [loading, setLoading] = useState(false);
-  const [instructors, setInstructors] = useState<any[]>([]);
-  const [rotations, setRotations] = useState<any[]>([]);
-  const [isRoleOpen, setIsRoleOpen] = useState(false);
-  const [rotationData, setRotationData] = useState<Record<string, string>>({});
-  const [isInstructorOpen, setIsInstructorOpen] = useState(false);
-  const [openRotationDay, setOpenRotationDay] = useState<string | null>(null);
+interface Props {
+  label: string;
+  value: string | null;
+  onChange: (val: string) => void;
+}
 
-  const [formData, setFormData] = useState({
-    firstName: user.firstName || "",
-    lastName: user.lastName || "",
-    email: user.email || "",
-    idNumber: user.idNumber || "",
-    phoneNumber: user.phoneNumber || "",
-    roles: user.roles || [],
-    isWorking: user.isWorking ?? true,
-    instructorId: user.instructorId || "",
-    workDays: user.workDays || [
-      "SUNDAY",
-      "MONDAY",
-      "TUESDAY",
-      "WEDNESDAY",
-      "THURSDAY",
-      "FRIDAY",
-    ],
-    rotationTeacherId: user.rotationTeacherId || "",
-    dateOfBirth: user.dateOfBirth || "",
-  });
-
-  const ALLOWED_ROLE_COMBINATIONS = [
-    { id: "MANAGER_ONLY", label: "גננת אם בלבד", roles: ["MANAGER"] },
-    { id: "INSTRUCTOR_ONLY", label: "מדריכה בלבד", roles: ["INSTRUCTOR"] },
-    {
-      id: "MANAGER_INSTRUCTOR",
-      label: "גננת אם וגם מדריכה",
-      roles: ["MANAGER", "INSTRUCTOR"],
-    },
-    { id: "SUBSTITUTE_ONLY", label: "מחליפה בלבד", roles: ["SUBSTITUTE"] },
-    { id: "ROTATION_ONLY", label: "רוטציה בלבד", roles: ["ROTATION"] },
-  ];
-
-  const weekDays = [
-    { id: "SUNDAY", label: "א'" },
-    { id: "MONDAY", label: "ב'" },
-    { id: "TUESDAY", label: "ג'" },
-    { id: "WEDNESDAY", label: "ד'" },
-    { id: "THURSDAY", label: "ה'" },
-    { id: "FRIDAY", label: "ו'" },
-  ];
+export default function CustomDatePicker({ label, value, onChange }: Props) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [viewDate, setViewDate] = useState(
+    value ? new Date(value) : new Date()
+  );
+  const [inputValue, setInputValue] = useState(
+    value ? format(new Date(value), "dd/MM/yyyy") : ""
+  );
+  const [error, setError] = useState("");
 
   useEffect(() => {
-    if (!isOpen || !user) return;
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setIsOpen(false);
+    };
 
-    // טעינת מדריכות
-    fetch("/api/supervisor/instructors")
-      .then((res) => res.json())
-      .then((data) => setInstructors(Array.isArray(data) ? data : []));
-
-    // טעינת גננות רוטציה
-    fetch("/api/supervisor/users-stats")
-      .then((res) => res.json())
-      .then((data) => {
-        setRotations(data.filter((u: any) => u.roles.includes("ROTATION")));
-      });
-
-    // ⬅️ אתחול נכון של rotationData מתוך הנתון של המשתמשת
-    const mapping: Record<string, string> = {};
-    if (
-      user.fixedRotationsAsManager &&
-      Array.isArray(user.fixedRotationsAsManager)
-    ) {
-      user.fixedRotationsAsManager.forEach((r: any) => {
-        mapping[r.day] = r.rotationTeacherId;
-      });
+    if (isOpen) {
+      document.addEventListener("keydown", handleEscape);
+      document.body.style.overflow = "hidden";
+    } else {
+      document.body.style.overflow = "unset";
     }
 
-    setRotationData(mapping);
+    return () => {
+      document.removeEventListener("keydown", handleEscape);
+      document.body.style.overflow = "unset";
+    };
+  }, [isOpen]);
 
-    setRotationData(mapping);
-  }, [user, isOpen]);
+  const days = eachDayOfInterval({
+    start: startOfMonth(viewDate),
+    end: endOfMonth(viewDate),
+  });
 
-  const getCurrentComboId = () => {
-    const combo = ALLOWED_ROLE_COMBINATIONS.find(
-      (c) =>
-        c.roles.length === formData.roles.length &&
-        c.roles.every((r) => formData.roles.includes(r))
-    );
-    return combo ? combo.id : null;
+  // פונקציה לבדיקה אם שנה מעוברת
+  const isLeapYear = (year: number): boolean => {
+    return (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
   };
 
-  const handleInputChange = (e: any) => {
-    const { name, value } = e.target;
-    setFormData((prev) => ({ ...prev, [name]: value }));
-  };
-
-  const toggleWorkDay = (dayId: string) => {
-    setFormData((prev: any) => ({
-      ...prev,
-      workDays: prev.workDays.includes(dayId)
-        ? prev.workDays.filter((d: string) => d !== dayId)
-        : [...prev.workDays, dayId],
-    }));
-  };
-
-  const handleUpdate = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-
-    try {
-      // 1. יצירת עותק נקי של נתוני הרוטציה
-      const cleanedRotationData = { ...rotationData };
-
-      // 2. טיפול באופציית REMOVE:
-      // אנחנו עוברים על כל הימים, ואם נבחר REMOVE, נהפוך אותו לערך ריק
-      // כדי שהשרת ידע לא ליצור את השיבוץ הזה מחדש
-      Object.keys(cleanedRotationData).forEach((day) => {
-        if (cleanedRotationData[day] === "REMOVE") {
-          cleanedRotationData[day] = "";
-        }
-      });
-
-      const payload = {
-        ...formData,
-        rotationData: cleanedRotationData, // שולחים את הנתונים המנוקים
-        dateOfBirth: formData.dateOfBirth
-          ? new Date(formData.dateOfBirth).toISOString()
-          : null,
-      };
-
-      const res = await fetch(`/api/supervisor/users/${user.id}`, {
-        method: "PATCH",
-        body: JSON.stringify(payload),
-        headers: { "Content-Type": "application/json" },
-      });
-
-      if (res.ok) {
-        onUpdateSuccess();
-        onClose();
-      } else {
-        const errorData = await res.json();
-        alert(errorData.message || "שגיאה בעדכון הנתונים");
-      }
-    } catch (err) {
-      console.error("Update error:", err);
-      alert("שגיאת תקשורת עם השרת");
-    } finally {
-      setLoading(false);
+  // פונקציה לקבלת מספר הימים המקסימלי בחודש
+  const getDaysInMonth = (month: number, year: number): number => {
+    const daysInMonth = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    if (month === 2 && isLeapYear(year)) {
+      return 29;
     }
-  };
-  const handleComboSelect = (roles: string[]) => {
-    setFormData((prev: any) => ({ ...prev, roles }));
+    return daysInMonth[month - 1];
   };
 
-  if (!isOpen) return null;
-  // פונקציית עזר להצגת שם הרוטציה הנוכחית אם יש
-  const getRotationLabel = (
-    dayId: string,
-    availableRotationsForThisDay: any[],
-    existingRotation: any
+  // פונקציה לתיקון ווליידציה של תאריך
+  const validateAndCorrectDate = (
+    dayStr: string,
+    monthStr: string,
+    yearStr: string
   ) => {
-    const selectedId = rotationData[dayId];
+    // המרה למספרים
+    let day = parseInt(dayStr, 10);
+    let month = parseInt(monthStr, 10);
+    let year = parseInt(yearStr, 10);
 
-    if (selectedId === "REMOVE") return "❌ הסרת שיבוץ";
-
-    if (selectedId) {
-      const selected = availableRotationsForThisDay.find(
-        (r) => r.id === selectedId
-      );
-      if (selected) return `${selected.firstName} ${selected.lastName}`;
+    // בדיקות בסיסיות
+    if (isNaN(day) || isNaN(month) || isNaN(year)) {
+      return null;
     }
 
-    if (existingRotation) {
-      return `נוכחית: ${existingRotation.rotationTeacher.firstName} ${existingRotation.rotationTeacher.lastName}`;
+    let errorMessage = "";
+
+    // תיקון חודש (1-12)
+    if (month < 1) {
+      month = 1;
+      errorMessage = "החודש תוקן ל-1 (ינואר)";
+    }
+    if (month > 12) {
+      month = 12;
+      errorMessage = "החודש תוקן ל-12 (דצמבר)";
     }
 
-    return "-- בחרי גננת פנויה --";
+    // תיקון שנה (אם הוקלדו 2 ספרות)
+    if (year < 100) {
+      year = 2000 + year;
+    }
+
+    // בדיקת תקינות שנה (1900-2099)
+    if (year < 1900) {
+      year = 1900;
+      errorMessage = "השנה תוקנה ל-1900";
+    }
+    if (year > 2099) {
+      year = 2099;
+      errorMessage = "השנה תוקנה ל-2099";
+    }
+
+    // תיקון יום לפי מספר הימים המקסימלי בחודש
+    const maxDay = getDaysInMonth(month, year);
+    if (day < 1) {
+      day = 1;
+      errorMessage = "היום תוקן ל-1";
+    }
+    if (day > maxDay) {
+      day = maxDay;
+      const monthNames = [
+        "ינואר",
+        "פברואר",
+        "מרץ",
+        "אפריל",
+        "מאי",
+        "יוני",
+        "יולי",
+        "אוגוסט",
+        "ספטמבר",
+        "אוקטובר",
+        "נובמבר",
+        "דצמבר",
+      ];
+      if (month === 2 && !isLeapYear(year)) {
+        errorMessage = `${
+          monthNames[month - 1]
+        } ${year} אינו שנה מעוברת - היום תוקן ל-${maxDay}`;
+      } else {
+        errorMessage = `ל${
+          monthNames[month - 1]
+        } יש רק ${maxDay} ימים - היום תוקן ל-${maxDay}`;
+      }
+    }
+
+    // יצירת אובייקט תאריך
+    const date = new Date(year, month - 1, day);
+
+    // בדיקה שהתאריך לא אחרי היום
+    const today = startOfDay(new Date());
+    if (isAfter(date, today)) {
+      errorMessage = "לא ניתן לבחור תאריך עתידי - התאריך תוקן להיום";
+      return { date: today, error: errorMessage };
+    }
+
+    return { date, error: errorMessage };
   };
 
+  // טיפול בשינוי קלט
+  const handleInputChange = (raw: string) => {
+    // הסרת כל התווים מלבד ספרות
+    let digitsOnly = raw.replace(/\D/g, "");
+
+    // הגבלה ל-8 ספרות (ddmmyyyy)
+    if (digitsOnly.length > 8) {
+      digitsOnly = digitsOnly.slice(0, 8);
+    }
+
+    // בניית הפורמט עם סלאשים
+    let formatted = "";
+    if (digitsOnly.length > 0) {
+      formatted = digitsOnly.slice(0, 2); // יום
+      if (digitsOnly.length > 2) {
+        formatted += "/" + digitsOnly.slice(2, 4); // חודש
+        if (digitsOnly.length > 4) {
+          formatted += "/" + digitsOnly.slice(4, 8); // שנה
+        }
+      }
+    }
+
+    setInputValue(formatted);
+
+    // ניסיון לפרסר את התאריך רק אם יש תאריך מלא
+    if (digitsOnly.length === 8) {
+      const dayStr = digitsOnly.slice(0, 2);
+      const monthStr = digitsOnly.slice(2, 4);
+      const yearStr = digitsOnly.slice(4, 8);
+
+      const result = validateAndCorrectDate(dayStr, monthStr, yearStr);
+
+      if (result) {
+        const correctedFormatted = format(result.date, "dd/MM/yyyy");
+        setInputValue(correctedFormatted);
+        onChange(format(result.date, "yyyy-MM-dd"));
+        setViewDate(result.date);
+        setError(result.error);
+      } else {
+        setError("תאריך לא תקין");
+      }
+    } else {
+      setError("");
+    }
+  };
+
+  // טיפול בבחירה מהלוח שנה
+  const handleSelect = (date: Date) => {
+    const today = startOfDay(new Date());
+
+    // אם התאריך בעתיד, השתמש בתאריך של היום
+    const selectedDate = isAfter(date, today) ? today : date;
+
+    setInputValue(format(selectedDate, "dd/MM/yyyy"));
+    onChange(format(selectedDate, "yyyy-MM-dd"));
+    setViewDate(selectedDate);
+    setIsOpen(false);
+    setError("");
+  };
+
+  // הוספת אוטומטית של סלאשים תוך כדי הקלדה
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    const key = e.key;
+
+    // מניעת הוספת תווים לא חוקיים
+    if (
+      !/[\d/]/.test(key) &&
+      !["Backspace", "Delete", "ArrowLeft", "ArrowRight", "Tab"].includes(key)
+    ) {
+      e.preventDefault();
+      return;
+    }
+  };
+
+  // Rendering
   return (
-    <div
-      className="fixed inset-0 z-150 bg-slate-900/60 backdrop-blur-sm p-4 flex items-center justify-center animate-in fade-in duration-300"
-      dir="rtl"
-    >
-      <div className="bg-white w-full max-w-3xl rounded-[2.5rem] shadow-2xl flex flex-col max-h-[95vh] border border-slate-100 overflow-hidden">
-        {/* Header */}
-        <div className="p-8 bg-slate-900 text-white flex justify-between items-center shrink-0">
-          <div className="flex items-center gap-4">
-            <div className="w-14 h-14 bg-indigo-600 rounded-2xl flex items-center justify-center shadow-lg">
-              <UserIcon size={30} />
-            </div>
-            <div>
-              <h2 className="text-2xl font-black">
-                {formData.firstName} {formData.lastName}
-              </h2>
-              <p className="text-slate-400 text-sm">ניהול ועריכת פרטי משתמשת</p>
-            </div>
-          </div>
-          <button
-            onClick={onClose}
-            className="p-2 hover:bg-white/10 rounded-full transition-colors"
-          >
-            <X size={28} />
-          </button>
-        </div>
+    <div className="space-y-2 relative">
+      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mr-1">
+        {label}
+      </label>
 
-        <form
-          onSubmit={handleUpdate}
-          className="flex-1 overflow-y-auto p-8 space-y-8 custom-calendar-scroll"
+      {/* Input */}
+      <div className="relative">
+        <input
+          type="text"
+          placeholder="dd/mm/yyyy"
+          value={inputValue}
+          onChange={(e) => handleInputChange(e.target.value)}
+          onKeyDown={handleKeyDown}
+          onClick={() => setIsOpen(true)}
+          maxLength={10}
+          className={`w-full p-3.5 bg-slate-50 border-2 rounded-2xl font-bold text-sm text-slate-700 focus:ring-2 focus:ring-indigo-500 outline-none transition-all cursor-pointer ${
+            error ? "border-amber-400 focus:ring-amber-500" : "border-slate-100"
+          }`}
+        />
+
+        {/* Calendar button */}
+        <button
+          type="button"
+          onClick={() => setIsOpen(!isOpen)}
+          className="absolute left-3 top-1/2 -translate-y-1/2 text-indigo-500 hover:text-indigo-600 transition-colors"
         >
-          {/* פרטים אישיים */}
-          <section className="space-y-4">
-            <h4 className="font-black text-slate-700 flex items-center gap-2 text-lg border-b pb-2">
-              <Award size={20} className="text-indigo-500" /> פרטים אישיים
-            </h4>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <FormInput
-                name="firstName"
-                kind="firstName"
-                value={formData.firstName}
-                onChange={handleInputChange}
-              />
-              <FormInput
-                name="lastName"
-                kind="lastName"
-                value={formData.lastName}
-                onChange={handleInputChange}
-              />
-              <FormInput
-                name="idNumber"
-                kind="idNumber"
-                value={formData.idNumber}
-                onChange={handleInputChange}
-              />
-              <FormInput
-                name="phoneNumber"
-                kind="phone"
-                value={formData.phoneNumber}
-                onChange={handleInputChange}
-              />
-              <FormInput
-                name="email"
-                kind="email"
-                value={formData.email}
-                onChange={handleInputChange}
-              />
-              <FormInput
-                name="dateOfBirth"
-                kind="dateOfBirth"
-                value={formData.dateOfBirth || ""}
-                onChange={handleInputChange}
-              />
-            </div>
-          </section>
+          <Calendar size={18} />
+        </button>
+      </div>
 
-          {/* הגדרת תפקידים */}
-          <section className="grid grid-cols-1 md:grid-cols-2 gap-8">
-            <div className="space-y-4">
-              <h4 className="font-black text-slate-700 flex items-center gap-2 text-lg border-b pb-2">
-                <Shield size={20} className="text-indigo-500" /> הגדרת תפקיד
-              </h4>
-              <div className="relative dropdown">
+      {/* Error message */}
+      {error && (
+        <p className="text-amber-600 text-[10px] font-bold mt-1 animate-in slide-in-from-top-1 duration-200 bg-amber-50 px-3 py-2 rounded-lg border border-amber-200">
+          ⚠️ {error}
+        </p>
+      )}
+
+      {/* Modal */}
+      {isOpen && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/50 animate-in fade-in duration-200">
+          {/* Modal Content */}
+          <div className="relative bg-white rounded-[2rem] shadow-2xl w-full max-w-md animate-in zoom-in-95 duration-200">
+            {/* Close button */}
+            <button
+              type="button"
+              onClick={() => setIsOpen(false)}
+              className="absolute top-4 left-4 z-10 p-2 hover:bg-slate-100 rounded-full transition-colors"
+            >
+              <X size={20} className="text-slate-600" />
+            </button>
+
+            {/* Header */}
+            <div className="p-6 border-b border-slate-100">
+              <h3 className="text-lg font-black text-slate-800 text-center">
+                {label}
+              </h3>
+            </div>
+
+            {/* Input inside modal */}
+            <div className="p-6 border-b border-slate-100">
+              <input
+                type="text"
+                placeholder="dd/mm/yyyy"
+                value={inputValue}
+                onChange={(e) => handleInputChange(e.target.value)}
+                onKeyDown={handleKeyDown}
+                maxLength={10}
+                autoFocus
+                className={`w-full p-3.5 bg-slate-50 border-2 rounded-2xl font-bold text-sm text-slate-700 text-center focus:ring-2 focus:ring-indigo-500 outline-none transition-all ${
+                  error
+                    ? "border-amber-400 focus:ring-amber-500"
+                    : "border-slate-100"
+                }`}
+              />
+
+              {/* Error message in modal */}
+              {error && (
+                <p className="text-amber-600 text-[10px] font-bold mt-3 animate-in slide-in-from-top-1 duration-200 bg-amber-50 px-3 py-2 rounded-lg border border-amber-200 text-center">
+                  ⚠️ {error}
+                </p>
+              )}
+            </div>
+
+            {/* Calendar */}
+            <div className="p-6">
+              {/* Header עם ניווט חודשים */}
+              <div className="flex justify-between items-center mb-6">
                 <button
                   type="button"
-                  onClick={() => setIsRoleOpen(!isRoleOpen)}
-                  className="w-full p-3 rounded-xl border-2 flex items-center justify-between font-bold text-sm bg-white"
+                  onClick={() => setViewDate(subMonths(viewDate, 1))}
+                  className="p-2 hover:bg-slate-100 rounded-full transition-colors"
                 >
-                  <span>
-                    {ALLOWED_ROLE_COMBINATIONS.find(
-                      (c) => c.id === getCurrentComboId()
-                    )?.label || "בחרי תפקיד"}
-                  </span>
-                  <ChevronDown
-                    size={18}
-                    className={isRoleOpen ? "rotate-180" : ""}
-                  />
+                  <ChevronRight size={18} className="text-slate-600" />
                 </button>
-                {isRoleOpen && (
-                  <div className="absolute z-20 mt-2 w-full bg-white border rounded-xl shadow-lg overflow-hidden">
-                    {ALLOWED_ROLE_COMBINATIONS.map((combo) => {
-                      const isSelected = getCurrentComboId() === combo.id;
-                      return (
-                        <button
-                          key={combo.id}
-                          type="button"
-                          onClick={() => {
-                            handleComboSelect(combo.roles);
-                            setIsRoleOpen(false);
-                          }}
-                          className={`w-full p-3 text-right flex items-center justify-between text-sm font-bold transition ${
-                            isSelected
-                              ? "bg-indigo-50 text-indigo-700"
-                              : "hover:bg-slate-50 text-slate-600"
-                          }`}
-                        >
-                          {combo.label}
-                          {isSelected && (
-                            <CheckCircle2
-                              size={16}
-                              className="text-indigo-600"
-                            />
-                          )}
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            </div>
 
-            {/* ימי עבודה / חופש */}
-            <div className="space-y-4">
-              <h4 className="font-black text-slate-700 flex items-center gap-2 text-lg border-b pb-2">
-                <Clock size={20} className="text-indigo-500" /> ימי עבודה / חופש
-              </h4>
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-6 gap-2">
-                {weekDays.map((day) => {
-                  const isActive = formData.workDays.includes(day.id);
+                <span className="font-black text-slate-800 text-base">
+                  {format(viewDate, "MMMM yyyy", { locale: he })}
+                </span>
+
+                <button
+                  type="button"
+                  onClick={() => setViewDate(addMonths(viewDate, 1))}
+                  className="p-2 hover:bg-slate-100 rounded-full transition-colors"
+                >
+                  <ChevronLeft size={18} className="text-slate-600" />
+                </button>
+              </div>
+
+              {/* Weekdays */}
+              <div className="grid grid-cols-7 gap-1 text-center mb-3">
+                {["א", "ב", "ג", "ד", "ה", "ו", "ש"].map((d) => (
+                  <span
+                    key={d}
+                    className="text-[10px] font-black text-slate-400"
+                  >
+                    {d}
+                  </span>
+                ))}
+              </div>
+
+              {/* Days */}
+              <div className="grid grid-cols-7 gap-1 min-h-[240px]">
+                {Array.from({ length: startOfMonth(viewDate).getDay() }).map(
+                  (_, i) => (
+                    <div key={`empty-${i}`} />
+                  )
+                )}
+
+                {days.map((day) => {
+                  const today = startOfDay(new Date());
+                  const isToday = isSameDay(day, today);
+                  const isFuture = isAfter(day, today);
+                  const isSelected =
+                    inputValue &&
+                    isSameDay(day, parse(inputValue, "dd/MM/yyyy", new Date()));
+
                   return (
                     <button
-                      key={day.id}
+                      key={day.toString()}
                       type="button"
-                      onClick={() => toggleWorkDay(day.id)}
-                      className={`w-14 h-14 rounded-2xl border-2 flex flex-col items-center justify-center transition-all ${
-                        isActive
-                          ? "bg-white border-slate-200 text-slate-700 hover:border-indigo-400"
-                          : "bg-red-50 border-red-500 text-red-700 shadow-sm"
+                      onClick={() => !isFuture && handleSelect(day)}
+                      disabled={isFuture}
+                      className={`h-10 w-full rounded-xl flex items-center justify-center text-xs font-bold transition-all ${
+                        isSelected
+                          ? "bg-indigo-600 text-white shadow-lg shadow-indigo-200"
+                          : isFuture
+                          ? "text-slate-300 cursor-not-allowed"
+                          : isToday
+                          ? "bg-indigo-100 text-indigo-700 hover:bg-indigo-200"
+                          : "hover:bg-indigo-50 text-slate-600"
                       }`}
                     >
-                      <span className="text-lg font-black">{day.label}</span>
-                      <span className="text-[8px] font-bold uppercase">
-                        {isActive ? "עבודה" : "חופש"}
-                      </span>
+                      {format(day, "d")}
                     </button>
                   );
                 })}
               </div>
+
+              {/* Select button */}
+              <button
+                type="button"
+                onClick={() => {
+                  if (inputValue) {
+                    const parsed = parse(inputValue, "dd/MM/yyyy", new Date());
+                    if (parsed && !isNaN(parsed.getTime())) {
+                      handleSelect(parsed);
+                    }
+                  }
+                }}
+                disabled={!inputValue || error !== ""}
+                className="w-full mt-6 py-3 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl transition-colors shadow-lg shadow-indigo-200 disabled:bg-slate-300 disabled:cursor-not-allowed disabled:shadow-none"
+              >
+                בחר
+              </button>
             </div>
-          </section>
-
-          {/* סטטוס עבודה */}
-          <section>
-            <h4 className="font-black text-slate-700 flex items-center gap-2 text-lg border-b pb-2">
-              <Power size={20} className="text-indigo-500" /> סטטוס עבודה
-            </h4>
-            <button
-              type="button"
-              onClick={() =>
-                setFormData((prev) => ({ ...prev, isWorking: !prev.isWorking }))
-              }
-              className={`w-full p-4 mt-2 rounded-2xl border-2 flex items-center justify-between transition-all ${
-                formData.isWorking
-                  ? "border-emerald-500 bg-emerald-50 text-emerald-700"
-                  : "border-red-500 bg-red-50 text-red-700"
-              }`}
-            >
-              <span className="font-black">
-                {formData.isWorking ? "עובדת פעילה" : "מושבתת / לא פעילה"}
-              </span>
-              {formData.isWorking ? <UserCheck /> : <UserMinus />}
-            </button>
-          </section>
-
-          {/* שיוך מדריכה / רוטציה */}
-          {formData.roles.includes("MANAGER") && (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-start">
-              {/* עמודה ימנית: מדריכה מלווה */}
-              <div className="space-y-4">
-                <div className="space-y-1">
-                  <h4 className="font-black text-slate-700 flex items-center gap-2 text-lg border-b pb-2">
-                    <PersonStanding size={20} className="text-indigo-500" />{" "}
-                    מדריכה מלווה
-                  </h4>
-                  <p className="text-[11px] text-slate-400 font-medium mb-2">
-                    המדריכה האחראית על גננת האם
-                  </p>
-
-                  <div className="relative dropdown">
-                    <button
-                      type="button"
-                      onClick={() => setIsInstructorOpen(!isInstructorOpen)}
-                      className="w-full p-3 rounded-xl border-2 flex items-center justify-between font-bold text-sm bg-white"
-                    >
-                      <span>
-                        {instructors.find((i) => i.id === formData.instructorId)
-                          ? `${
-                              instructors.find(
-                                (i) => i.id === formData.instructorId
-                              )?.firstName
-                            } ${
-                              instructors.find(
-                                (i) => i.id === formData.instructorId
-                              )?.lastName
-                            }`
-                          : "בחרי מדריכה..."}
-                      </span>
-                      <ChevronDown
-                        size={18}
-                        className={isInstructorOpen ? "rotate-180" : ""}
-                      />
-                    </button>
-
-                    {isInstructorOpen && (
-                      <div className="absolute z-20 mt-2 w-full bg-white border rounded-xl shadow-lg overflow-hidden max-h-64 overflow-y-auto">
-                        {instructors.map((ins) => {
-                          const isSelected = ins.id === formData.instructorId;
-
-                          return (
-                            <button
-                              key={ins.id}
-                              type="button"
-                              onClick={() => {
-                                handleInputChange({
-                                  target: {
-                                    name: "instructorId",
-                                    value: ins.id,
-                                  },
-                                });
-                                setIsInstructorOpen(false);
-                              }}
-                              className={`w-full p-3 text-right flex items-center justify-between text-sm font-bold transition ${
-                                isSelected
-                                  ? "bg-indigo-50 text-indigo-700"
-                                  : "hover:bg-slate-50 text-slate-600"
-                              }`}
-                            >
-                              {ins.firstName} {ins.lastName}
-                              {isSelected && (
-                                <CheckCircle2
-                                  size={16}
-                                  className="text-indigo-600"
-                                />
-                              )}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              {/* עמודה שמאלית: הגדרת רוטציה קבועה */}
-              <div className="space-y-4">
-                <div className="space-y-1">
-                  <h4 className="font-black text-slate-700 flex items-center gap-2 text-lg border-b pb-2">
-                    <RefreshCcw size={20} className="text-indigo-500" />{" "}
-                  </h4>
-                  <p className="text-[11px] text-slate-400 font-medium mb-2">
-                    שיבוץ גננת קבועה לימים שבהם גננת האם ביום חופשי.
-                  </p>
-
-                  <div className="grid grid-cols-1 gap-3 mt-4">
-                    {weekDays.map((day) => {
-                      // 1. האם זה יום חופשי של גננת האם? (יום שלא נבחר ב-workDays)
-                      const isFreeDay = !formData.workDays.includes(day.id);
-                      if (!isFreeDay) return null;
-
-                      // 2. מציאת גננת הרוטציה הנוכחית שמשובצת ביום הזה ב-DB
-                      const existingRotation =
-                        user.fixedRotationsAsManager?.find(
-                          (r: any) => r.day === day.id
-                        );
-
-                      // 3. סינון רשימת הגננות עבור היום הספציפי הזה
-                      const availableRotationsForThisDay = rotations.filter(
-                        (rt) => {
-                          // האם הגננת תפוסה ביום הזה בגן *אחר*?
-                          const isBusyElsewhere =
-                            rt.fixedRotationsAsRotation?.some(
-                              (assignment: any) =>
-                                assignment.day === day.id &&
-                                assignment.managerId !== user.id
-                            );
-                          return !isBusyElsewhere;
-                        }
-                      );
-
-                      return (
-                        <div
-                          key={day.id}
-                          className="flex flex-col gap-2 p-3 bg-white rounded-2xl border border-indigo-50 shadow-sm"
-                        >
-                          <div className="flex justify-between items-center px-1">
-                            <span className="text-xs font-black text-indigo-600 uppercase">
-                              יום {day.label}
-                            </span>
-                            {existingRotation && !rotationData[day.id] && (
-                              <span className="text-[10px] bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full font-bold">
-                                שיבוץ פעיל
-                              </span>
-                            )}
-                          </div>
-
-                          <div className="relative dropdown">
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setOpenRotationDay(
-                                  openRotationDay === day.id ? null : day.id
-                                )
-                              }
-                              className={`w-full p-2.5 rounded-xl border-2 flex items-center justify-between text-xs font-bold transition ${
-                                rotationData[day.id] || existingRotation
-                                  ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                                  : "bg-slate-50 text-slate-700"
-                              }`}
-                            >
-                              <span>
-                                {getRotationLabel(
-                                  day.id,
-                                  availableRotationsForThisDay,
-                                  existingRotation
-                                )}
-                              </span>
-
-                              <ChevronDown
-                                size={14}
-                                className={
-                                  openRotationDay === day.id ? "rotate-180" : ""
-                                }
-                              />
-                            </button>
-
-                            {openRotationDay === day.id && (
-                              <div className="absolute z-20 mt-2 w-full bg-white border rounded-xl shadow-lg overflow-hidden max-h-64 overflow-y-auto">
-                                {availableRotationsForThisDay.map((rt) => {
-                                  const isSelected =
-                                    rotationData[day.id] === rt.id;
-
-                                  return (
-                                    <button
-                                      key={rt.id}
-                                      type="button"
-                                      onClick={() => {
-                                        setRotationData({
-                                          ...rotationData,
-                                          [day.id]: rt.id,
-                                        });
-                                        setOpenRotationDay(null);
-                                      }}
-                                      className={`w-full p-3 text-right flex items-center justify-between text-sm font-bold transition ${
-                                        isSelected
-                                          ? "bg-indigo-50 text-indigo-700"
-                                          : "hover:bg-slate-50 text-slate-600"
-                                      }`}
-                                    >
-                                      {rt.firstName} {rt.lastName}
-                                      {isSelected && (
-                                        <CheckCircle2
-                                          size={14}
-                                          className="text-indigo-600"
-                                        />
-                                      )}
-                                    </button>
-                                  );
-                                })}
-
-                                {existingRotation && (
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setRotationData({
-                                        ...rotationData,
-                                        [day.id]: "REMOVE",
-                                      });
-                                      setOpenRotationDay(null);
-                                    }}
-                                    className="w-full p-3 text-right flex items-center justify-between text-sm font-bold text-red-600 hover:bg-red-50 transition"
-                                  >
-                                    ❌ הסרת גננת רוטציה ביום זה
-                                  </button>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Footer */}
-          <div className="pt-6 flex gap-4 mt-auto bottom-0 bg-white border-t border-slate-50">
-            <button
-              type="submit"
-              disabled={loading}
-              className="flex-[2] py-4 bg-indigo-600 text-white rounded-2xl font-black shadow-lg hover:bg-indigo-700 transition-all flex items-center justify-center gap-2"
-            >
-              {loading ? (
-                "מעדכן..."
-              ) : (
-                <>
-                  <Save size={20} /> שמירת כל השינויים
-                </>
-              )}
-            </button>
-            <button
-              type="button"
-              onClick={onClose}
-              className="flex-1 py-4 bg-slate-100 text-slate-600 rounded-2xl font-bold hover:bg-slate-200 transition-all"
-            >
-              ביטול
-            </button>
           </div>
-        </form>
-      </div>
+        </div>
+      )}
     </div>
   );
 }
 
+==============================
+FILE: src/components\ui\CustomDropdown.tsx
+==============================
+"use client";
+import { useState, useRef, useEffect, useMemo } from "react";
+import { ChevronDown, CheckCircle2, X } from "lucide-react";
+
+interface Option {
+  id: string;
+  label: string;
+}
+
+interface Props {
+  label: string;
+  options: Option[];
+  value: string;
+  onChange: (id: string) => void;
+  placeholder?: string;
+  icon?: any;
+  inline?: boolean;
+  searchable?: boolean;
+}
+
+export default function CustomDropdown({
+  label,
+  options,
+  value,
+  onChange,
+  placeholder,
+  icon: Icon,
+  inline,
+  searchable = true,
+}: Props) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [displayValue, setDisplayValue] = useState("");
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  const selectedOption = useMemo(
+    () => options.find((opt) => opt.id === value),
+    [options, value]
+  );
+
+  useEffect(() => {
+    if (selectedOption) {
+      setDisplayValue(selectedOption.label);
+    } else {
+      setDisplayValue("");
+    }
+  }, [selectedOption]);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (
+        containerRef.current &&
+        !containerRef.current.contains(e.target as Node)
+      ) {
+        setIsOpen(false);
+        setDisplayValue(selectedOption ? selectedOption.label : "");
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [selectedOption]);
+
+  // סינון אופציות: רק אם searchable הוא true מבצעים פילטר
+  const filteredOptions = useMemo(() => {
+    if (!searchable) return options;
+    return options.filter((opt) =>
+      opt.label.toLowerCase().includes(displayValue.toLowerCase())
+    );
+  }, [options, displayValue, searchable]);
+
+  const handleClear = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onChange("");
+    setDisplayValue("");
+    setIsOpen(false);
+  };
+
+  return (
+    <div
+      ref={containerRef}
+      className={inline ? "relative" : "space-y-2 relative"}
+    >
+      {!inline && label && (
+        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mr-1">
+          {label}
+        </label>
+      )}
+
+      <div className="relative group">
+        <input
+          type="text"
+          value={displayValue}
+          readOnly={!searchable}
+          placeholder={placeholder || "בחרי אפשרות..."}
+          // פוקוס יפתח את הרשימה אוטומטית רק אם המשתמש הולך להקליד (searchable)
+          onFocus={() => {
+            if (searchable) setIsOpen(true);
+          }}
+          // הקליק ינהל את הטוגל רק אם אנחנו במצב בחירה בלבד
+          onClick={() => {
+            if (!searchable) {
+              setIsOpen(!isOpen);
+            } else {
+              setIsOpen(true);
+            }
+          }}
+          onChange={(e) => {
+            if (searchable) {
+              setDisplayValue(e.target.value);
+              setIsOpen(true);
+            }
+          }}
+          className={`w-full p-3.5 bg-slate-50 border-2 rounded-2xl text-sm font-bold text-slate-700 outline-none transition-all pr-10 pl-10 
+    ${searchable ? "cursor-text" : "cursor-pointer"} 
+    ${
+      isOpen
+        ? "border-indigo-500 bg-white ring-4 ring-indigo-50"
+        : "border-slate-100"
+    }`}
+        />
+
+        {Icon && (
+          <Icon
+            size={18}
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-indigo-500 pointer-events-none"
+          />
+        )}
+
+        <div className="absolute left-3 top-1/2 -translate-y-1/2 flex items-center gap-1">
+          {/* מציגים X רק אם יש ערך ורק אם השדה ניתן לחיפוש (או אם רוצים לאפשר איפוס מהיר) */}
+          {displayValue && searchable && (
+            <button
+              type="button"
+              onClick={handleClear}
+              className="p-1 hover:bg-slate-200 rounded-full text-slate-400 transition-colors"
+            >
+              <X size={14} />
+            </button>
+          )}
+          <ChevronDown
+            size={18}
+            className={`text-slate-400 transition-transform cursor-pointer ${
+              isOpen ? "rotate-180" : ""
+            }`}
+            onClick={(e) => {
+              e.stopPropagation();
+              setIsOpen(!isOpen);
+            }}
+          />
+        </div>
+      </div>
+
+      {isOpen && (
+        <div className="absolute z-[110] mt-2 right-0 w-full bg-white border border-slate-200 rounded-[2rem] shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200">
+          <div className="p-2 max-h-60 overflow-y-auto custom-calendar-scroll">
+            {filteredOptions.length > 0 ? (
+              filteredOptions.map((opt) => (
+                <button
+                  key={opt.id}
+                  type="button"
+                  onClick={() => {
+                    onChange(opt.id);
+                    setDisplayValue(opt.label);
+                    setIsOpen(false);
+                  }}
+                  className={`w-full p-4 rounded-xl text-right flex items-center justify-between text-sm font-bold transition-all mb-1 ${
+                    value === opt.id
+                      ? "bg-indigo-600 text-white shadow-lg shadow-indigo-200"
+                      : "hover:bg-indigo-50 text-slate-600"
+                  }`}
+                >
+                  {opt.label}
+                  {value === opt.id && (
+                    <CheckCircle2 size={16} className="text-white" />
+                  )}
+                </button>
+              ))
+            ) : (
+              <div className="p-8 text-slate-400 text-sm text-center font-bold italic">
+                {searchable
+                  ? `לא נמצאו תוצאות ל-"${displayValue}"`
+                  : "אין אופציות זמינות"}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+==============================
+FILE: src/components\ui\FormSelect.tsx
+==============================
+"use client";
+import { ChevronDown } from "lucide-react";
+
+interface Option {
+  id: string;
+  label: string;
+}
+
+interface Props {
+  label: string;
+  value: string;
+  onChange: (val: string) => void;
+  options: Option[];
+  placeholder?: string;
+  icon?: any;
+}
+
+export default function FormSelect({ label, value, onChange, options, placeholder, icon: Icon }: Props) {
+  return (
+    <div className="space-y-2">
+      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mr-1">{label}</label>
+      <div className="relative group">
+        <select
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          className="appearance-none"
+        >
+          {placeholder && <option value="">{placeholder}</option>}
+          {options.map((opt) => (
+            <option key={opt.id} value={opt.id}>{opt.label}</option>
+          ))}
+        </select>
+        <div className="absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400 group-focus-within:text-indigo-500 transition-colors">
+          <ChevronDown size={18} />
+        </div>
+        {Icon && (
+          <div className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">
+            <Icon size={18} />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+==============================
+FILE: src/components\ui\LoadingScreen.tsx
+==============================
+import { Loader2 } from "lucide-react";
+
+export default function LoadingScreen({ message = "טוען נתונים..." }: { message?: string }) {
+  return (
+    <div className="flex flex-col items-center justify-center min-h-[400px] w-full gap-4 animate-in fade-in duration-500">
+      <div className="relative">
+        <Loader2 className="animate-spin text-indigo-600 w-12 h-12" />
+        <div className="absolute inset-0 bg-indigo-500/10 blur-xl rounded-full animate-pulse"></div>
+      </div>
+      <p className="text-slate-500 font-black italic animate-bounce">{message}</p>
+    </div>
+  );
+}
 ==============================
 FILE: src/components\ValidatedField.tsx
 ==============================
@@ -7184,7 +7840,6 @@ interface ValidatedFieldProps {
 
 export default function ValidatedField({
   name,
-  label,
   value,
   onChange,
   required = true,
@@ -7222,7 +7877,6 @@ export default function ValidatedField({
 
   return (
     <div className="space-y-1.5 w-full text-right">
-      
       <div className="relative group">
         <input
           name={name}
@@ -7233,22 +7887,27 @@ export default function ValidatedField({
           placeholder={placeholder}
           dir={inputDir}
           className={`w-full pr-10 pl-4 py-3 bg-slate-50 border-none rounded-xl transition-all outline-none font-medium
-            ${error 
-              ? "ring-2 ring-red-500 bg-red-50 text-red-900" 
-              : "focus:ring-2 focus:ring-indigo-500 text-slate-700 hover:bg-slate-100"
+            ${
+              error
+                ? "ring-2 ring-red-500 bg-red-50 text-red-900"
+                : "focus:ring-2 focus:ring-indigo-500 text-slate-700 hover:bg-slate-100"
             } ${disabled ? "opacity-50 cursor-not-allowed" : ""}`}
         />
-        
+
         {/* אייקון ימני */}
-        <div className={`absolute right-3 top-1/2 -translate-y-1/2 transition-colors
-          ${error ? "text-red-500" : "text-slate-400 group-focus-within:text-indigo-500"}`}>
+        <div
+          className={`absolute right-3 top-1/2 -translate-y-1/2 transition-colors
+          ${
+            error
+              ? "text-red-500"
+              : "text-slate-400 group-focus-within:text-indigo-500"
+          }`}
+        >
           {icons[name]}
         </div>
 
         {error && (
-          <div className="absolute left-3 top-1/2 -translate-y-1/2 text-red-500 animate-pulse">
-           
-          </div>
+          <div className="absolute left-3 top-1/2 -translate-y-1/2 text-red-500 animate-pulse"></div>
         )}
       </div>
 
@@ -7263,6 +7922,7 @@ export default function ValidatedField({
     </div>
   );
 }
+
 ==============================
 FILE: src/lib\api.ts
 ==============================
@@ -7579,7 +8239,7 @@ import {
   db_notifyMultipleUsers,
 } from "./notificationService";
 import { Day } from "@prisma/client";
-import { addMonths,  startOfDay, endOfDay, addDays } from "date-fns";
+import { addMonths, startOfDay, endOfDay, addDays } from "date-fns";
 
 const isSameDate = (date1: Date, date2: Date) => {
   return (
@@ -7589,7 +8249,6 @@ const isSameDate = (date1: Date, date2: Date) => {
   );
 };
 
-
 /**
  * שליפת נתונים ללוח הבקרה של המפקחת
  */
@@ -7598,9 +8257,31 @@ export async function db_getSupervisorDashboard(supervisorId: string) {
   const oneMonthFromNow = endOfDay(addMonths(new Date(), 1));
 
   const endOfWeek = endOfDay(addDays(today, 5));
+  const orphanedManagers = await prisma.user.findMany({
+    where: {
+      supervisorId: supervisorId,
+      isWorking: true, // רק גננות פעילות
+      roles: { has: "MANAGER" }, // הן גננות אם
+      NOT: {
+        roles: { has: "INSTRUCTOR" }, // אבל לא מדריכות
+      },
+      OR: [
+        { instructorId: null },
+        { instructor: { isWorking: false } },
+        {
+          instructor: {
+            NOT: {
+              roles: { has: "INSTRUCTOR" },
+            },
+          },
+        },
+      ],
+    },
+    select: { id: true, firstName: true, lastName: true },
+  });
 
   // --- פונקציית עזר לחישוב דילוג שבת ---
-   const getTargetDate = (startDate: Date, daysToCount: number) => {
+  const getTargetDate = (startDate: Date, daysToCount: number) => {
     let currentDate = new Date(startDate);
     let addedDays = 0;
     while (addedDays < daysToCount) {
@@ -7635,7 +8316,7 @@ export async function db_getSupervisorDashboard(supervisorId: string) {
       institution: { supervisorId: supervisorId },
       status: "OPEN",
       date: {
-        gt: urgentDeadline,   // מעבר לטווח הדחוף
+        gt: urgentDeadline, // מעבר לטווח הדחוף
         lte: oneMonthFromNow, // עד בדיוק חודש מהיום
       },
     },
@@ -7687,6 +8368,7 @@ export async function db_getSupervisorDashboard(supervisorId: string) {
     pendingUpdates,
     recentActivity,
     openMonthlyRequests,
+    orphanedManagers,
   };
 }
 
@@ -7762,8 +8444,8 @@ const getDayEnum = (date: Date): Day => {
 /**
  * יצירת שיבוץ חדש
  */
-  
-  // בדיקה מי אמורה להיות בגן ביום הזה לפי הלו"ז הקבוע
+
+// בדיקה מי אמורה להיות בגן ביום הזה לפי הלו"ז הקבוע
 
 /**
  * יצירת דיווח היעדרות/שיבוץ חדש
@@ -7772,7 +8454,7 @@ const getDayEnum = (date: Date): Day => {
 export async function db_createPlacement(data: {
   date: Date;
   institutionId: string;
-  mainTeacherId: string; 
+  mainTeacherId: string;
   substituteId?: string | null;
   notes?: string;
   creatorRoles: string[];
@@ -7780,11 +8462,13 @@ export async function db_createPlacement(data: {
 }) {
   const targetDate = startOfDay(new Date(data.date));
   const today = startOfDay(new Date());
-  
+
   // 1. בדיקות בסיסיות
   if (targetDate.getDay() === 6) throw new Error("לא ניתן לדווח בשבת");
 
-  const isManager = (data.creatorRoles ?? []).some(r => ["SUPERVISOR", "INSTRUCTOR"].includes(r));
+  const isManager = (data.creatorRoles ?? []).some((r) =>
+    ["SUPERVISOR", "INSTRUCTOR"].includes(r)
+  );
   const isRetroactive = targetDate < today;
 
   if (isRetroactive && !isManager) {
@@ -7793,7 +8477,7 @@ export async function db_createPlacement(data: {
 
   // 2. מניעת כפילות
   const existing = await prisma.placement.findFirst({
-    where: { institutionId: data.institutionId, date: targetDate }
+    where: { institutionId: data.institutionId, date: targetDate },
   });
   if (existing) throw new Error("כבר קיים דיווח פעיל ליום זה בגן זה");
 
@@ -7803,7 +8487,8 @@ export async function db_createPlacement(data: {
     throw new Error("בדיווח על העבר יש לבחור סטטוס סופי");
   }
 
-  const diffInDays = (targetDate.getTime() - today.getTime()) / (1000 * 3600 * 24);
+  const diffInDays =
+    (targetDate.getTime() - today.getTime()) / (1000 * 3600 * 24);
   const priority = !isRetroactive && diffInDays <= 2 ? "URGENT" : "NORMAL";
 
   // 4. יצירת הרשומה
@@ -7819,7 +8504,9 @@ export async function db_createPlacement(data: {
     },
     include: {
       institution: true,
-      mainTeacher: { select: { firstName: true, lastName: true, supervisorId: true } },
+      mainTeacher: {
+        select: { firstName: true, lastName: true, supervisorId: true },
+      },
       substitute: { select: { firstName: true, lastName: true } },
     },
   });
@@ -7827,12 +8514,15 @@ export async function db_createPlacement(data: {
   // 5. התראות (רק לדיווחים עתידיים פתוחים)
   if (!isRetroactive && finalStatus === "OPEN") {
     const { institution, mainTeacher } = newPlacement;
-    const notificationType = priority === "URGENT" ? "URGENT_CALL" : "STATUS_UPDATE";
+    const notificationType =
+      priority === "URGENT" ? "URGENT_CALL" : "STATUS_UPDATE";
 
     await db_createNotification({
       userId: institution.supervisorId,
       title: `היעדרות בגן ${institution.name}`,
-      message: `הגננת ${mainTeacher.firstName} לא תגיע ביום ${targetDate.toLocaleDateString("he-IL")}`,
+      message: `הגננת ${
+        mainTeacher.firstName
+      } לא תגיע ביום ${targetDate.toLocaleDateString("he-IL")}`,
       type: notificationType,
     });
 
@@ -7843,12 +8533,12 @@ export async function db_createPlacement(data: {
         workDays: { has: getDayEnum(targetDate) },
         placementsAsSub: { none: { date: targetDate, status: "ASSIGNED" } },
       },
-      select: { id: true }
+      select: { id: true },
     });
 
     if (available.length > 0) {
       await db_notifyMultipleUsers(
-        available.map(u => u.id),
+        available.map((u) => u.id),
         priority === "URGENT" ? "קריאה דחופה!" : "הצעה להחלפה",
         `דרושה מחליפה לגן ${institution.name}`,
         notificationType
@@ -7907,9 +8597,10 @@ export async function db_updatePlacementStatus(params: {
     data: {
       status: params.newStatus,
       // תיקון: אם הגן נסגר (CANCELLED) או הוחזר להמתנה (OPEN) - אנחנו מוחקים את המחליפה
-      substituteId: (params.newStatus === "CANCELLED" || params.newStatus === "OPEN") 
-        ? null 
-        : undefined, 
+      substituteId:
+        params.newStatus === "CANCELLED" || params.newStatus === "OPEN"
+          ? null
+          : undefined,
     },
     include: { institution: true },
   });
@@ -7950,12 +8641,14 @@ export async function db_getCalendarData(
     },
     include: {
       institution: { select: { name: true, id: true } },
-      mainTeacher: { select: { id: true, firstName: true, lastName: true, roles: true } },
+      mainTeacher: {
+        select: { id: true, firstName: true, lastName: true, roles: true },
+      },
       substitute: { select: { id: true, firstName: true, lastName: true } },
     },
     orderBy: {
-      date: 'asc'
-    }
+      date: "asc",
+    },
   });
 }
 
@@ -8089,6 +8782,122 @@ declare module "*.css" {
   const content: { [className: string]: string };
   export default content;
 }
+==============================
+FILE: src/types\index.ts
+==============================
+// src/types/index.ts
+
+export type Role = "USER" | "SUPERVISOR" | "INSTRUCTOR" | "MANAGER" | "SUBSTITUTE" | "ROTATION";
+
+export type Day = "SUNDAY" | "MONDAY" | "TUESDAY" | "WEDNESDAY" | "THURSDAY" | "FRIDAY" | "SATURDAY";
+
+export type PlacementStatus = "OPEN" | "ASSIGNED" | "CANCELLED";
+
+export interface User {
+  id: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+  roles: Role[];
+  idNumber: string;
+  phoneNumber: string;
+  dateOfBirth: string;
+  isWorking: boolean;
+  workDays: Day[];
+  instructorId?: string;
+  supervisorId?: string;
+  fixedRotationsAsManager?: FixedRotation[];
+  fixedRotationsAsRotation?: FixedRotation[];
+}
+
+export interface Institution {
+  id: string;
+  name: string;
+  address: string;
+  institutionNumber: string;
+  mainManagerId: string;
+  instructorId: string;
+  supervisorId: string;
+  mainManager?: User;
+  instructor?: User;
+}
+
+export interface Placement {
+  id: string;
+  date: string;
+  status: PlacementStatus;
+  institutionId: string;
+  institution: Institution;
+  mainTeacherId: string;
+  mainTeacher: User;
+  substituteId?: string;
+  substitute?: User;
+  notes?: string;
+  priority: "NORMAL" | "URGENT";
+}
+
+export interface FixedRotation {
+  id: string;
+  day: Day;
+  managerId: string;
+  rotationTeacherId: string;
+  rotationTeacher?: User;
+}
+// src\components\AddPlacementModal.tsx
+export interface Teacher {
+  id: string;
+  firstName: string;
+  lastName: string;
+  mainManagedInstitutions?: { id: string; name: string }[];
+}
+export interface RotationRecord {
+  rotationTeacher: { id: string; firstName: string; lastName: string };
+  manager: {
+    id: string;
+    firstName: string;
+    lastName: string;
+    mainManagedInstitutions: { id: string; name: string }[];
+  };
+}
+
+
+export type FieldKind =
+  | "firstName"
+  | "lastName"
+  | "email"
+  | "phone"
+  | "idNumber"
+  | "password"
+  | "dateOfBirth";
+
+export type ValidatedName = "email" | "idNumber" | "phoneNumber";
+
+export type BaseConfig = {
+  label: string;
+  placeholder: string;
+  icon: any;
+  name: string;
+  type?: string;
+  useValidation?: false;
+};
+
+export type ValidatedConfig = {
+  label: string;
+  icon: any;
+  name: ValidatedName;
+  useValidation: true;
+};
+
+export type FieldConfig = BaseConfig | ValidatedConfig;
+
+export interface Option {
+  id: string;
+  label: string;
+}
+
+export type InputChange = React.ChangeEvent<HTMLInputElement | HTMLSelectElement> | { name: string; value: string };
+
+
 ==============================
 FILE: src/utils\crypto.ts
 ==============================

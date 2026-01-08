@@ -405,12 +405,22 @@ export async function db_getCalendarData(
       institution: { supervisorId: supervisorId },
     },
     include: {
-      institution: { select: { name: true, id: true } },
+      institution: {
+        include: {
+          // הוספנו את השליפה של גננת האם והרוטציות הקבועות שלה
+          mainManager: {
+            include: { fixedRotationsAsManager: true },
+          },
+        },
+      },
       mainTeacher: {
         select: { id: true, firstName: true, lastName: true, roles: true },
       },
-      substitute: { select: { id: true, firstName: true, lastName: true } },
+      substitute: {
+        select: { id: true, firstName: true, lastName: true, roles: true },
+      },
     },
+
     orderBy: {
       date: "asc",
     },
