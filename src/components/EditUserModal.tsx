@@ -13,6 +13,7 @@ import {
   UserMinus,
   PersonStanding,
   RefreshCcw,
+  Lock,
 } from "lucide-react";
 import FormInput from "./FormInput";
 import ReassignTeachersModal from "./ReassignTeachersModal";
@@ -206,57 +207,85 @@ export default function EditUserModal({
       setLoading(false);
     }
   };
-
- const handleCancelRotationMigration = async () => {
-  setLoading(true);
-  try {
-    // שלב 1: החזרת ימי העבודה המקוריים של הגננת (כדי שלא יהיה חוסר התאמה)
-    const updateRes = await fetch(`/api/supervisor/users/${user.id}`, {
-      method: "PATCH",
-      body: JSON.stringify({
-        ...formData,
-        workDays: user.workDays, // מחזירים לערכים המקוריים שקיבלנו ב-Props
-        isWorking: user.isWorking
-      }),
-      headers: { "Content-Type": "application/json" },
-    });
-
-    if (!updateRes.ok) throw new Error("Failed to restore user days");
-
-    // שלב 2: שחזור השיבוצים שנמחקו בטבלת FixedRotation
-    // אנחנו משתמשים במערך brokenRotations שהבאקנד שלח לנו קודם לכן
-    const restoreAssignments = brokenRotations.map((br: any) => ({
-      managerId: br.managerId,
-      day: br.day,
-      rotationTeacherId: user.id // הגננת שאנחנו עורכים כרגע
-    }));
-
-    if (restoreAssignments.length > 0) {
-      const restoreRes = await fetch("/api/supervisor/users/bulk-rotation", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ assignments: restoreAssignments })
-      });
-      
-      if (!restoreRes.ok) throw new Error("Failed to restore rotation links");
+  const handleResetPassword = async () => {
+    if (
+      !confirm(
+        `האם את בטוחה שברצונך לאפס את הסיסמה עבור ${formData.firstName}? הסיסמה החדשה תהיה 123456`
+      )
+    ) {
+      return;
     }
 
-    // שלב 3: ניקוי ה-State וסגירה מוחלטת
-    setShowRotationMigration(false);
-    setBrokenRotations([]);
-    
-    // רענון הנתונים בטבלה הראשית כדי שהכל יהיה מסונכרן
-    await onUpdateSuccess(); 
-    onClose(); 
-    
-    alert("השינויים בוטלו והשיבוצים הקודמים שוחזרו בהצלחה.");
-  } catch (err) {
-    console.error("Rollback error:", err);
-    alert("חלה שגיאה בביטול הפעולה. מומלץ לרענן את הדף ולבדוק את השיבוצים.");
-  } finally {
-    setLoading(false);
-  }
-};
+    setLoading(true);
+    try {
+      const res = await fetch(
+        `/api/supervisor/users/${user.id}/reset-password`,
+        {
+          method: "POST",
+        }
+      );
+
+      if (res.ok) {
+        alert(`הסיסמה של ${formData.firstName} אותחלה בהצלחה ל: 123456`);
+      } else {
+        alert("שגיאה באיפוס הסיסמה");
+      }
+    } catch (err) {
+      alert("שגיאת תקשורת עם השרת");
+    } finally {
+      setLoading(false);
+    }
+  };
+  const handleCancelRotationMigration = async () => {
+    setLoading(true);
+    try {
+      // שלב 1: החזרת ימי העבודה המקוריים של הגננת (כדי שלא יהיה חוסר התאמה)
+      const updateRes = await fetch(`/api/supervisor/users/${user.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          ...formData,
+          workDays: user.workDays, // מחזירים לערכים המקוריים שקיבלנו ב-Props
+          isWorking: user.isWorking,
+        }),
+        headers: { "Content-Type": "application/json" },
+      });
+
+      if (!updateRes.ok) throw new Error("Failed to restore user days");
+
+      // שלב 2: שחזור השיבוצים שנמחקו בטבלת FixedRotation
+      // אנחנו משתמשים במערך brokenRotations שהבאקנד שלח לנו קודם לכן
+      const restoreAssignments = brokenRotations.map((br: any) => ({
+        managerId: br.managerId,
+        day: br.day,
+        rotationTeacherId: user.id, // הגננת שאנחנו עורכים כרגע
+      }));
+
+      if (restoreAssignments.length > 0) {
+        const restoreRes = await fetch("/api/supervisor/users/bulk-rotation", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ assignments: restoreAssignments }),
+        });
+
+        if (!restoreRes.ok) throw new Error("Failed to restore rotation links");
+      }
+
+      // שלב 3: ניקוי ה-State וסגירה מוחלטת
+      setShowRotationMigration(false);
+      setBrokenRotations([]);
+
+      // רענון הנתונים בטבלה הראשית כדי שהכל יהיה מסונכרן
+      await onUpdateSuccess();
+      onClose();
+
+      alert("השינויים בוטלו והשיבוצים הקודמים שוחזרו בהצלחה.");
+    } catch (err) {
+      console.error("Rollback error:", err);
+      alert("חלה שגיאה בביטול הפעולה. מומלץ לרענן את הדף ולבדוק את השיבוצים.");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   if (!isOpen) return null;
 
@@ -391,27 +420,57 @@ export default function EditUserModal({
             </div>
           </section>
 
-          {/* סטטוס עבודה */}
-          <section>
-            <h4 className="font-black text-slate-700 flex items-center gap-2 text-lg border-b pb-2">
-              <Power size={20} className="text-indigo-500" /> סטטוס עבודה
-            </h4>
-            <button
-              type="button"
-              onClick={() =>
-                setFormData((prev) => ({ ...prev, isWorking: !prev.isWorking }))
-              }
-              className={`w-full p-4 mt-2 rounded-2xl border-2 flex items-center justify-between transition-all ${
-                formData.isWorking
-                  ? "border-emerald-500 bg-emerald-50 text-emerald-700"
-                  : "border-red-500 bg-red-50 text-red-700"
-              }`}
-            >
-              <span className="font-black">
-                {formData.isWorking ? "עובדת פעילה" : "מושבתת / לא פעילה"}
-              </span>
-              {formData.isWorking ? <UserCheck /> : <UserMinus />}
-            </button>
+          <section className="grid grid-cols-2 gap-8">
+            {/* סטטוס עבודה */}
+            <div className="">
+              <h4 className="font-black text-slate-700 flex items-center gap-2 text-lg border-b pb-2">
+                <Power size={20} className="text-indigo-500" /> סטטוס עבודה
+              </h4>
+              <button
+                type="button"
+                onClick={() =>
+                  setFormData((prev) => ({
+                    ...prev,
+                    isWorking: !prev.isWorking,
+                  }))
+                }
+                className={`w-full p-4 mt-2 rounded-2xl border-2 flex items-center justify-between transition-all ${
+                  formData.isWorking
+                    ? "border-emerald-500 bg-emerald-50 text-emerald-700"
+                    : "border-red-500 bg-red-50 text-red-700"
+                }`}
+              >
+                <span className="font-black">
+                  {formData.isWorking ? "עובדת פעילה" : "מושבתת / לא פעילה"}
+                </span>
+                {formData.isWorking ? <UserCheck /> : <UserMinus />}
+              </button>
+            </div>
+            <div>
+              <div className="space-y-4">
+                <h4 className="font-black text-slate-700 flex items-center gap-2 text-lg border-b pb-2">
+                  <Lock size={20} className="text-indigo-500" /> אבטחה וסיסמה
+                </h4>
+                <div className="bg-amber-50 p-4 rounded-2xl border border-amber-100 flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-bold text-amber-900">
+                      איפוס סיסמת משתמש
+                    </p>
+                    <p className="text-xs text-amber-700">
+                      הסיסמה תהפוך ל-123456 באופן מיידי
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleResetPassword}
+                    disabled={loading}
+                    className="px-4 py-2 bg-white border-2 border-amber-200 text-amber-600 rounded-xl font-black text-xs hover:bg-amber-600 hover:text-white transition-all shadow-sm active:scale-95"
+                  >
+                    איפוס סיסמה
+                  </button>
+                </div>
+              </div>
+            </div>
           </section>
 
           {/* שיוך מדריכה / רוטציה */}
@@ -565,7 +624,7 @@ export default function EditUserModal({
           <ReassignRotationModal
             isOpen={showRotationMigration}
             brokenRotations={brokenRotations}
-            onCancel={handleCancelRotationMigration} 
+            onCancel={handleCancelRotationMigration}
             onComplete={() => {
               setShowRotationMigration(false);
               onUpdateSuccess();

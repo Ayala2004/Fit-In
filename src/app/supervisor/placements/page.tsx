@@ -36,7 +36,8 @@ export default function DistrictManagementPage() {
   const [allUsers, setAllUsers] = useState<any[]>([]);
   const [staffData, setStaffData] = useState<any[]>([]);
   const [institutions, setInstitutions] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(true); //טעינת הדף
+  const [loadingTable, setLoadingTable] = useState(true); //טעינת הטבלה
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedRoleFilter, setSelectedRoleFilter] = useState<string>("ALL");
@@ -80,6 +81,7 @@ export default function DistrictManagementPage() {
         fetch("/api/supervisor/placements"),
         fetch("/api/supervisor/institutions"),
       ]);
+      setLoadingTable(true);
 
       if (!staffRes.ok || !instRes.ok) {
         throw new Error("שגיאה במשיכת נתונים מהשרת");
@@ -95,16 +97,33 @@ export default function DistrictManagementPage() {
       setError(err.message);
     } finally {
       setLoading(false);
+      setLoadingTable(false);
     }
   };
 
+  // בתוך DistrictManagementPage
+
   const loadAllUsers = async () => {
+    setLoadingTable(true); // מתחילים טעינה של הטבלה
     try {
       const res = await fetch("/api/supervisor/users-stats");
       const data = await res.json();
       setAllUsers(Array.isArray(data) ? data : []);
     } catch (error) {
+      console.error("Error loading users:", error);
       setAllUsers([]);
+    } finally {
+      setLoadingTable(false); // סיום טעינה
+    }
+  };
+
+  const switchTab = async (tab: "STAFF" | "ALL_USERS" | "INSTITUTIONS") => {
+    setActiveTab(tab);
+    setSearchTerm("");
+
+    if (tab === "ALL_USERS") {
+      // קריאה לטעינה (היא כבר כוללת setLoadingTable בתוכה)
+      await loadAllUsers();
     }
   };
 
@@ -143,19 +162,6 @@ export default function DistrictManagementPage() {
       .then((res) => res.json())
       .then((data) => setInstructorsList(data));
   }, []);
-
-  const switchTab = async (tab: "STAFF" | "ALL_USERS" | "INSTITUTIONS") => {
-    setIsTabLoading(true);
-    setActiveTab(tab);
-    setSearchTerm("");
-
-    if (tab === "ALL_USERS") {
-      await loadAllUsers();
-    }
-
-    // אם בעתיד יש עוד טאבים עם טעינה — כאן
-    setIsTabLoading(false);
-  };
 
   const filteredAndSortedUsers = allUsers
     .filter((u) => {
@@ -496,20 +502,29 @@ export default function DistrictManagementPage() {
                   <tr>
                     <th className="p-5">שם מלא</th>
                     <th className="p-5">תפקיד</th>
-                    <th className="p-5">ת.ז</th>
+                    <th className="p-5 hidden md:table-cell">ת.ז</th>
                     <th className="p-5">טלפון</th>
-                    <th className="p-5">ימי חופש</th>
-                    <th className="p-5">מדריכה</th>
-                    <th className="p-5">גננת רוטציה</th>
+                    <th className="p-5 hidden md:table-cell">ימי חופש</th>
+                    <th className="p-5 hidden md:table-cell">מדריכה</th>
+                    <th className="p-5 hidden md:table-cell">גננת רוטציה</th>
                     <th className="p-5">סטטוס</th>
                     <th className="p-5 text-center">פעולות</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50">
-                  {isTabLoading ? (
+                  {loadingTable ? (
+                    // מצב 1: הטבלה בטעינה
                     <tr>
-                      <td colSpan={6} className="p-20 text-center">
-                        <LoadingScreen />
+                      <td colSpan={9} className="p-20 text-center">
+                        <div className="flex flex-col items-center justify-center gap-4">
+                          <Loader2
+                            className="animate-spin text-indigo-600"
+                            size={32}
+                          />
+                          <p className="text-slate-500 font-bold italic">
+                            מרענן רשימת משתמשות...
+                          </p>
+                        </div>
                       </td>
                     </tr>
                   ) : filteredAndSortedUsers.length > 0 ? (
@@ -555,7 +570,7 @@ export default function DistrictManagementPage() {
                               ))}
                             </div>
                           </td>
-                          <td className="p-5 text-sm font-mono text-slate-500">
+                          <td className="p-5 text-sm font-mono text-slate-500 hidden md:table-cell">
                             {u.idNumber}
                           </td>
                           <td
@@ -564,7 +579,7 @@ export default function DistrictManagementPage() {
                           >
                             {u.phoneNumber}
                           </td>
-                          <td className="p-5">
+                          <td className="p-5 hidden md:table-cell">
                             <div className="flex gap-1">
                               {freeDays.length > 0 ? (
                                 freeDays.map((d, i) => (
@@ -584,7 +599,7 @@ export default function DistrictManagementPage() {
                           </td>
 
                           {/* עמודה חדשה: מדריכה מלווה (רק לגננות אם) */}
-                          <td className="p-5 text-sm">
+                          <td className="p-5 text-sm hidden md:table-cell">
                             {u.roles.includes("MANAGER") ? (
                               u.instructor ? (
                                 <span className="text-slate-700 font-medium">
@@ -601,7 +616,7 @@ export default function DistrictManagementPage() {
                             )}
                           </td>
 
-                          <td className="p-5 text-sm">
+                          <td className="p-5 text-sm hidden md:table-cell">
                             {u.roles.includes("MANAGER") ? (
                               u.fixedRotationsAsManager &&
                               u.fixedRotationsAsManager.length > 0 ? (
