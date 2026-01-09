@@ -15,10 +15,11 @@ import {
   RefreshCcw,
   Lock,
 } from "lucide-react";
-import FormInput from "./FormInput";
-import ReassignTeachersModal from "./ReassignTeachersModal";
-import CustomDropdown from "./ui/CustomDropdown";
-import ReassignRotationModal from "./ReassignRotationModal";
+import FormInput from "../FormInput";
+import CustomDropdown from "../ui/CustomDropdown";
+import ReassignTeachersModal from "../ReassignTeachersModal";
+import ReassignRotationModal from "../ReassignRotationModal";
+
 
 export default function EditUserModal({
   user,

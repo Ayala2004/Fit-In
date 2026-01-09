@@ -15,15 +15,15 @@ import {
 import PlacementModal from "@/components/PlacementModal";
 import RecentActivityModal from "@/components/RecentActivityModal";
 import LoadingScreen from "@/components/ui/LoadingScreen";
+import { useRecentActivityHistory } from "@/hooks/useRecentActivityHistory";
 
 export default function SupervisorDashboardPage() {
   const [dashboardData, setDashboardData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedPlacement, setSelectedPlacement] = useState<any>(null);
-  const [isActivityModalOpen, setIsActivityModalOpen] = useState(false);
-  const [fullHistory, setFullHistory] = useState([]);
-  const [loadingHistory, setLoadingHistory] = useState(false);
+
+const history = useRecentActivityHistory("/api/supervisor/history");
 
   const loadData = async () => {
     try {
@@ -38,19 +38,6 @@ export default function SupervisorDashboardPage() {
     }
   };
 
-  const loadFullHistory = async () => {
-    setLoadingHistory(true);
-    setIsActivityModalOpen(true);
-    try {
-      const res = await fetch("/api/supervisor/history"); // יטען אוטומטית לחודש הנוכחי
-      const data = await res.json();
-      setFullHistory(data);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoadingHistory(false);
-    }
-  };
   useEffect(() => {
     loadData();
   }, []);
@@ -387,10 +374,14 @@ export default function SupervisorDashboardPage() {
               </div>
 
               <button
-                onClick={loadFullHistory} // קריאה לפונקציה החדשה
+                onClick={history.open} // קריאה לפונקציה החדשה
                 className="w-full py-4 bg-slate-50 border-t border-slate-100 text-sm font-black text-indigo-600 hover:bg-indigo-50 transition-colors flex items-center justify-center gap-2"
               >
-                {loadingHistory ? <LoadingScreen /> : "צפה בהיסטוריה המלאה"}
+                {history.loadingHistory ? (
+                  <LoadingScreen />
+                ) : (
+                  "צפה בהיסטוריה המלאה"
+                )}
                 <ChevronLeft size={16} />
               </button>
             </div>
@@ -409,10 +400,10 @@ export default function SupervisorDashboardPage() {
       )}
 
       <RecentActivityModal
-        isOpen={isActivityModalOpen}
-        onClose={() => setIsActivityModalOpen(false)}
-        activities={fullHistory}
-        isLoading={loadingHistory}
+        isOpen={history.isOpen}
+        onClose={history.close}
+        activities={history.fullHistory}
+        isLoading={history.loadingHistory}
       />
     </div>
   );

@@ -8,6 +8,7 @@ import {
   addMonths,
   subMonths,
   isSameDay,
+  startOfDay,
 } from "date-fns";
 import { he } from "date-fns/locale";
 import {
@@ -23,23 +24,20 @@ import {
 } from "lucide-react";
 import AddPlacementModal from "@/components/AddModals/AddPlacementModal";
 
-export default function SupervisorCalendar() {
+export default function InstructorCalendar() {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [placements, setPlacements] = useState([]);
   const [loading, setLoading] = useState(true);
   const [user, setUser] = useState<any>(null);
 
-  // States למודאל עריכה ומחליפות
   const [editingPlacement, setEditingPlacement] = useState<any>(null);
   const [availableSubs, setAvailableSubs] = useState([]);
   const [loadingSubs, setLoadingSubs] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
 
-  // States למודאל הוספה
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
 
-  // פונקציה להבאת מחליפות פנויות לתאריך ספציפי
   const fetchAvailableSubstitutes = async (date: Date) => {
     setLoadingSubs(true);
     try {
@@ -56,7 +54,6 @@ export default function SupervisorCalendar() {
     }
   };
 
-  // סינון רשימת המחליפות לפי חיפוש
   const filteredAvailableSubs = useMemo(() => {
     return availableSubs.filter((sub: any) => {
       const fullName = `${sub.firstName} ${sub.lastName}`.toLowerCase();
@@ -67,7 +64,6 @@ export default function SupervisorCalendar() {
     });
   }, [availableSubs, searchQuery]);
 
-  // טעינת פרטי המשתמש המחובר בטעינה ראשונית
   useEffect(() => {
     const initPage = async () => {
       try {
@@ -83,25 +79,14 @@ export default function SupervisorCalendar() {
     initPage();
   }, []);
 
-  // טעינת נתוני לוח השנה
   const fetchData = useCallback(async () => {
-    if (!user?.id) return;
-
     setLoading(true);
     try {
-      const res = await fetch("/api/test", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          type: "getCalendarData",
-          data: {
-            month: currentDate.getMonth() + 1,
-            year: currentDate.getFullYear(),
-            supervisorId: user.id,
-          },
-        }),
-      });
-
+      const res = await fetch(
+        `/api/calendar?month=${
+          currentDate.getMonth() + 1
+        }&year=${currentDate.getFullYear()}`
+      );
       const data = await res.json();
       setPlacements(data);
     } catch (err) {
@@ -110,13 +95,12 @@ export default function SupervisorCalendar() {
     } finally {
       setLoading(false);
     }
-  }, [currentDate, user]);
+  }, [currentDate]);
 
   useEffect(() => {
     fetchData();
   }, [fetchData]);
 
-  // בכל פעם שנפתח מודאל עריכה - נטען מחליפות רלוונטיות לתאריך הדיווח
   useEffect(() => {
     if (editingPlacement) {
       fetchAvailableSubstitutes(new Date(editingPlacement.date));
@@ -133,6 +117,7 @@ export default function SupervisorCalendar() {
         body: JSON.stringify({ id }),
       });
       if (res.ok) setPlacements((prev) => prev.filter((p: any) => p.id !== id));
+      else alert("אין לך הרשאה למחוק דיווח זה");
     } catch (err) {
       alert("שגיאה במחיקה");
     }
@@ -140,7 +125,6 @@ export default function SupervisorCalendar() {
 
   const handleQuickUpdate = async (val: string) => {
     if (!editingPlacement) return;
-
     try {
       const type =
         val === "CANCEL" || val === "OPEN" ? "updateStatus" : "assign";
@@ -168,6 +152,34 @@ export default function SupervisorCalendar() {
     }
   };
 
+  const getPlacementColor = (p: any) => {
+    if (p.status === "OPEN")
+      return "bg-amber-50 border-amber-200 text-amber-700";
+    if (p.status === "CANCELLED")
+      return "bg-red-50 border-red-200 text-red-700";
+
+    const subId = p.substituteId ? String(p.substituteId) : null;
+    const absentId = String(p.mainTeacherId);
+    const gardenManagerId = String(p.institution?.mainManagerId);
+    const gardenRotationIds = (
+      p.institution?.mainManager?.fixedRotationsAsManager || []
+    ).map((r: any) => String(r.rotationTeacherId));
+
+    if (gardenRotationIds.includes(absentId)) {
+      if (subId === gardenManagerId)
+        return "bg-indigo-200 border-indigo-400 text-indigo-900 shadow-sm";
+      return "bg-purple-200 border-purple-400 text-purple-900 shadow-sm";
+    }
+    if (absentId === gardenManagerId) {
+      if (subId && gardenRotationIds.includes(subId))
+        return "bg-slate-300 border-slate-400 text-slate-900 shadow-sm";
+      return "bg-white border-slate-200 text-slate-700";
+    }
+    return "bg-white border-slate-100 text-slate-700";
+  };
+
+  const isMyPlacement = (p: any) => p.mainTeacher?.instructorId === user?.id;
+
   const firstDayOfMonth = startOfMonth(currentDate);
   const startWeekDay = firstDayOfMonth.getDay();
   const realDays = eachDayOfInterval({
@@ -176,47 +188,6 @@ export default function SupervisorCalendar() {
   });
   const paddingDays = Array.from({ length: startWeekDay }, () => null);
   const days = [...paddingDays, ...realDays];
-
-  const getPlacementColor = (p: any) => {
-  // 1. צבעי סטטוס (ממתין / סגור)
-  if (p.status === "OPEN") return "bg-amber-50 border-amber-200 text-amber-700";
-  if (p.status === "CANCELLED") return "bg-red-50 border-red-200 text-red-700";
-
-  const subId = p.substituteId ? String(p.substituteId) : null;
-  const absentId = String(p.mainTeacherId);
-  const gardenManagerId = String(p.institution?.mainManagerId);
-
-  // רשימת כל ה-IDs של גננות הרוטציה הקבועות של הגן הזה (מכל הימים)
-  const gardenRotationIds = (p.institution?.mainManager?.fixedRotationsAsManager || [])
-    .map((r: any) => String(r.rotationTeacherId));
-
-  // זיהוי מי חסרה
-  const isOfficialRotationAbsent = gardenRotationIds.includes(absentId);
-  const isGardenManagerAbsent = absentId === gardenManagerId;
-
-  // --- מקרה א': גננת רוטציה חסרה ---
-  if (isOfficialRotationAbsent) {
-    // אם מנהלת הגן (גננת האם) היא זו שהגיעה להחליף
-    if (subId === gardenManagerId) {
-      return "bg-indigo-200 border-indigo-400 text-indigo-900 shadow-sm"; 
-    }
-    // אם מחליפה אחרת (חיצונית) הגיעה
-    return "bg-purple-200 border-purple-400 text-purple-900 shadow-sm";
-  }
-
-  // --- מקרה ב': גננת אם חסרה ---
-  if (isGardenManagerAbsent) {
-    // אם אחת מגננות הרוטציה הקבועות של הגן הגיעה להחליף
-    if (subId && gardenRotationIds.includes(subId)) {
-      return "bg-slate-300 border-slate-400 text-slate-900 shadow-sm"; 
-    }
-    // אם גננת מחליפה חיצונית הגיעה (לבן)
-    return "bg-white border-slate-200 text-slate-700";
-  }
-
-  // ברירת מחדל לכל מקרה אחר
-  return "bg-white border-slate-100 text-slate-700";
-};
 
   if (!user && loading) {
     return (
@@ -312,6 +283,7 @@ export default function SupervisorCalendar() {
 
               const isSaturday = day.getDay() === 6;
               const isToday = isSameDay(day, new Date());
+               const isPast = day < startOfDay(new Date()) && !isToday;
               const dayPlacements = Array.isArray(placements)
                 ? placements.filter((p: any) =>
                     isSameDay(new Date(p.date), day)
@@ -335,13 +307,10 @@ export default function SupervisorCalendar() {
                     >
                       {format(day, "d")}
                     </span>
-                    {!isSaturday && (
-                      <button
-                        onClick={() => {
-                          setSelectedDate(day);
-                          setIsAddModalOpen(true);
-                        }}
-                        className="p-1 text-slate-400 hover:bg-indigo-600 hover:text-white rounded-md transition-all group/btn"
+                   {!isSaturday && (!isPast || user?.roles.includes("SUPERVISOR")) && (
+                      <button 
+                        onClick={() => { setSelectedDate(day); setIsAddModalOpen(true); }} 
+                        className="p-1 text-slate-400 hover:bg-indigo-600 hover:text-white rounded-md transition-all group/btn" 
                         title="הוספת דיווח"
                       >
                         <Plus size={14} strokeWidth={3} />

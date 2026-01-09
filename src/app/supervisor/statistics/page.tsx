@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { format, subMonths, subYears, startOfMonth } from "date-fns";
 import { BarChart3, Calendar, User, Info } from "lucide-react";
-import EditUserModal from "@/components/EditUserModal";
+import EditUserModal from "@/components/EditModals/EditUserModal";
 import LoadingScreen from "@/components/ui/LoadingScreen";
 import CustomDatePicker from "@/components/ui/CustomDatePicker";
 import CustomDropdown from "@/components/ui/CustomDropdown";

@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect } from "react";
 import { X, Building2, MapPin, Hash, User, Save, Loader2, Search, Info } from "lucide-react";
-import LoadingScreen from "./ui/LoadingScreen";
+import LoadingScreen from "../ui/LoadingScreen";
 
 export default function EditInstitutionModal({ isOpen, onClose, onSuccess, institution }: any) {
   const [managers, setManagers] = useState<any[]>([]);

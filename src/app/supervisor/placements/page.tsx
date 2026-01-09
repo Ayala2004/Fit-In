@@ -3,9 +3,6 @@
 
 import { useEffect, useState } from "react";
 import { highlightText } from "@/lib/utils/formatters";
-import AddInstitutionModal from "@/components/AddInstitutionModal";
-import AddUserModal from "@/components/AddUserModal.tsx";
-import AddSubstituteModal from "@/components/AddSubstituteModal";
 import InstructorPlacementsModal from "@/components/InstructorCardModal";
 import PlacementModal from "@/components/PlacementModal";
 import {
@@ -24,10 +21,13 @@ import {
   PlusCircle,
   Power,
 } from "lucide-react";
-import EditUserModal from "@/components/EditUserModal";
-import EditInstitutionModal from "@/components/EditInstitutionModal";
+import EditUserModal from "@/components/EditModals/EditUserModal";
+import EditInstitutionModal from "@/components/EditModals/EditInstitutionModal";
 import ReassignTeachersModal from "@/components/ReassignTeachersModal";
 import LoadingScreen from "@/components/ui/LoadingScreen";
+import AddUserModal from "@/components/AddModals/AddUserModal.tsx";
+import AddSubstituteModal from "@/components/AddModals/AddSubstituteModal";
+import AddInstitutionModal from "@/components/AddModals/AddInstitutionModal";
 
 export default function DistrictManagementPage() {
   const [activeTab, setActiveTab] = useState<

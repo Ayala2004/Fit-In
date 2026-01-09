@@ -9,7 +9,7 @@ import {
   PieChartIcon,
   BarChart3,
 } from "lucide-react";
-export default function Navbar() {
+export default function SupervisorNavbar() {
   const router = useRouter();
   const pathname = usePathname();
 

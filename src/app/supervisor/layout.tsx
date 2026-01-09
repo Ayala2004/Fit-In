@@ -1,6 +1,6 @@
 'use client';
 
-import Navbar from '@/components/Navbar';
+import SupervisorNavbar from '@/components/NavBars/SupervisorNavbar';
 
 export default function SupervisorLayout({
   children,
@@ -10,7 +10,7 @@ export default function SupervisorLayout({
   return (
     <div className="min-h-screen bg-slate-50" dir="rtl">
       {/* ה-Navbar החדש שכולל את כל הניווט */}
-      <Navbar />
+      <SupervisorNavbar />
 
       {/* תוכן הדף */}
       <main className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8">

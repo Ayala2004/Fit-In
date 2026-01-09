@@ -12,7 +12,7 @@ import {
   RefreshCcw,
 } from "lucide-react";
 import { Teacher, RotationRecord } from "@/types";
-import CustomDropdown from "./ui/CustomDropdown";
+import CustomDropdown from "../ui/CustomDropdown";
 
 interface Props {
   isOpen: boolean;

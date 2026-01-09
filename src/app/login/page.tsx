@@ -1,43 +1,52 @@
-'use client';
+"use client";
 
-import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState } from "react";
+import { useRouter } from "next/navigation";
 
 export default function LoginPage() {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const router = useRouter();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    setError('');
+    setError("");
 
     try {
-      const res = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password }),
       });
 
       if (res.ok) {
         const user = await res.json();
-        
-        // בדיקה אם הוא supervisor - אם כן, שלח אותו לדף הפלייסמנטס
-        if (user.roles.includes('SUPERVISOR')) {
-          router.push('/supervisor/placements');
+
+        if (user.roles.includes("SUPERVISOR")) {
+          router.push("/supervisor");
+        } else if (user.roles.includes("INSTRUCTOR")) {
+          router.push("/instructor");
+        } else if (user.roles.includes("MANAGER")) {
+          router.push("/manager"); // נבנה בהמשך
+        } else if (
+          user.roles.includes("SUBSTITUTE") ||
+          user.roles.includes("ROTATION")
+        ) {
+          router.push("/jobs"); // נבנה בהמשך
         } else {
-          router.push('/'); // או דף אחר למשתמשים רגילים
+          router.push("/");
         }
-        router.refresh(); // מרענן את ה-middleware כדי שיזהה את ה-cookie החדש
+
+        router.refresh();
       } else {
         const data = await res.json();
-        setError(data.message || 'משהו השתבש');
+        setError(data.message || "משהו השתבש");
       }
     } catch (err) {
-      setError('שגיאת תקשורת עם השרת');
+      setError("שגיאת תקשורת עם השרת");
     } finally {
       setLoading(false);
     }
@@ -46,11 +55,15 @@ export default function LoginPage() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-gray-50">
       <div className="w-full max-w-md p-8 space-y-6 bg-white rounded-xl shadow-lg">
-        <h1 className="text-2xl font-bold text-center text-gray-900">כניסת מפקחים</h1>
-        
+        <h1 className="text-2xl font-bold text-center text-gray-900">
+          כניסת מפקחים
+        </h1>
+
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700">אימייל</label>
+            <label className="block text-sm font-medium text-gray-700">
+              אימייל
+            </label>
             <input
               type="email"
               required
@@ -60,9 +73,11 @@ export default function LoginPage() {
               onChange={(e) => setEmail(e.target.value)}
             />
           </div>
-          
+
           <div>
-            <label className="block text-sm font-medium text-gray-700">סיסמה</label>
+            <label className="block text-sm font-medium text-gray-700">
+              סיסמה
+            </label>
             <input
               type="password"
               required
@@ -80,7 +95,7 @@ export default function LoginPage() {
             disabled={loading}
             className="w-full px-4 py-2 text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:bg-blue-300 transition-colors"
           >
-            {loading ? 'מתחבר...' : 'התחבר'}
+            {loading ? "מתחבר..." : "התחבר"}
           </button>
         </form>
       </div>

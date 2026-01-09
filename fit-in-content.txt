@@ -896,42 +896,72 @@ export async function GET(req: Request) {
   const start = searchParams.get('start');
   const end = searchParams.get('end');
   const userId = searchParams.get('userId');
+  const includeInternal = searchParams.get('includeInternal') === 'true';
 
   try {
-    const whereClause: any = {
-      institution: { supervisorId: session.id },
-      date: {
-        gte: start ? startOfDay(new Date(start)) : undefined,
-        lte: end ? endOfDay(new Date(end)) : undefined,
+    const allPlacements = await prisma.placement.findMany({
+      where: {
+        institution: { supervisorId: session.id },
+        date: {
+          gte: start ? startOfDay(new Date(start)) : undefined,
+          lte: end ? endOfDay(new Date(end)) : undefined,
+        }
+      },
+      include: {
+        mainTeacher: { select: { id: true, roles: true } },
+        institution: {
+          include: {
+            mainManager: {
+              include: { fixedRotationsAsManager: true }
+            }
+          }
+        }
       }
-    };
-
-    // אם חיפשנו משתמשת ספציפית
-    if (userId) {
-      whereClause.OR = [
-        { mainTeacherId: userId },
-        { substituteId: userId }
-      ];
-    }
-
-    const placements = await prisma.placement.findMany({
-      where: whereClause,
-      select: { status: true, mainTeacherId: true, substituteId: true }
     });
 
+    const isInternalSwap = (p: any) => {
+      if (!p.substituteId) return false;
+
+      const subId = String(p.substituteId);
+      const absentTeacherId = String(p.mainTeacherId);
+      const gardenManagerId = String(p.institution.mainManagerId);
+      
+      // רשימת כל ה-IDs של גננות הרוטציה הקבועות של הגן הזה (מכל הימים)
+      const gardenRotationIds = (p.institution.mainManager?.fixedRotationsAsManager || [])
+        .map((r: any) => String(r.rotationTeacherId));
+
+      // מקרה א': גננת אם חסרה והוחלפה ע"י אחת מגננות הרוטציה שלה
+      if (absentTeacherId === gardenManagerId) {
+        if (gardenRotationIds.includes(subId)) return true;
+      }
+
+      // מקרה ב': אחת מגננות הרוטציה הקבועות חסרה והוחלפה ע"י גננת האם
+      if (gardenRotationIds.includes(absentTeacherId)) {
+        if (subId === gardenManagerId) return true;
+      }
+
+      return false;
+    };
+
+    // סינון לפי בחירת המשתמש
+    const displayPlacements = includeInternal 
+      ? allPlacements 
+      : allPlacements.filter(p => !isInternalSwap(p));
+
     const stats = {
-      total: placements.length,
-      assigned: placements.filter(p => p.status === 'ASSIGNED').length,
-      cancelled: placements.filter(p => p.status === 'CANCELLED').length,
-      open: placements.filter(p => p.status === 'OPEN').length,
+      total: displayPlacements.length,
+      assigned: displayPlacements.filter(p => p.status === 'ASSIGNED').length,
+      cancelled: displayPlacements.filter(p => p.status === 'CANCELLED').length,
+      open: displayPlacements.filter(p => p.status === 'OPEN').length,
       userSpecific: userId ? {
-        asMain: placements.filter(p => p.mainTeacherId === userId).length,
-        asSub: placements.filter(p => p.substituteId === userId).length,
+        asMain: displayPlacements.filter(p => p.mainTeacherId === userId).length,
+        asSub: displayPlacements.filter(p => p.substituteId === userId).length,
       } : null
     };
 
     return NextResponse.json(stats);
   } catch (error) {
+    console.error("Stats Error:", error);
     return NextResponse.json({ message: "שגיאה" }, { status: 500 });
   }
 }
@@ -1035,6 +1065,64 @@ export async function PATCH(req: Request) {
     return NextResponse.json({ success: true, count: managerIds.length });
   } catch (error) {
     return NextResponse.json({ message: "שגיאה בעדכון המוני" }, { status: 500 });
+  }
+}
+==============================
+FILE: src/app\api\supervisor\users\bulk-rotation\route.ts
+==============================
+import { NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+
+export async function POST(req: Request) {
+  try {
+    const { assignments } = await req.json();
+    
+    // שימוש ב-createMany ליצירת כל הקשרים החדשים בבת אחת
+    await prisma.fixedRotation.createMany({
+      data: assignments
+    });
+
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    return NextResponse.json({ message: "Error" }, { status: 500 });
+  }
+}
+==============================
+FILE: src/app\api\supervisor\users\[id]\reset-password\route.ts
+==============================
+import { NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { getSession } from "@/lib/auth";
+import bcrypt from "bcrypt";
+
+export async function POST(
+  req: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const session = await getSession();
+
+  // אבטחה: רק מפקחת מורשית לבצע איפוס
+  if (!session || !session.roles.includes("SUPERVISOR")) {
+    return NextResponse.json({ message: "לא מורשה" }, { status: 401 });
+  }
+
+  try {
+    const { id } = await params;
+
+    // הצפנת הסיסמה החדשה (123456)
+    const hashedPassword = await bcrypt.hash("123456", 10);
+
+    await prisma.user.update({
+      where: { id: id },
+      data: { password: hashedPassword },
+    });
+
+    return NextResponse.json({ message: "הסיסמה אותחלה בהצלחה ל-123456" });
+  } catch (error: any) {
+    return NextResponse.json(
+      { message: "שגיאה באיפוס הסיסמה", details: error.message },
+      { status: 500 }
+    );
   }
 }
 ==============================
@@ -1155,7 +1243,6 @@ export async function PATCH(
       await prisma.fixedRotation.deleteMany({
         where: { managerId: id },
       });
-      console.log(`Released all fixed rotations for inactive manager: ${id}`);
     }
     // אם היא נשארה פעילה אבל נשלחו נתוני רוטציה חדשים (הקוד הקיים שלך)
     else if (updatedUser.roles.includes("MANAGER") && rotationData) {
@@ -1224,10 +1311,41 @@ export async function PATCH(
       });
     }
 
+    const isRotationTeacher = updatedUser.roles.includes("ROTATION");
+    let brokenRotations: any[] = [];
+
+    if (isRotationTeacher) {
+      // 2. נמצא את כל השיבוצים הקבועים שבהם היא רשומה,
+      // אבל הם בימים שבהם היא כבר לא עובדת (או שהיא הושבתה לגמרי)
+      brokenRotations = await prisma.fixedRotation.findMany({
+        where: {
+          rotationTeacherId: id,
+          OR: [
+            { manager: { isWorking: false } }, // הגנה נוספת
+            { day: { notIn: updatedUser.workDays } }, // היום כבר לא בלו"ז שלה
+            { rotationTeacher: { isWorking: false } }, // היא הושבתה
+          ],
+        },
+        include: {
+          manager: { select: { id: true, firstName: true, lastName: true } },
+        },
+      });
+
+      // 3. מחיקת השיבוצים השבורים מה-DB (כי הם כבר לא חוקיים)
+      if (brokenRotations.length > 0) {
+        await prisma.fixedRotation.deleteMany({
+          where: { id: { in: brokenRotations.map((br) => br.id) } },
+        });
+      }
+    }
+
     return NextResponse.json({
       user: updatedUser,
       needsReassignment: orphanedManagers.length > 0,
       orphanedManagers: orphanedManagers,
+      // הנתון החדש:
+      needsRotationMigration: brokenRotations.length > 0,
+      brokenRotations: brokenRotations,
     });
   } catch (error: any) {
     console.error("Prisma Update Error Details:", error);
@@ -2155,6 +2273,47 @@ export default function SupervisorCalendar() {
   const paddingDays = Array.from({ length: startWeekDay }, () => null);
   const days = [...paddingDays, ...realDays];
 
+  const getPlacementColor = (p: any) => {
+  // 1. צבעי סטטוס (ממתין / סגור)
+  if (p.status === "OPEN") return "bg-amber-50 border-amber-200 text-amber-700";
+  if (p.status === "CANCELLED") return "bg-red-50 border-red-200 text-red-700";
+
+  const subId = p.substituteId ? String(p.substituteId) : null;
+  const absentId = String(p.mainTeacherId);
+  const gardenManagerId = String(p.institution?.mainManagerId);
+
+  // רשימת כל ה-IDs של גננות הרוטציה הקבועות של הגן הזה (מכל הימים)
+  const gardenRotationIds = (p.institution?.mainManager?.fixedRotationsAsManager || [])
+    .map((r: any) => String(r.rotationTeacherId));
+
+  // זיהוי מי חסרה
+  const isOfficialRotationAbsent = gardenRotationIds.includes(absentId);
+  const isGardenManagerAbsent = absentId === gardenManagerId;
+
+  // --- מקרה א': גננת רוטציה חסרה ---
+  if (isOfficialRotationAbsent) {
+    // אם מנהלת הגן (גננת האם) היא זו שהגיעה להחליף
+    if (subId === gardenManagerId) {
+      return "bg-indigo-200 border-indigo-400 text-indigo-900 shadow-sm"; 
+    }
+    // אם מחליפה אחרת (חיצונית) הגיעה
+    return "bg-purple-200 border-purple-400 text-purple-900 shadow-sm";
+  }
+
+  // --- מקרה ב': גננת אם חסרה ---
+  if (isGardenManagerAbsent) {
+    // אם אחת מגננות הרוטציה הקבועות של הגן הגיעה להחליף
+    if (subId && gardenRotationIds.includes(subId)) {
+      return "bg-slate-300 border-slate-400 text-slate-900 shadow-sm"; 
+    }
+    // אם גננת מחליפה חיצונית הגיעה (לבן)
+    return "bg-white border-slate-200 text-slate-700";
+  }
+
+  // ברירת מחדל לכל מקרה אחר
+  return "bg-white border-slate-100 text-slate-700";
+};
+
   if (!user && loading) {
     return (
       <div className="flex h-screen items-center justify-center bg-slate-50">
@@ -2201,6 +2360,26 @@ export default function SupervisorCalendar() {
           </div>
         </div>
 
+        {/* Legend / מפת צבעים */}
+        <div className="bg-white p-4 rounded-2xl mb-6 shadow-sm border border-slate-100 flex flex-wrap gap-4 text-xs font-bold justify-center md:justify-start">
+          <div className="flex items-center gap-2">
+            <div className="w-4 h-4 bg-indigo-200 border border-indigo-400 rounded"></div>
+            <span>אם מחליפה רוטציה</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-4 h-4 bg-purple-200 border border-purple-400 rounded"></div>
+            <span>מחליפה לרוטציה</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-4 h-4 bg-slate-200 border border-slate-400 rounded"></div>
+            <span>רוטציה קבועה מחליפה אם</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-4 h-4 bg-white border border-slate-200 rounded"></div>
+            <span>מחליפה חיצונית לאם</span>
+          </div>
+        </div>
+
         {/* Calendar Grid */}
         <div className="bg-white rounded-[2.5rem] shadow-xl border border-slate-200 overflow-hidden">
           <div className="grid grid-cols-7 bg-slate-50/50 border-b border-slate-200">
@@ -2234,12 +2413,11 @@ export default function SupervisorCalendar() {
                     isSameDay(new Date(p.date), day)
                   )
                 : [];
-                
 
               return (
                 <div
                   key={day.toString()}
-                  className={`min-h-[150px] border-l border-b border-slate-100 p-3 flex flex-col transition-all ${
+                  className={`min-h-37.5 border-l border-b border-slate-100 p-5 flex flex-col transition-all ${
                     isSaturday ? "bg-slate-50/50" : "hover:bg-indigo-50/5"
                   }`}
                 >
@@ -2274,53 +2452,54 @@ export default function SupervisorCalendar() {
                   ) : (
                     <div className="flex-1 space-y-2 overflow-y-auto overflow-x-hidden custom-calendar-scroll">
                       {" "}
-                      {dayPlacements.map((p: any) => (
-                        
-                        <div  
-                        key={p.id}
-                        className="group relative p-2 rounded-xl border border-slate-100 bg-white shadow-sm hover:border-indigo-300 hover:shadow-md transition-all cursor-pointer"
-                        onClick={() => setEditingPlacement(p)}
-                        >
-                          <div className="text-[14px] font-bold text-slate-700 leading-tight">
-                            {p.mainTeacher?.firstName} {p.mainTeacher?.lastName}
-                          </div>
+                      {dayPlacements.map((p: any) => {
+                        const colorClass = getPlacementColor(p); // חישוב הצבע
+
+                        return (
                           <div
-                            className={`text-[12px] mt-1 flex items-center gap-1.5 ${
-                              p.status === "OPEN"
-                                ? "text-amber-600 font-bold"
-                                : p.status === "CANCELLED"
-                                ? "text-red-500 font-bold"
-                                : "text-emerald-600 font-bold"
-                            }`}
+                            key={p.id}
+                            // התיקון כאן: הסרנו את bg-white ו-border-slate-100 הקבועים והשתמשנו ב-colorClass
+                            className={`group relative p-2 rounded-xl border shadow-sm hover:shadow-md transition-all cursor-pointer ${colorClass}`}
+                            onClick={() => setEditingPlacement(p)}
                           >
+                            <div className="text-[14px] font-bold leading-tight">
+                              {p.mainTeacher?.firstName}{" "}
+                              {p.mainTeacher?.lastName}
+                            </div>
+
                             <div
-                              className={`w-1.5 h-1.5 rounded-full ${
-                                p.status === "OPEN"
-                                  ? "bg-amber-500 animate-pulse"
-                                  : p.status === "CANCELLED"
-                                  ? "bg-red-500"
-                                  : "bg-emerald-500"
-                              }`}
-                            />
-                            {p.status === "OPEN"
-                              ? "ממתין"
-                              : p.status === "CANCELLED"
-                              ? "סגור"
-                              : p.substitute
-                              ? `${p.substitute.firstName} ${p.substitute.lastName[0]}.`
-                              : "משובץ"}
+                              className={`text-[12px] mt-1 flex items-center gap-1.5 font-bold`}
+                            >
+                              <div
+                                className={`w-1.5 h-1.5 rounded-full ${
+                                  p.status === "OPEN"
+                                    ? "bg-amber-500 animate-pulse"
+                                    : p.status === "CANCELLED"
+                                    ? "bg-red-500"
+                                    : "bg-emerald-500"
+                                }`}
+                              />
+                              {p.status === "OPEN"
+                                ? "ממתין"
+                                : p.status === "CANCELLED"
+                                ? "סגור"
+                                : p.substitute
+                                ? `${p.substitute.firstName} ${p.substitute.lastName[0]}.`
+                                : "משובץ"}
+                            </div>
+
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDelete(p.id);
+                              }}
+                              className="absolute -top-1.5 -left-1.5 opacity-0 group-hover:opacity-100 bg-white text-red-500 p-1 rounded-full shadow-md border border-red-50 hover:bg-red-500 hover:text-white transition-all"
+                            >
+                              <X size={10} />
+                            </button>
                           </div>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleDelete(p.id);
-                            }}
-                            className="absolute -top-1.5 -left-1.5 opacity-0 group-hover:opacity-100 bg-white text-red-500 p-1 rounded-full shadow-md border border-red-50 hover:bg-red-500 hover:text-white transition-all"
-                          >
-                            <X size={10} />
-                          </button>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
                 </div>
@@ -2945,11 +3124,12 @@ import LoadingScreen from "@/components/ui/LoadingScreen";
 export default function DistrictManagementPage() {
   const [activeTab, setActiveTab] = useState<
     "STAFF" | "INSTITUTIONS" | "ALL_USERS"
-  >("STAFF");
+  >("ALL_USERS");
   const [allUsers, setAllUsers] = useState<any[]>([]);
   const [staffData, setStaffData] = useState<any[]>([]);
   const [institutions, setInstitutions] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(true); //טעינת הדף
+  const [loadingTable, setLoadingTable] = useState(true); //טעינת הטבלה
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedRoleFilter, setSelectedRoleFilter] = useState<string>("ALL");
@@ -2976,6 +3156,14 @@ export default function DistrictManagementPage() {
     THURSDAY: "ה'",
     FRIDAY: "ו'",
   };
+  const allWeekDays = [
+    "SUNDAY",
+    "MONDAY",
+    "TUESDAY",
+    "WEDNESDAY",
+    "THURSDAY",
+    "FRIDAY",
+  ];
   // 2. פונקציות טעינה
   const loadData = async () => {
     setLoading(true);
@@ -2985,6 +3173,7 @@ export default function DistrictManagementPage() {
         fetch("/api/supervisor/placements"),
         fetch("/api/supervisor/institutions"),
       ]);
+      setLoadingTable(true);
 
       if (!staffRes.ok || !instRes.ok) {
         throw new Error("שגיאה במשיכת נתונים מהשרת");
@@ -3000,22 +3189,48 @@ export default function DistrictManagementPage() {
       setError(err.message);
     } finally {
       setLoading(false);
+      setLoadingTable(false);
     }
   };
 
+  // בתוך DistrictManagementPage
+
   const loadAllUsers = async () => {
+    setLoadingTable(true); // מתחילים טעינה של הטבלה
     try {
       const res = await fetch("/api/supervisor/users-stats");
       const data = await res.json();
       setAllUsers(Array.isArray(data) ? data : []);
     } catch (error) {
+      console.error("Error loading users:", error);
       setAllUsers([]);
+    } finally {
+      setLoadingTable(false); // סיום טעינה
+    }
+  };
+
+  const switchTab = async (tab: "STAFF" | "ALL_USERS" | "INSTITUTIONS") => {
+    setActiveTab(tab);
+    setSearchTerm("");
+
+    if (tab === "ALL_USERS") {
+      // קריאה לטעינה (היא כבר כוללת setLoadingTable בתוכה)
+      await loadAllUsers();
     }
   };
 
   // טעינה ראשונית
   useEffect(() => {
-    loadData();
+    const initFetch = async () => {
+      await loadData(); // טוען מוסדות ומדריכות
+
+      // אם הטאב הנוכחי הוא ALL_USERS, נטען גם את כל המשתמשים
+      if (activeTab === "ALL_USERS") {
+        await loadAllUsers();
+      }
+    };
+
+    initFetch();
   }, []);
 
   useEffect(() => {
@@ -3040,27 +3255,33 @@ export default function DistrictManagementPage() {
       .then((data) => setInstructorsList(data));
   }, []);
 
-  const switchTab = async (tab: "STAFF" | "ALL_USERS" | "INSTITUTIONS") => {
-    setIsTabLoading(true);
-    setActiveTab(tab);
-    setSearchTerm("");
-
-    if (tab === "ALL_USERS") {
-      await loadAllUsers();
-    }
-
-    // אם בעתיד יש עוד טאבים עם טעינה — כאן
-    setIsTabLoading(false);
-  };
-
   const filteredAndSortedUsers = allUsers
     .filter((u) => {
-      const fullName = `${u.firstName} ${u.lastName}`.toLowerCase();
+      // הגנה: וודאי שהשדות קיימים לפני ביצוע toLowerCase
+      const firstName = u.firstName || "";
+      const lastName = u.lastName || "";
+      const idNumber = u.idNumber || "";
+      const roles = u.roles || [];
+
+      const fullName = `${firstName} ${lastName}`.toLowerCase();
       const matchesSearch =
         fullName.includes(searchTerm.toLowerCase()) ||
-        u.idNumber.includes(searchTerm);
-      const matchesRole =
-        selectedRoleFilter === "ALL" || u.roles.includes(selectedRoleFilter);
+        idNumber.includes(searchTerm);
+
+      let matchesRole = false;
+
+      if (selectedRoleFilter === "ALL") {
+        matchesRole = true;
+      } else if (selectedRoleFilter === "NO_ROTATION") {
+        // גננת אם שאין לה אף רוטציה רשומה
+        matchesRole =
+          u.roles.includes("MANAGER") &&
+          (!u.fixedRotationsAsManager ||
+            u.fixedRotationsAsManager.length === 0);
+      } else {
+        matchesRole = u.roles.includes(selectedRoleFilter);
+      }
+
       return matchesSearch && matchesRole;
     })
     .sort((a, b) => {
@@ -3090,6 +3311,11 @@ export default function DistrictManagementPage() {
       color: "bg-purple-100 text-purple-600",
     },
     { id: "MANAGER", label: "גננות אם", color: "bg-pink-50 text-pink-400" },
+    {
+      id: "NO_ROTATION",
+      label: "גננות ללא רוטציה ⚠️",
+      color: "bg-red-50 text-red-600 border-red-200",
+    },
     {
       id: "ROTATION",
       label: "גננות רוטציה",
@@ -3200,16 +3426,6 @@ export default function DistrictManagementPage() {
       {/* Tab Switcher */}
       <div className="flex gap-4 p-1.5 bg-slate-100 rounded-3xl w-full max-w-md">
         <button
-          onClick={() => switchTab("STAFF")}
-          className={`tab-buttons  ${
-            activeTab === "STAFF"
-              ? "bg-white text-indigo-600 shadow-sm"
-              : "text-slate-500 hover:text-slate-700"
-          }`}
-        >
-          צוות הדרכה
-        </button>
-        <button
           onClick={() => switchTab("ALL_USERS")}
           className={`tab-buttons ${
             activeTab === "ALL_USERS"
@@ -3228,6 +3444,16 @@ export default function DistrictManagementPage() {
           }`}
         >
           מוסדות
+        </button>
+        <button
+          onClick={() => switchTab("STAFF")}
+          className={`tab-buttons  ${
+            activeTab === "STAFF"
+              ? "bg-white text-indigo-600 shadow-sm"
+              : "text-slate-500 hover:text-slate-700"
+          }`}
+        >
+          צוות הדרכה
         </button>
       </div>
 
@@ -3327,19 +3553,37 @@ export default function DistrictManagementPage() {
             <span className="text-xs font-black text-slate-400 w-full mb-1 mr-2">
               סנני לפי תפקיד:
             </span>
-            {roleFilters.map((filter) => (
-              <button
-                key={filter.id}
-                onClick={() => setSelectedRoleFilter(filter.id)}
-                className={`px-4 py-2 rounded-xl text-xs font-black transition-all ${
-                  selectedRoleFilter === filter.id
-                    ? `${filter.color} ring-2 ring-offset-1 ring-current`
-                    : "bg-slate-50 text-slate-400 hover:bg-slate-100"
-                }`}
-              >
-                {filter.label}
-              </button>
-            ))}
+            {roleFilters.map((filter) => {
+              // חישוב כמות במידה וזה הפילטר של "ללא רוטציה"
+              const count =
+                filter.id === "NO_ROTATION"
+                  ? allUsers.filter(
+                      (u) =>
+                        u.roles.includes("MANAGER") &&
+                        (!u.fixedRotationsAsManager ||
+                          u.fixedRotationsAsManager.length === 0)
+                    ).length
+                  : null;
+
+              return (
+                <button
+                  key={filter.id}
+                  onClick={() => setSelectedRoleFilter(filter.id)}
+                  className={`px-4 py-2 rounded-xl text-xs font-black transition-all flex items-center gap-2 ${
+                    selectedRoleFilter === filter.id
+                      ? `${filter.color} ring-2 ring-offset-1 ring-current`
+                      : "bg-slate-50 text-slate-400 hover:bg-slate-100"
+                  }`}
+                >
+                  {filter.label}
+                  {count !== null && count > 0 && (
+                    <span className="bg-red-500 text-white px-1.5 py-0.5 rounded-full text-[10px]">
+                      {count}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
           </div>
 
           {/* הטבלה */}
@@ -3350,91 +3594,183 @@ export default function DistrictManagementPage() {
                   <tr>
                     <th className="p-5">שם מלא</th>
                     <th className="p-5">תפקיד</th>
-                    <th className="p-5">ת.ז</th>
+                    <th className="p-5 hidden md:table-cell">ת.ז</th>
                     <th className="p-5">טלפון</th>
+                    <th className="p-5 hidden md:table-cell">ימי חופש</th>
+                    <th className="p-5 hidden md:table-cell">מדריכה</th>
+                    <th className="p-5 hidden md:table-cell">גננת רוטציה</th>
                     <th className="p-5">סטטוס</th>
                     <th className="p-5 text-center">פעולות</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50">
-                  {isTabLoading ? (
+                  {loadingTable ? (
+                    // מצב 1: הטבלה בטעינה
                     <tr>
-                      <td colSpan={6} className="p-20 text-center">
-                        <LoadingScreen />
+                      <td colSpan={9} className="p-20 text-center">
+                        <div className="flex flex-col items-center justify-center gap-4">
+                          <Loader2
+                            className="animate-spin text-indigo-600"
+                            size={32}
+                          />
+                          <p className="text-slate-500 font-bold italic">
+                            מרענן רשימת משתמשות...
+                          </p>
+                        </div>
                       </td>
                     </tr>
                   ) : filteredAndSortedUsers.length > 0 ? (
-                    filteredAndSortedUsers.map((u) => (
-                      <tr
-                        key={u.id}
-                        className="hover:bg-slate-50/50 transition-colors group"
-                      >
-                        <td className="p-5 font-bold text-slate-700">
-                          {highlightText(
-                            `${u.firstName} ${u.lastName}`,
-                            searchTerm
-                          )}
-                        </td>
-                        <td className="p-5">
-                          <div className="flex flex-wrap gap-1">
-                            {u.roles.map((r: any) => (
-                              <span
-                                key={r}
-                                className={`text-[10px] px-2 py-0.5 rounded-md font-black ${
-                                  r === "MANAGER"
-                                    ? "bg-pink-50 text-pink-400"
-                                    : r === "INSTRUCTOR"
-                                    ? "bg-purple-100 text-purple-600"
-                                    : r === "ROTATION"
-                                    ? "bg-emerald-50 text-emerald-600"
-                                    : "bg-sky-100 text-sky-600"
-                                }`}
-                              >
-                                {r === "MANAGER"
-                                  ? "גננת אם"
-                                  : r === "SUBSTITUTE"
-                                  ? "מחליפה"
-                                  : r === "INSTRUCTOR"
-                                  ? "מדריכה"
-                                  : "רוטציה"}
-                              </span>
-                            ))}
-                          </div>
-                        </td>
-                        <td className="p-5 text-sm font-mono text-slate-500">
-                          {u.idNumber}
-                        </td>
-                        <td
-                          className="p-5 text-sm text-slate-600 font-medium"
-                          dir="ltr"
+                    filteredAndSortedUsers.map((u) => {
+                      const userWorkDays = u.workDays || [];
+                      const freeDays = allWeekDays
+                        .filter((d) => !userWorkDays.includes(d))
+                        .map((d) => dayTranslations[d]);
+                      return (
+                        <tr
+                          key={u.id}
+                          className="hover:bg-slate-50/50 transition-colors group"
                         >
-                          {u.phoneNumber}
-                        </td>
-                        <td className="p-5">
-                          <div className="flex items-center gap-2">
-                            <span
-                              className={`w-2 h-2 rounded-full ${
-                                u.isWorking
-                                  ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]"
-                                  : "bg-red-500"
-                              }`}
-                            />
-                            <span className="text-[10px] font-bold text-slate-400">
-                              {u.isWorking ? "פעילה" : "לא פעילה"}
-                            </span>
-                          </div>
-                        </td>
-                        <td className="p-5 text-center">
-                          <button
-                            onClick={() => setSelectedUserForEdit(u)}
-                            className="p-2 bg-indigo-50 text-slate-600 rounded-lg hover:bg-indigo-600 hover:text-white transition-all shadow-sm"
-                            title="עריכת פרטים"
+                          <td className="p-5 font-bold text-slate-700">
+                            {highlightText(
+                              `${u.firstName} ${u.lastName}`,
+                              searchTerm
+                            )}
+                          </td>
+                          <td className="p-5">
+                            <div className="flex flex-wrap gap-1">
+                              {u.roles.map((r: any) => (
+                                <span
+                                  key={r}
+                                  className={`text-[10px] px-2 py-0.5 rounded-md font-black ${
+                                    r === "MANAGER"
+                                      ? "bg-pink-50 text-pink-400"
+                                      : r === "INSTRUCTOR"
+                                      ? "bg-purple-100 text-purple-600"
+                                      : r === "ROTATION"
+                                      ? "bg-emerald-50 text-emerald-600"
+                                      : "bg-sky-100 text-sky-600"
+                                  }`}
+                                >
+                                  {r === "MANAGER"
+                                    ? "גננת אם"
+                                    : r === "SUBSTITUTE"
+                                    ? "מחליפה"
+                                    : r === "INSTRUCTOR"
+                                    ? "מדריכה"
+                                    : "רוטציה"}
+                                </span>
+                              ))}
+                            </div>
+                          </td>
+                          <td className="p-5 text-sm font-mono text-slate-500 hidden md:table-cell">
+                            {u.idNumber}
+                          </td>
+                          <td
+                            className="p-5 text-sm text-slate-600 font-medium"
+                            dir="ltr"
                           >
-                            <Edit3 size={14} />
-                          </button>
-                        </td>
-                      </tr>
-                    ))
+                            {u.phoneNumber}
+                          </td>
+                          <td className="p-5 hidden md:table-cell">
+                            <div className="flex gap-1">
+                              {freeDays.length > 0 ? (
+                                freeDays.map((d, i) => (
+                                  <span
+                                    key={i}
+                                    className="w-6 h-6 flex items-center justify-center bg-slate-100 text-slate-600 rounded-md text-[10px] font-black border border-slate-200"
+                                  >
+                                    {d}
+                                  </span>
+                                ))
+                              ) : (
+                                <span className="text-[10px] text-slate-300 font-bold italic">
+                                  ללא
+                                </span>
+                              )}
+                            </div>
+                          </td>
+
+                          {/* עמודה חדשה: מדריכה מלווה (רק לגננות אם) */}
+                          <td className="p-5 text-sm hidden md:table-cell">
+                            {u.roles.includes("MANAGER") ? (
+                              u.instructor ? (
+                                <span className="text-slate-700 font-medium">
+                                  {u.instructor.firstName}{" "}
+                                  {u.instructor.lastName}
+                                </span>
+                              ) : (
+                                <span className="text-amber-500 font-bold text-xs italic">
+                                  לא שויכה
+                                </span>
+                              )
+                            ) : (
+                              <span className="text-slate-300">-</span>
+                            )}
+                          </td>
+
+                          <td className="p-5 text-sm hidden md:table-cell">
+                            {u.roles.includes("MANAGER") ? (
+                              u.fixedRotationsAsManager &&
+                              u.fixedRotationsAsManager.length > 0 ? (
+                                <div className="flex flex-col gap-1">
+                                  {/* מקבצים את שמות גננות הרוטציה (אם יש כמה בימים שונים) */}
+                                  {Array.from(
+                                    new Set<string>(
+                                      u.fixedRotationsAsManager
+                                        .map((r: any) =>
+                                          `${
+                                            r.rotationTeacher?.firstName ?? ""
+                                          } ${
+                                            r.rotationTeacher?.lastName ?? ""
+                                          }`.trim()
+                                        )
+                                        .filter(Boolean)
+                                    )
+                                  ).map((name, idx) => (
+                                    <span
+                                      key={idx}
+                                      className="text-indigo-600 font-bold"
+                                    >
+                                      {name}
+                                    </span>
+                                  ))}
+                                </div>
+                              ) : (
+                                <span className="text-red-400 font-bold italic">
+                                  אין רוטציה
+                                </span>
+                              )
+                            ) : (
+                              <span className="text-slate-300">-</span> // אם זו לא גננת אם
+                            )}
+                          </td>
+
+                          <td className="p-5">
+                            <div className="flex items-center gap-2">
+                              <span
+                                className={`w-2 h-2 rounded-full ${
+                                  u.isWorking
+                                    ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]"
+                                    : "bg-red-500"
+                                }`}
+                              />
+                              <span className="text-[10px] font-bold text-slate-400">
+                                {u.isWorking ? "פעילה" : "לא פעילה"}
+                              </span>
+                            </div>
+                          </td>
+                          <td className="p-5 text-center">
+                            <button
+                              onClick={() => setSelectedUserForEdit(u)}
+                              className="p-2 bg-indigo-50 text-slate-600 rounded-lg hover:bg-indigo-600 hover:text-white transition-all shadow-sm"
+                              title="עריכת פרטים"
+                            >
+                              <Edit3 size={14} />
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })
                   ) : (
                     <tr>
                       <td
@@ -3611,6 +3947,7 @@ export default function StatisticsPage() {
   const [stats, setStats] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [users, setUsers] = useState<any[]>([]);
+  const [includeInternal, setIncludeInternal] = useState(false);
 
   // פילטרים
   const [startDate, setStartDate] = useState(
@@ -3637,22 +3974,22 @@ export default function StatisticsPage() {
       const params = new URLSearchParams({
         start: startDate,
         end: endDate,
+        includeInternal: String(includeInternal), // שליחת הפרמטר
         ...(selectedUserId && { userId: selectedUserId }),
       });
       const res = await fetch(`/api/supervisor/stats?${params}`);
       const data = await res.json();
       setStats(data);
     } catch (err) {
-      console.error("Failed to fetch stats", err);
+      console.error(err);
     } finally {
       setLoading(false);
     }
   };
 
-  // קריאה ראשונית וכל שינוי בטווח/משתמשת
   useEffect(() => {
     fetchStats();
-  }, [startDate, endDate, selectedUserId]);
+  }, [startDate, endDate, selectedUserId, includeInternal]);
 
   // זיהוי תפקיד המשתמשת הנבחרת
   const selectedUser = useMemo(
@@ -3705,22 +4042,19 @@ export default function StatisticsPage() {
       {/* Filters */}
       <div className="bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-100 grid grid-cols-1 md:grid-cols-3 gap-8 items-end">
         {/* טווח תאריכים */}
-        <div className="space-y-3">
+        <div className="space-y-0">
           <label className="block text-sm font-black text-slate-700 flex items-center gap-2">
             <Calendar size={16} className="text-indigo-500" /> טווח תאריכים
           </label>
-
-          <div className="flex gap-2 p-1 bg-slate-50 rounded-2xl">
+          <div className="space-y-0 grid grid-cols-2 gap-2">
             <CustomDatePicker
-              label=""
+              label="תאריך התחלה"
               value={startDate}
               onChange={(val) => handleDateChange("start", val)}
             />
 
-            <div className="w-px h-6 bg-slate-200 self-center" />
-
             <CustomDatePicker
-              label=""
+              label="תאריך סיום"
               value={endDate}
               onChange={(val) => handleDateChange("end", val)}
             />
@@ -3776,6 +4110,33 @@ export default function StatisticsPage() {
       {/* Stats */}
       {stats && (
         <>
+          {/* Toggle Switch */}
+          <div className="flex justify-start px-2 mb-4">
+            <button
+              onClick={() => setIncludeInternal(!includeInternal)}
+              className={`group flex items-center gap-3 px-6 py-3 rounded-2xl transition-all duration-300 border-2 ${
+                includeInternal
+                  ? "bg-indigo-600 border-indigo-600 text-white shadow-lg shadow-indigo-100"
+                  : "bg-white border-slate-100 text-slate-500 hover:border-indigo-200"
+              }`}
+            >
+              <div
+                className={`relative w-10 h-5 rounded-full transition-colors duration-300 ${
+                  includeInternal ? "bg-indigo-400" : "bg-slate-200"
+                }`}
+              >
+                <div
+                  className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-transform duration-300 ${
+                    includeInternal ? "-translate-x-6" : "-translate-x-1"
+                  }`}
+                />
+              </div>
+              <span className="text-sm font-black uppercase tracking-tight">
+                הכלל החלפות של רוטציה וגננת אם
+              </span>
+            </button>
+          </div>
+
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div className="bg-white p-8 rounded-[2.5rem] border border-slate-100 shadow-sm">
               <p className="text-slate-400 font-bold text-xs uppercase tracking-widest">
@@ -4102,7 +4463,6 @@ export default function AddInstitutionModal({
     fetch("/api/supervisor/managers")
       .then((res) => res.json())
       .then((data) => {
-        console.log("Managers fetched:", data); // בדיקה
         setManagers(Array.isArray(data) ? data : []);
       });
   }
@@ -4337,7 +4697,7 @@ export default function AddInstitutionModal({
               className="flex-[2] py-4 bg-indigo-600 text-white rounded-2xl font-black shadow-lg shadow-indigo-100 hover:bg-indigo-700 transition-all disabled:bg-slate-200 disabled:shadow-none active:scale-95 flex items-center justify-center gap-2"
             >
               {loading ? (
-                <LoadingScreen message="מקים גן..." />
+                "מקים גן..." 
                 
               ) : (
                 <>
@@ -4409,8 +4769,23 @@ export default function AddPlacementModal({
   useEffect(() => {
     if (isOpen && date) {
       fetch(`/api/supervisor/managers?date=${date.toISOString()}`)
-        .then((res) => res.json())
-        .then(setData);
+        .then((res) => {
+          if (!res.ok) throw new Error("שגיאה בטעינת נתונים");
+          return res.json();
+        })
+        .then((fetchedData) => {
+          // וודאי שהנתונים שחזרו באמת מכילים את המערכים הדרושים
+          setData({
+            managers: fetchedData.managers || [],
+            substitutes: fetchedData.substitutes || [],
+            rotations: fetchedData.rotations || [],
+          });
+        })
+        .catch((err) => {
+          console.error(err);
+          // במקרה שגיאה - נשאר עם מערכים ריקים ולא ניתן ל-data להיות undefined
+          setData({ managers: [], substitutes: [], rotations: [] });
+        });
     }
   }, [isOpen, date]);
 
@@ -4504,7 +4879,7 @@ export default function AddPlacementModal({
 
   return (
     <div
-      className="fixed inset-0 z-[110] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4"
+      className="fixed inset-0 z-[110] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 "
       dir="rtl"
     >
       <div className="bg-white w-full max-w-md rounded-[2.5rem] shadow-2xl overflow-hidden border border-slate-100 animate-in fade-in zoom-in-95 duration-200">
@@ -4575,13 +4950,13 @@ export default function AddPlacementModal({
                 icon={activeTab === "MANAGER" ? User : RefreshCcw} // אפשר לשים אייקון אם רוצים
                 options={
                   activeTab === "MANAGER"
-                    ? data.managers.map((m) => ({
+                    ? (data?.managers || []).map((m) => ({
                         id: m.id,
                         label: `${m.firstName} ${m.lastName} (${
                           m.mainManagedInstitutions?.[0]?.name || ""
                         })`,
                       }))
-                    : data.rotations.map((r) => ({
+                    : (data?.rotations || []).map((r) => ({
                         id: r.rotationTeacher.id,
                         label: `${r.rotationTeacher.firstName} ${
                           r.rotationTeacher.lastName
@@ -4635,7 +5010,7 @@ export default function AddPlacementModal({
                 value={selectedSubId}
                 onChange={(id) => setSelectedSubId(id)}
                 icon={UserPlus}
-                options={getSubOptions().map((s) => ({
+                options={(getSubOptions() || []).map((s) => ({
                   id: s.id,
                   label: `${s.firstName} ${s.lastName} ${
                     s.isMainManager ? "(גננת אם)" : ""
@@ -4798,7 +5173,6 @@ export default function AddSubstituteModal({
   };
 
   if (!isOpen) return null;
-  console.log("Schedule state:", schedule);
   return (
     <div
       className="fixed inset-0 z-[150] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4"
@@ -5659,12 +6033,12 @@ import {
   UserMinus,
   PersonStanding,
   RefreshCcw,
+  Lock,
 } from "lucide-react";
 import FormInput from "./FormInput";
 import ReassignTeachersModal from "./ReassignTeachersModal";
 import CustomDropdown from "./ui/CustomDropdown";
-
-
+import ReassignRotationModal from "./ReassignRotationModal";
 
 export default function EditUserModal({
   user,
@@ -5675,13 +6049,12 @@ export default function EditUserModal({
   const [loading, setLoading] = useState(false);
   const [instructors, setInstructors] = useState<any[]>([]);
   const [rotations, setRotations] = useState<any[]>([]);
-  const [isRoleOpen, setIsRoleOpen] = useState(false);
   const [rotationData, setRotationData] = useState<Record<string, string>>({});
-  const [isInstructorOpen, setIsInstructorOpen] = useState(false);
-  const [openRotationDay, setOpenRotationDay] = useState<string | null>(null);
   const [showReassignModal, setShowReassignModal] = useState(false);
   const [orphanedTeachers, setOrphanedTeachers] = useState([]);
   const [lastDisabledId, setLastDisabledId] = useState<string | null>(null);
+  const [showRotationMigration, setShowRotationMigration] = useState(false);
+  const [brokenRotations, setBrokenRotations] = useState([]);
 
   const [formData, setFormData] = useState({
     firstName: user.firstName || "",
@@ -5813,10 +6186,11 @@ export default function EditUserModal({
       const data = await res.json();
 
       if (res.ok) {
-        if (data.needsReassignment) {
-          setOrphanedTeachers(data.orphanedManagers);
-          setLastDisabledId(user.id); // <-- שמירת ה-ID של המדריכה שהרגע הושבתה
-          setShowReassignModal(true);
+        if (data.needsRotationMigration) {
+          setBrokenRotations(data.brokenRotations);
+          setShowRotationMigration(true);
+        } else if (data.needsReassignment) {
+          // ... הלוגיקה של המדריכות ...
         } else {
           onUpdateSuccess();
           onClose();
@@ -5853,31 +6227,87 @@ export default function EditUserModal({
       setLoading(false);
     }
   };
+  const handleResetPassword = async () => {
+    if (
+      !confirm(
+        `האם את בטוחה שברצונך לאפס את הסיסמה עבור ${formData.firstName}? הסיסמה החדשה תהיה 123456`
+      )
+    ) {
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const res = await fetch(
+        `/api/supervisor/users/${user.id}/reset-password`,
+        {
+          method: "POST",
+        }
+      );
+
+      if (res.ok) {
+        alert(`הסיסמה של ${formData.firstName} אותחלה בהצלחה ל: 123456`);
+      } else {
+        alert("שגיאה באיפוס הסיסמה");
+      }
+    } catch (err) {
+      alert("שגיאת תקשורת עם השרת");
+    } finally {
+      setLoading(false);
+    }
+  };
+  const handleCancelRotationMigration = async () => {
+    setLoading(true);
+    try {
+      // שלב 1: החזרת ימי העבודה המקוריים של הגננת (כדי שלא יהיה חוסר התאמה)
+      const updateRes = await fetch(`/api/supervisor/users/${user.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          ...formData,
+          workDays: user.workDays, // מחזירים לערכים המקוריים שקיבלנו ב-Props
+          isWorking: user.isWorking,
+        }),
+        headers: { "Content-Type": "application/json" },
+      });
+
+      if (!updateRes.ok) throw new Error("Failed to restore user days");
+
+      // שלב 2: שחזור השיבוצים שנמחקו בטבלת FixedRotation
+      // אנחנו משתמשים במערך brokenRotations שהבאקנד שלח לנו קודם לכן
+      const restoreAssignments = brokenRotations.map((br: any) => ({
+        managerId: br.managerId,
+        day: br.day,
+        rotationTeacherId: user.id, // הגננת שאנחנו עורכים כרגע
+      }));
+
+      if (restoreAssignments.length > 0) {
+        const restoreRes = await fetch("/api/supervisor/users/bulk-rotation", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ assignments: restoreAssignments }),
+        });
+
+        if (!restoreRes.ok) throw new Error("Failed to restore rotation links");
+      }
+
+      // שלב 3: ניקוי ה-State וסגירה מוחלטת
+      setShowRotationMigration(false);
+      setBrokenRotations([]);
+
+      // רענון הנתונים בטבלה הראשית כדי שהכל יהיה מסונכרן
+      await onUpdateSuccess();
+      onClose();
+
+      alert("השינויים בוטלו והשיבוצים הקודמים שוחזרו בהצלחה.");
+    } catch (err) {
+      console.error("Rollback error:", err);
+      alert("חלה שגיאה בביטול הפעולה. מומלץ לרענן את הדף ולבדוק את השיבוצים.");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   if (!isOpen) return null;
-  // פונקציית עזר להצגת שם הרוטציה הנוכחית אם יש
-  const getRotationLabel = (
-    dayId: string,
-    availableRotationsForThisDay: any[],
-    existingRotation: any
-  ) => {
-    const selectedId = rotationData[dayId];
-
-    if (selectedId === "REMOVE") return "❌ הסרת שיבוץ";
-
-    if (selectedId) {
-      const selected = availableRotationsForThisDay.find(
-        (r) => r.id === selectedId
-      );
-      if (selected) return `${selected.firstName} ${selected.lastName}`;
-    }
-
-    if (existingRotation) {
-      return `נוכחית: ${existingRotation.rotationTeacher.firstName} ${existingRotation.rotationTeacher.lastName}`;
-    }
-
-    return "-- בחרי גננת פנויה --";
-  };
 
   return (
     <div
@@ -6010,27 +6440,57 @@ export default function EditUserModal({
             </div>
           </section>
 
-          {/* סטטוס עבודה */}
-          <section>
-            <h4 className="font-black text-slate-700 flex items-center gap-2 text-lg border-b pb-2">
-              <Power size={20} className="text-indigo-500" /> סטטוס עבודה
-            </h4>
-            <button
-              type="button"
-              onClick={() =>
-                setFormData((prev) => ({ ...prev, isWorking: !prev.isWorking }))
-              }
-              className={`w-full p-4 mt-2 rounded-2xl border-2 flex items-center justify-between transition-all ${
-                formData.isWorking
-                  ? "border-emerald-500 bg-emerald-50 text-emerald-700"
-                  : "border-red-500 bg-red-50 text-red-700"
-              }`}
-            >
-              <span className="font-black">
-                {formData.isWorking ? "עובדת פעילה" : "מושבתת / לא פעילה"}
-              </span>
-              {formData.isWorking ? <UserCheck /> : <UserMinus />}
-            </button>
+          <section className="grid grid-cols-2 gap-8">
+            {/* סטטוס עבודה */}
+            <div className="">
+              <h4 className="font-black text-slate-700 flex items-center gap-2 text-lg border-b pb-2">
+                <Power size={20} className="text-indigo-500" /> סטטוס עבודה
+              </h4>
+              <button
+                type="button"
+                onClick={() =>
+                  setFormData((prev) => ({
+                    ...prev,
+                    isWorking: !prev.isWorking,
+                  }))
+                }
+                className={`w-full p-4 mt-2 rounded-2xl border-2 flex items-center justify-between transition-all ${
+                  formData.isWorking
+                    ? "border-emerald-500 bg-emerald-50 text-emerald-700"
+                    : "border-red-500 bg-red-50 text-red-700"
+                }`}
+              >
+                <span className="font-black">
+                  {formData.isWorking ? "עובדת פעילה" : "מושבתת / לא פעילה"}
+                </span>
+                {formData.isWorking ? <UserCheck /> : <UserMinus />}
+              </button>
+            </div>
+            <div>
+              <div className="space-y-4">
+                <h4 className="font-black text-slate-700 flex items-center gap-2 text-lg border-b pb-2">
+                  <Lock size={20} className="text-indigo-500" /> אבטחה וסיסמה
+                </h4>
+                <div className="bg-amber-50 p-4 rounded-2xl border border-amber-100 flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-bold text-amber-900">
+                      איפוס סיסמת משתמש
+                    </p>
+                    <p className="text-xs text-amber-700">
+                      הסיסמה תהפוך ל-123456 באופן מיידי
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleResetPassword}
+                    disabled={loading}
+                    className="px-4 py-2 bg-white border-2 border-amber-200 text-amber-600 rounded-xl font-black text-xs hover:bg-amber-600 hover:text-white transition-all shadow-sm active:scale-95"
+                  >
+                    איפוס סיסמה
+                  </button>
+                </div>
+              </div>
+            </div>
           </section>
 
           {/* שיוך מדריכה / רוטציה */}
@@ -6177,6 +6637,18 @@ export default function EditUserModal({
                 onUpdateSuccess();
                 onClose();
               }
+            }}
+          />
+        )}
+        {showRotationMigration && (
+          <ReassignRotationModal
+            isOpen={showRotationMigration}
+            brokenRotations={brokenRotations}
+            onCancel={handleCancelRotationMigration}
+            onComplete={() => {
+              setShowRotationMigration(false);
+              onUpdateSuccess();
+              onClose();
             }}
           />
         )}
@@ -6781,6 +7253,152 @@ export default function PlacementModal({
               </div>
             ))
           )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+==============================
+FILE: src/components\ReassignRotationModal.tsx
+==============================
+"use client";
+import { useState, useEffect } from "react";
+import { RefreshCcw, Loader2, X } from "lucide-react";
+import CustomDropdown from "./ui/CustomDropdown";
+
+export default function ReassignRotationModal({
+  isOpen,
+  brokenRotations,
+  onComplete,
+  onCancel,
+}: any) {
+  const [rotations, setRotations] = useState<any[]>([]);
+  const [assignments, setAssignments] = useState<Record<string, string>>({});
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (isOpen) {
+      fetch("/api/supervisor/users-stats")
+        .then((res) => res.json())
+        .then((data) =>
+          setRotations(
+            data.filter((u: any) => u.roles.includes("ROTATION") && u.isWorking)
+          )
+        );
+    }
+  }, [isOpen]);
+
+  const handleSave = async () => {
+    setLoading(true);
+    try {
+      // יצירת מערך של שיבוצים חדשים מתוך ה-State
+      const newAssignments = Object.entries(assignments)
+        .map(([key, teacherId]) => {
+          const [managerId, day] = key.split("_");
+          return { managerId, day, rotationTeacherId: teacherId };
+        })
+        .filter((a) => a.rotationTeacherId !== "");
+
+      // שליחת עדכון לשרת (נשתמש ב-route הקיים של ה-register או משהו דומה)
+      // לצורך הפשטות, נשלח ל-API ייעודי שיוצר FixedRotations
+      await fetch("/api/supervisor/users/bulk-rotation", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ assignments: newAssignments }),
+      });
+
+      onComplete();
+    } catch (e) {
+      alert("שגיאה בשיבוץ");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-[210] bg-slate-900/90 backdrop-blur-md flex items-center justify-center p-4">
+      <div className="bg-white w-full max-w-xl rounded-[2.5rem] shadow-2xl overflow-hidden flex flex-col max-h-[85vh]">
+        <div className="p-8 bg-indigo-600 text-white shrink-0 relative">
+          <h2 className="text-2xl font-black flex items-center gap-3">
+            <RefreshCcw size={28} /> שיבוץ רוטציה חלופי
+          </h2>
+          <p className="opacity-90 font-bold mt-1">
+            עקב שינוי ימי העבודה, הגננות הבאות נותרו ללא רוטציה:
+          </p>
+        <button
+          onClick={onCancel}
+          className="absolute top-6 left-6 text-white/70 hover:text-white transition-colors z-20"
+        >
+          <X size={24} />
+        </button>
+        </div>
+
+        <div className="p-6 flex-1 overflow-y-auto space-y-6 custom-calendar-scroll">
+          {brokenRotations.map((br: any) => {
+            const dayNames: any = {
+              SUNDAY: "ראשון",
+              MONDAY: "שני",
+              TUESDAY: "שלישי",
+              WEDNESDAY: "רביעי",
+              THURSDAY: "חמישי",
+              FRIDAY: "שישי",
+            };
+            const availableForThisDay = rotations.filter(
+              (r) =>
+                r.workDays.includes(br.day) &&
+                !r.fixedRotationsAsRotation?.some(
+                  (fr: any) => fr.day === br.day
+                )
+            );
+
+            return (
+              <div
+                key={`${br.managerId}_${br.day}`}
+                className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-3"
+              >
+                <div className="flex justify-between items-center">
+                  <span className="font-black text-slate-700">
+                    גננת אם: {br.manager.firstName} {br.manager.lastName}
+                  </span>
+                  <span className="bg-indigo-100 text-indigo-700 px-3 py-1 rounded-full text-xs font-black">
+                    יום {dayNames[br.day]}
+                  </span>
+                </div>
+
+                <CustomDropdown
+                  label="בחרי רוטציה חלופית"
+                  value={assignments[`${br.managerId}_${br.day}`] || ""}
+                  options={availableForThisDay.map((r) => ({
+                    id: r.id,
+                    label: `${r.firstName} ${r.lastName}`,
+                  }))}
+                  onChange={(val) =>
+                    setAssignments({
+                      ...assignments,
+                      [`${br.managerId}_${br.day}`]: val,
+                    })
+                  }
+                />
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="p-6 bg-slate-50 flex gap-4">
+          <button
+            onClick={handleSave}
+            disabled={loading}
+            className="flex-1 py-4 bg-indigo-600 text-white rounded-2xl font-black shadow-lg"
+          >
+            {loading ? (
+              <Loader2 className="animate-spin mx-auto" />
+            ) : (
+              "עדכן שיבוצים חדשים"
+            )}
+          </button>
         </div>
       </div>
     </div>
@@ -8640,12 +9258,22 @@ export async function db_getCalendarData(
       institution: { supervisorId: supervisorId },
     },
     include: {
-      institution: { select: { name: true, id: true } },
+      institution: {
+        include: {
+          // הוספנו את השליפה של גננת האם והרוטציות הקבועות שלה
+          mainManager: {
+            include: { fixedRotationsAsManager: true },
+          },
+        },
+      },
       mainTeacher: {
         select: { id: true, firstName: true, lastName: true, roles: true },
       },
-      substitute: { select: { id: true, firstName: true, lastName: true } },
+      substitute: {
+        select: { id: true, firstName: true, lastName: true, roles: true },
+      },
     },
+
     orderBy: {
       date: "asc",
     },

@@ -165,6 +165,14 @@ export async function db_getMonthlyHistory(
     orderBy: { updatedAt: "desc" },
   });
 }
+export async function db_getSupervisorIdByInstructor(instructorId: string) {
+  const instructor = await prisma.user.findUnique({
+    where: { id: instructorId },
+    select: { supervisorId: true },
+  });
+
+  return instructor?.supervisorId || null;
+}
 
 /**
  * אימות תקינות שיבוץ
@@ -478,4 +486,53 @@ export async function db_assignSubstitute(
   }
 
   return updatedPlacement;
+}
+
+
+
+
+//פונקציות למדריכה
+
+export async function db_getInstructorDashboard(instructorId: string) {
+  const today = startOfDay(new Date());
+  
+  // 1. שליפת כל המוסדות שמשויכים למדריכה הזו
+  const myInstitutions = await prisma.institution.findMany({
+    where: { instructorId: instructorId },
+    select: { id: true, name: true }
+  });
+
+  const institutionIds = myInstitutions.map(inst => inst.id);
+
+  // 2. קריאות דחופות רק לגנים שלה
+  const urgentAlerts = await prisma.placement.findMany({
+    where: {
+      institutionId: { in: institutionIds },
+      status: "OPEN",
+      date: { gte: today },
+    },
+    include: {
+      institution: { select: { name: true } },
+      mainTeacher: { select: { firstName: true, lastName: true, phoneNumber: true } },
+    },
+    orderBy: { date: "asc" },
+  });
+
+  // 3. פעילות אחרונה רק בגנים שלה
+  const recentActivity = await prisma.placement.findMany({
+    where: { institutionId: { in: institutionIds } },
+    take: 10,
+    orderBy: { updatedAt: "desc" },
+    include: {
+      institution: { select: { name: true } },
+      substitute: { select: { firstName: true, lastName: true } },
+      mainTeacher: { select: { firstName: true, lastName: true } },
+    },
+  });
+
+  return {
+    urgentAlerts,
+    recentActivity,
+    myInstitutionsCount: institutionIds.length
+  };
 }

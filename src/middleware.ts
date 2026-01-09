@@ -1,31 +1,35 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { decrypt } from '@/lib/auth';
 
+// src/middleware.ts (עדכון חלקי)
+
 export async function middleware(request: NextRequest) {
   const session = request.cookies.get('session')?.value;
   const { pathname } = request.nextUrl;
 
-  // הגנה על נתיבי ה-supervisor
-  if (pathname.startsWith('/supervisor')) {
-    if (!session) {
+  if (!session) {
+    if (pathname.startsWith('/supervisor') || pathname.startsWith('/instructor')) {
       return NextResponse.redirect(new URL('/login', request.url));
     }
+    return NextResponse.next();
+  }
 
-    try {
-      const payload = await decrypt(session);
-      // בדיקה אם המשתמש הוא אכן supervisor
-      if (!payload.roles.includes('SUPERVISOR')) {
-        return NextResponse.redirect(new URL('/', request.url)); // חזרה לדף הבית אם אין הרשאה
-      }
-    } catch (err) {
-      return NextResponse.redirect(new URL('/login', request.url));
-    }
+  const payload = await decrypt(session);
+
+  // הגנה על נתיב מפקחת
+  if (pathname.startsWith('/supervisor') && !payload.roles.includes('SUPERVISOR')) {
+    return NextResponse.redirect(new URL('/', request.url));
+  }
+
+  // הגנה על נתיב מדריכה
+  if (pathname.startsWith('/instructor') && !payload.roles.includes('INSTRUCTOR')) {
+    return NextResponse.redirect(new URL('/', request.url));
   }
 
   return NextResponse.next();
 }
 
-// הגדרה על אילו נתיבים ה-Middleware ירוץ
 export const config = {
-  matcher: ['/supervisor/:path*'],
+  matcher: ['/supervisor/:path*', '/instructor/:path*'],
 };
+

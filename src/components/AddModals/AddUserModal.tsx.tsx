@@ -17,12 +17,10 @@ import {
   Award,
   Clock,
 } from "lucide-react";
-import ValidatedField from "./ValidatedField";
 import { validations } from "@/utils/validations";
-import FormInput from "./FormInput";
-import LoadingScreen from "./ui/LoadingScreen";
-import CustomDropdown from "./ui/CustomDropdown";
 import { InputChange } from "@/types";
+import CustomDropdown from "../ui/CustomDropdown";
+import FormInput from "../FormInput";
 
 type AddUserFormData = {
   firstName: string;

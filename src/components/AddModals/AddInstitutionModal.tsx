@@ -13,7 +13,6 @@ import {
   Sparkles,
   Building,
 } from "lucide-react";
-import LoadingScreen from "./ui/LoadingScreen";
 
 export default function AddInstitutionModal({
   isOpen,

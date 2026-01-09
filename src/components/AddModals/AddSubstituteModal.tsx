@@ -1,9 +1,8 @@
 "use client";
 import { useState, useEffect } from "react";
 import { X, UserCheck, Clock, Info, Calendar } from "lucide-react";
-import FormInput from "./FormInput";
 import { validations } from "@/utils/validations";
-import LoadingScreen from "./ui/LoadingScreen";
+import FormInput from "../FormInput";
 
 export default function AddSubstituteModal({
   isOpen,
