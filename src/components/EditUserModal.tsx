@@ -207,30 +207,58 @@ export default function EditUserModal({
     }
   };
 
+ const handleCancelRotationMigration = async () => {
+  setLoading(true);
+  try {
+    // שלב 1: החזרת ימי העבודה המקוריים של הגננת (כדי שלא יהיה חוסר התאמה)
+    const updateRes = await fetch(`/api/supervisor/users/${user.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        ...formData,
+        workDays: user.workDays, // מחזירים לערכים המקוריים שקיבלנו ב-Props
+        isWorking: user.isWorking
+      }),
+      headers: { "Content-Type": "application/json" },
+    });
+
+    if (!updateRes.ok) throw new Error("Failed to restore user days");
+
+    // שלב 2: שחזור השיבוצים שנמחקו בטבלת FixedRotation
+    // אנחנו משתמשים במערך brokenRotations שהבאקנד שלח לנו קודם לכן
+    const restoreAssignments = brokenRotations.map((br: any) => ({
+      managerId: br.managerId,
+      day: br.day,
+      rotationTeacherId: user.id // הגננת שאנחנו עורכים כרגע
+    }));
+
+    if (restoreAssignments.length > 0) {
+      const restoreRes = await fetch("/api/supervisor/users/bulk-rotation", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ assignments: restoreAssignments })
+      });
+      
+      if (!restoreRes.ok) throw new Error("Failed to restore rotation links");
+    }
+
+    // שלב 3: ניקוי ה-State וסגירה מוחלטת
+    setShowRotationMigration(false);
+    setBrokenRotations([]);
+    
+    // רענון הנתונים בטבלה הראשית כדי שהכל יהיה מסונכרן
+    await onUpdateSuccess(); 
+    onClose(); 
+    
+    alert("השינויים בוטלו והשיבוצים הקודמים שוחזרו בהצלחה.");
+  } catch (err) {
+    console.error("Rollback error:", err);
+    alert("חלה שגיאה בביטול הפעולה. מומלץ לרענן את הדף ולבדוק את השיבוצים.");
+  } finally {
+    setLoading(false);
+  }
+};
+
   if (!isOpen) return null;
-  // פונקציית עזר להצגת שם הרוטציה הנוכחית אם יש
-  const getRotationLabel = (
-    dayId: string,
-    availableRotationsForThisDay: any[],
-    existingRotation: any
-  ) => {
-    const selectedId = rotationData[dayId];
-
-    if (selectedId === "REMOVE") return "❌ הסרת שיבוץ";
-
-    if (selectedId) {
-      const selected = availableRotationsForThisDay.find(
-        (r) => r.id === selectedId
-      );
-      if (selected) return `${selected.firstName} ${selected.lastName}`;
-    }
-
-    if (existingRotation) {
-      return `נוכחית: ${existingRotation.rotationTeacher.firstName} ${existingRotation.rotationTeacher.lastName}`;
-    }
-
-    return "-- בחרי גננת פנויה --";
-  };
 
   return (
     <div
@@ -537,6 +565,7 @@ export default function EditUserModal({
           <ReassignRotationModal
             isOpen={showRotationMigration}
             brokenRotations={brokenRotations}
+            onCancel={handleCancelRotationMigration} 
             onComplete={() => {
               setShowRotationMigration(false);
               onUpdateSuccess();

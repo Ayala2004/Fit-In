@@ -32,7 +32,6 @@ export default function AddInstitutionModal({
     fetch("/api/supervisor/managers")
       .then((res) => res.json())
       .then((data) => {
-        console.log("Managers fetched:", data); // בדיקה
         setManagers(Array.isArray(data) ? data : []);
       });
   }

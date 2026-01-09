@@ -12,6 +12,7 @@ export default function StatisticsPage() {
   const [stats, setStats] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [users, setUsers] = useState<any[]>([]);
+  const [includeInternal, setIncludeInternal] = useState(false);
 
   // פילטרים
   const [startDate, setStartDate] = useState(
@@ -38,22 +39,22 @@ export default function StatisticsPage() {
       const params = new URLSearchParams({
         start: startDate,
         end: endDate,
+        includeInternal: String(includeInternal), // שליחת הפרמטר
         ...(selectedUserId && { userId: selectedUserId }),
       });
       const res = await fetch(`/api/supervisor/stats?${params}`);
       const data = await res.json();
       setStats(data);
     } catch (err) {
-      console.error("Failed to fetch stats", err);
+      console.error(err);
     } finally {
       setLoading(false);
     }
   };
 
-  // קריאה ראשונית וכל שינוי בטווח/משתמשת
   useEffect(() => {
     fetchStats();
-  }, [startDate, endDate, selectedUserId]);
+  }, [startDate, endDate, selectedUserId, includeInternal]);
 
   // זיהוי תפקיד המשתמשת הנבחרת
   const selectedUser = useMemo(
@@ -106,22 +107,19 @@ export default function StatisticsPage() {
       {/* Filters */}
       <div className="bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-100 grid grid-cols-1 md:grid-cols-3 gap-8 items-end">
         {/* טווח תאריכים */}
-        <div className="space-y-3">
+        <div className="space-y-0">
           <label className="block text-sm font-black text-slate-700 flex items-center gap-2">
             <Calendar size={16} className="text-indigo-500" /> טווח תאריכים
           </label>
-
-          <div className="flex gap-2 p-1 bg-slate-50 rounded-2xl">
+          <div className="space-y-0 grid grid-cols-2 gap-2">
             <CustomDatePicker
-              label=""
+              label="תאריך התחלה"
               value={startDate}
               onChange={(val) => handleDateChange("start", val)}
             />
 
-            <div className="w-px h-6 bg-slate-200 self-center" />
-
             <CustomDatePicker
-              label=""
+              label="תאריך סיום"
               value={endDate}
               onChange={(val) => handleDateChange("end", val)}
             />
@@ -177,6 +175,33 @@ export default function StatisticsPage() {
       {/* Stats */}
       {stats && (
         <>
+          {/* Toggle Switch */}
+          <div className="flex justify-start px-2 mb-4">
+            <button
+              onClick={() => setIncludeInternal(!includeInternal)}
+              className={`group flex items-center gap-3 px-6 py-3 rounded-2xl transition-all duration-300 border-2 ${
+                includeInternal
+                  ? "bg-indigo-600 border-indigo-600 text-white shadow-lg shadow-indigo-100"
+                  : "bg-white border-slate-100 text-slate-500 hover:border-indigo-200"
+              }`}
+            >
+              <div
+                className={`relative w-10 h-5 rounded-full transition-colors duration-300 ${
+                  includeInternal ? "bg-indigo-400" : "bg-slate-200"
+                }`}
+              >
+                <div
+                  className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-transform duration-300 ${
+                    includeInternal ? "-translate-x-6" : "-translate-x-1"
+                  }`}
+                />
+              </div>
+              <span className="text-sm font-black uppercase tracking-tight">
+                הכלל החלפות של רוטציה וגננת אם
+              </span>
+            </button>
+          </div>
+
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div className="bg-white p-8 rounded-[2.5rem] border border-slate-100 shadow-sm">
               <p className="text-slate-400 font-bold text-xs uppercase tracking-widest">

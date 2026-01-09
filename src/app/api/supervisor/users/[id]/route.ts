@@ -113,7 +113,6 @@ export async function PATCH(
       await prisma.fixedRotation.deleteMany({
         where: { managerId: id },
       });
-      console.log(`Released all fixed rotations for inactive manager: ${id}`);
     }
     // אם היא נשארה פעילה אבל נשלחו נתוני רוטציה חדשים (הקוד הקיים שלך)
     else if (updatedUser.roles.includes("MANAGER") && rotationData) {

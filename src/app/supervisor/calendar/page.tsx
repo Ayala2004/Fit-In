@@ -177,46 +177,44 @@ export default function SupervisorCalendar() {
   const paddingDays = Array.from({ length: startWeekDay }, () => null);
   const days = [...paddingDays, ...realDays];
 
-  // src/app/supervisor/calendar/page.tsx
-
- const getPlacementColor = (p: any) => {
+  const getPlacementColor = (p: any) => {
+  // 1. צבעי סטטוס (ממתין / סגור)
   if (p.status === "OPEN") return "bg-amber-50 border-amber-200 text-amber-700";
   if (p.status === "CANCELLED") return "bg-red-50 border-red-200 text-red-700";
 
   const subId = p.substituteId ? String(p.substituteId) : null;
-  const mainTeacherRoles = p.mainTeacher?.roles || [];
-  const instManagerId = p.institution?.mainManagerId ? String(p.institution.mainManagerId) : null;
+  const absentId = String(p.mainTeacherId);
+  const gardenManagerId = String(p.institution?.mainManagerId);
 
-  // פתרון בטוח ליום בשבוע - תמיד יחזיר אנגלית באותיות גדולות (SUNDAY, MONDAY...)
-  const daysEnum = ["SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"];
-  const dayOfWeek = daysEnum[new Date(p.date).getDay()];
+  // רשימת כל ה-IDs של גננות הרוטציה הקבועות של הגן הזה (מכל הימים)
+  const gardenRotationIds = (p.institution?.mainManager?.fixedRotationsAsManager || [])
+    .map((r: any) => String(r.rotationTeacherId));
 
-  // מקרה 1+2: גננת רוטציה חסרה (הנעדרת היא בסטטוס ROTATION)
-  if (mainTeacherRoles.includes("ROTATION")) {
-    if (subId === instManagerId) {
-      return "bg-indigo-200 border-indigo-400 text-indigo-900 shadow-sm"; // אם מחליפה רוטציה
+  // זיהוי מי חסרה
+  const isOfficialRotationAbsent = gardenRotationIds.includes(absentId);
+  const isGardenManagerAbsent = absentId === gardenManagerId;
+
+  // --- מקרה א': גננת רוטציה חסרה ---
+  if (isOfficialRotationAbsent) {
+    // אם מנהלת הגן (גננת האם) היא זו שהגיעה להחליף
+    if (subId === gardenManagerId) {
+      return "bg-indigo-200 border-indigo-400 text-indigo-900 shadow-sm"; 
     }
-    return "bg-purple-200 border-purple-400 text-purple-900 shadow-sm"; // מחליפה אחרת לרוטציה
+    // אם מחליפה אחרת (חיצונית) הגיעה
+    return "bg-purple-200 border-purple-400 text-purple-900 shadow-sm";
   }
 
-  // מקרה 3+4: גננת אם חסרה (הנעדרת היא בסטטוס MANAGER)
-  if (mainTeacherRoles.includes("MANAGER")) {
-    // שליפת רשימת הרוטציות הקבועות של מנהלת הגן (גננת האם)
-    const fixedRotations = p.institution?.mainManager?.fixedRotationsAsManager || [];
-    
-    // בדיקה: האם המחליפה שהגיעה היא הרוטציה הקבועה ליום הספציפי הזה?
-    const isHerFixedRotation = fixedRotations.some((r: any) => {
-      return String(r.rotationTeacherId) === subId;
-    });
-
-    if (isHerFixedRotation) {
-      return "bg-slate-300 border-slate-400 text-slate-900 shadow-sm"; // רוטציה קבועה מחליפה אם
+  // --- מקרה ב': גננת אם חסרה ---
+  if (isGardenManagerAbsent) {
+    // אם אחת מגננות הרוטציה הקבועות של הגן הגיעה להחליף
+    if (subId && gardenRotationIds.includes(subId)) {
+      return "bg-slate-300 border-slate-400 text-slate-900 shadow-sm"; 
     }
-    
-    // מקרה 4: גננת אם הוחלפה ע"י מישהי אחרת (לבן)
+    // אם גננת מחליפה חיצונית הגיעה (לבן)
     return "bg-white border-slate-200 text-slate-700";
   }
 
+  // ברירת מחדל לכל מקרה אחר
   return "bg-white border-slate-100 text-slate-700";
 };
 

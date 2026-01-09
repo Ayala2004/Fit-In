@@ -1,18 +1,13 @@
 "use client";
 import { useState, useEffect } from "react";
-import {
-  RefreshCcw,
-  CheckCircle,
-  AlertTriangle,
-  Loader2,
-  X,
-} from "lucide-react";
+import { RefreshCcw, Loader2, X } from "lucide-react";
 import CustomDropdown from "./ui/CustomDropdown";
 
 export default function ReassignRotationModal({
   isOpen,
   brokenRotations,
   onComplete,
+  onCancel,
 }: any) {
   const [rotations, setRotations] = useState<any[]>([]);
   const [assignments, setAssignments] = useState<Record<string, string>>({});
@@ -62,13 +57,19 @@ export default function ReassignRotationModal({
   return (
     <div className="fixed inset-0 z-[210] bg-slate-900/90 backdrop-blur-md flex items-center justify-center p-4">
       <div className="bg-white w-full max-w-xl rounded-[2.5rem] shadow-2xl overflow-hidden flex flex-col max-h-[85vh]">
-        <div className="p-8 bg-indigo-600 text-white shrink-0">
+        <div className="p-8 bg-indigo-600 text-white shrink-0 relative">
           <h2 className="text-2xl font-black flex items-center gap-3">
             <RefreshCcw size={28} /> שיבוץ רוטציה חלופי
           </h2>
           <p className="opacity-90 font-bold mt-1">
             עקב שינוי ימי העבודה, הגננות הבאות נותרו ללא רוטציה:
           </p>
+        <button
+          onClick={onCancel}
+          className="absolute top-6 left-6 text-white/70 hover:text-white transition-colors z-20"
+        >
+          <X size={24} />
+        </button>
         </div>
 
         <div className="p-6 flex-1 overflow-y-auto space-y-6 custom-calendar-scroll">
