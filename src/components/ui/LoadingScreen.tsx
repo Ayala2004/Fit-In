@@ -7,7 +7,7 @@ export default function LoadingScreen({ message = "טוען נתונים..." }: 
         <Loader2 className="animate-spin text-indigo-600 w-12 h-12" />
         <div className="absolute inset-0 bg-indigo-500/10 blur-xl rounded-full animate-pulse"></div>
       </div>
-      <p className="text-slate-500 font-black italic animate-bounce">{message}</p>
+      <p className="text-slate-500 font-black   animate-bounce">{message}</p>
     </div>
   );
 }

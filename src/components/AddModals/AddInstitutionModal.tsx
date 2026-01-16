@@ -247,7 +247,7 @@ export default function AddInstitutionModal({
               ) : (
                 <div className="p-8 text-center">
                   <Info className="mx-auto text-slate-300 mb-2" size={24} />
-                  <p className="text-slate-400 text-xs font-bold italic">
+                  <p className="text-slate-400 text-xs font-bold  ">
                     {searchTerm
                       ? "לא נמצאו תוצאות"
                       : "אין גננות אם פנויות כרגע"}

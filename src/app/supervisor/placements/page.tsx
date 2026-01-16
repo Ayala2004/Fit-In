@@ -300,7 +300,7 @@ export default function DistrictManagementPage() {
             <h1 className="text-3xl font-black text-slate-800 tracking-tight">
               מרכז ניהול מחוז
             </h1>
-            <p className="text-slate-500 font-medium italic">
+            <p className="text-slate-500 font-medium  ">
               ניהול כוח אדם, מוסדות והדרכה
             </p>
           </div>
@@ -532,7 +532,7 @@ export default function DistrictManagementPage() {
                             className="animate-spin text-indigo-600"
                             size={32}
                           />
-                          <p className="text-slate-500 font-bold italic">
+                          <p className="text-slate-500 font-bold  ">
                             מרענן רשימת משתמשות...
                           </p>
                         </div>
@@ -602,7 +602,7 @@ export default function DistrictManagementPage() {
                                   </span>
                                 ))
                               ) : (
-                                <span className="text-[10px] text-slate-300 font-bold italic">
+                                <span className="text-[10px] text-slate-300 font-bold  ">
                                   ללא
                                 </span>
                               )}
@@ -618,7 +618,7 @@ export default function DistrictManagementPage() {
                                   {u.instructor.lastName}
                                 </span>
                               ) : (
-                                <span className="text-amber-500 font-bold text-xs italic">
+                                <span className="text-amber-500 font-bold text-xs  ">
                                   לא שויכה
                                 </span>
                               )
@@ -655,7 +655,7 @@ export default function DistrictManagementPage() {
                                   ))}
                                 </div>
                               ) : (
-                                <span className="text-red-400 font-bold italic">
+                                <span className="text-red-400 font-bold  ">
                                   אין רוטציה
                                 </span>
                               )
@@ -694,7 +694,7 @@ export default function DistrictManagementPage() {
                     <tr>
                       <td
                         colSpan={6}
-                        className="p-20 text-center text-slate-400 italic font-medium"
+                        className="p-20 text-center text-slate-400   font-medium"
                       >
                         לא נמצאו משתמשות התואמות לסינון הנבחר
                       </td>
@@ -772,7 +772,7 @@ export default function DistrictManagementPage() {
                         )
                       )
                     ) : (
-                      <p className="text-[11px] text-slate-400 italic">
+                      <p className="text-[11px] text-slate-400  ">
                         טרם הוגדרה רוטציה קבועה
                       </p>
                     )}

@@ -94,7 +94,7 @@ export default function InstructorStaffPage() {
                     ))}
                   </div>
                 ) : (
-                  <p className="text-xs text-slate-400 italic">לא הוגדרה רוטציה קבועה</p>
+                  <p className="text-xs text-slate-400  ">לא הוגדרה רוטציה קבועה</p>
                 )}
               </div>
             </div>
@@ -104,7 +104,7 @@ export default function InstructorStaffPage() {
 
       {filteredStaff.length === 0 && (
         <div className="text-center py-20 bg-white rounded-[3rem] border-2 border-dashed border-slate-100">
-          <p className="text-slate-400 font-bold italic">לא נמצאו גננות התואמות לחיפוש שלך</p>
+          <p className="text-slate-400 font-bold  ">לא נמצאו גננות התואמות לחיפוש שלך</p>
         </div>
       )}
     </div>

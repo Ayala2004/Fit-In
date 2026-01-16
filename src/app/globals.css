@@ -63,6 +63,8 @@
 body {
   @apply bg-brand-surface text-slate-900;
   font-family: system-ui, -apple-system, sans-serif;
+  overflow-x: hidden;
+
 }
 /* בתוך src/app/globals.css */
 

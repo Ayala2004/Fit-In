@@ -28,19 +28,23 @@ export default function CustomDropdown({
   const [displayValue, setDisplayValue] = useState("");
   const containerRef = useRef<HTMLDivElement>(null);
 
+  // 1. מציאת האופציה הנבחרת מתוך הרשימה
   const selectedOption = useMemo(
     () => options.find((opt) => opt.id === value),
     [options, value]
   );
 
+  // 2. עדכון הטקסט להצגה בכל פעם שהאופציה הנבחרת משתנה
   useEffect(() => {
     if (selectedOption) {
       setDisplayValue(selectedOption.label);
-    } else {
+    } else if (!value) {
       setDisplayValue("");
     }
-  }, [selectedOption]);
+    // אם יש value אבל לא נמצאה אופציה (כי הרשימה עוד בטעינה), displayValue נשאר כפי שהיה
+  }, [selectedOption, value]);
 
+  // 3. טיפול ביציאה מהשדה
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       if (
@@ -48,13 +52,14 @@ export default function CustomDropdown({
         !containerRef.current.contains(e.target as Node)
       ) {
         setIsOpen(false);
-        setDisplayValue(selectedOption ? selectedOption.label : "");
+        // מחזירים את הטקסט המקורי אם המשתמש הקליד משהו ולא בחר
+        if (selectedOption) setDisplayValue(selectedOption.label);
+        else if (!value) setDisplayValue("");
       }
     };
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [selectedOption]);
-
+  }, [selectedOption, value]);
   // סינון אופציות: רק אם searchable הוא true מבצעים פילטר
   const filteredOptions = useMemo(() => {
     if (!searchable) return options;
@@ -155,7 +160,6 @@ export default function CustomDropdown({
                   type="button"
                   onClick={() => {
                     onChange(opt.id);
-                    setDisplayValue(opt.label);
                     setIsOpen(false);
                   }}
                   className={`w-full p-4 rounded-xl text-right flex items-center justify-between text-sm font-bold transition-all mb-1 ${
@@ -186,7 +190,7 @@ export default function CustomDropdown({
                 </button>
               ))
             ) : (
-              <div className="p-8 text-slate-400 text-sm text-center font-bold italic">
+              <div className="p-8 text-slate-400 text-sm text-center font-bold  ">
                 {searchable
                   ? `לא נמצאו תוצאות ל-"${displayValue}"`
                   : "אין אופציות זמינות"}

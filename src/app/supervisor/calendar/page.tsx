@@ -227,7 +227,7 @@ export default function SupervisorCalendar() {
   }
 
   return (
-    <div className="p-8 bg-slate-50 min-h-screen font-sans" dir="rtl">
+    <div className="p-8 bg-slate-50 min-h-screen" dir="rtl">
       <div className="max-w-7xl mx-auto">
         {/* Header Section */}
         <div className="flex justify-between items-center mb-8 bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
@@ -239,7 +239,7 @@ export default function SupervisorCalendar() {
               <h1 className="text-2xl font-bold text-slate-800">
                 יומן שיבוצים חודשי
               </h1>
-              <p className="text-slate-400 text-sm font-medium italic">
+              <p className="text-slate-400 text-sm font-medium  ">
                 המפקחת: {user?.name}
               </p>
             </div>

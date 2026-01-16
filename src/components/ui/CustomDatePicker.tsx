@@ -20,9 +20,15 @@ interface Props {
   label: string;
   value: string | null;
   onChange: (val: string) => void;
+  allowFutureDates?: boolean;
 }
 
-export default function CustomDatePicker({ label, value, onChange }: Props) {
+export default function CustomDatePicker({
+  label,
+  value,
+  onChange,
+  allowFutureDates = false,
+}: Props) {
   const [isOpen, setIsOpen] = useState(false);
   const [viewDate, setViewDate] = useState(
     value ? new Date(value) : new Date()
@@ -54,6 +60,17 @@ export default function CustomDatePicker({ label, value, onChange }: Props) {
     start: startOfMonth(viewDate),
     end: endOfMonth(viewDate),
   });
+  const today = startOfDay(new Date());
+
+  const isDateDisabled = (date: Date) => {
+    if (allowFutureDates) {
+      // אסור עבר
+      return isAfter(today, date);
+    } else {
+      // אסור עתיד
+      return isAfter(date, today);
+    }
+  };
 
   // פונקציה לבדיקה אם שנה מעוברת
   const isLeapYear = (year: number): boolean => {
@@ -148,9 +165,16 @@ export default function CustomDatePicker({ label, value, onChange }: Props) {
     // יצירת אובייקט תאריך
     const date = new Date(year, month - 1, day);
 
-    // בדיקה שהתאריך לא אחרי היום
+    // בדיקה שהתאריך לא אחרי היום או לפני היום בהתאם ל allowFutureDates
+
     const today = startOfDay(new Date());
-    if (isAfter(date, today)) {
+
+    if (allowFutureDates && isAfter(today, date)) {
+      errorMessage = "לא ניתן לבחור תאריך עבר - התאריך תוקן להיום";
+      return { date: today, error: errorMessage };
+    }
+
+    if (!allowFutureDates && isAfter(date, today)) {
       errorMessage = "לא ניתן לבחור תאריך עתידי - התאריך תוקן להיום";
       return { date: today, error: errorMessage };
     }
@@ -211,9 +235,11 @@ export default function CustomDatePicker({ label, value, onChange }: Props) {
     // אם התאריך בעתיד, השתמש בתאריך של היום
     const selectedDate = isAfter(date, today) ? today : date;
 
-    setInputValue(format(selectedDate, "dd/MM/yyyy"));
-    onChange(format(selectedDate, "yyyy-MM-dd"));
-    setViewDate(selectedDate);
+    if (isDateDisabled(date)) return;
+
+    setInputValue(format(date, "dd/MM/yyyy"));
+    onChange(format(date, "yyyy-MM-dd"));
+    setViewDate(date);
     setIsOpen(false);
     setError("");
   };
@@ -365,7 +391,7 @@ export default function CustomDatePicker({ label, value, onChange }: Props) {
                 {days.map((day) => {
                   const today = startOfDay(new Date());
                   const isToday = isSameDay(day, today);
-                  const isFuture = isAfter(day, today);
+                  const isDisabled = isDateDisabled(day);
                   const isSelected =
                     inputValue &&
                     isSameDay(day, parse(inputValue, "dd/MM/yyyy", new Date()));
@@ -374,12 +400,12 @@ export default function CustomDatePicker({ label, value, onChange }: Props) {
                     <button
                       key={day.toString()}
                       type="button"
-                      onClick={() => !isFuture && handleSelect(day)}
-                      disabled={isFuture}
+                      onClick={() => !isDisabled && handleSelect(day)}
+                      disabled={isDisabled}
                       className={`h-10 w-full rounded-xl flex items-center justify-center text-xs font-bold transition-all ${
                         isSelected
                           ? "bg-indigo-600 text-white shadow-lg shadow-indigo-200"
-                          : isFuture
+                          : isDisabled
                           ? "text-slate-300 cursor-not-allowed"
                           : isToday
                           ? "bg-indigo-100 text-indigo-700 hover:bg-indigo-200"

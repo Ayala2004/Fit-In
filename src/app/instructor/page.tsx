@@ -103,7 +103,7 @@ export default function InstructorDashboard() {
 
             {data?.urgentAlerts.length === 0 && (
               <div className="bg-indigo-50/50 p-12 rounded-[2rem] border-2 border-dashed border-indigo-100 text-center">
-                <p className="text-indigo-600 font-bold italic">
+                <p className="text-indigo-600 font-bold  ">
                   כל הגנים שלך מאוישים כרגע. עבודה מצוינת! ✨
                 </p>
               </div>
@@ -142,7 +142,7 @@ export default function InstructorDashboard() {
 
               {data.recentActivity.length === 0 && (
                 <div className="text-center py-10">
-                  <p className="text-sm text-slate-400 font-medium italic">
+                  <p className="text-sm text-slate-400 font-medium  ">
                     אין עדכונים חדשים
                   </p>
                 </div>

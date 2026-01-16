@@ -381,7 +381,7 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }: any) {
               </div>
 
               {/* הודעת עזר למפקחת */}
-              <p className="text-[10px] text-slate-400 font-medium italic mt-2">
+              <p className="text-[10px] text-slate-400 font-medium   mt-2">
                 * הרשימה מציגה רק גננות רוטציה שאינן משובצות ביום הנבחר בגן אחר.
               </p>
             </div>
