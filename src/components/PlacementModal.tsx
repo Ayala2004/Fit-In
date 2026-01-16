@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { X, Search, UserCheck, Loader2, AlertCircle, Home } from "lucide-react";
+import { X, Search, UserCheck, Loader2, AlertCircle, Home, Clock, Info } from "lucide-react";
 import { format } from "date-fns";
 import { he } from "date-fns/locale";
 import LoadingScreen from "./ui/LoadingScreen";
@@ -31,6 +31,7 @@ export default function PlacementModal({
         new Date(placement.date).toISOString()
       );
 
+      // הקריאה ל-API עכשיו מחזירה גם את הדגלים isDayOff ו-isFixedRotationToday
       fetch(`/api/supervisor/substitutes?date=${dateParam}`)
         .then((res) => res.json())
         .then((data) => {
@@ -44,7 +45,6 @@ export default function PlacementModal({
     }
   }, [isOpen, placement]);
 
-  // פונקציה לעדכון סטטוס (שיבוץ או סגירה)
   const updatePlacement = async (subId: string | null, status: string) => {
     setIsProcessing(true);
     try {
@@ -166,7 +166,7 @@ export default function PlacementModal({
                 אין מחליפות פנויות
               </p>
               <p className="text-slate-500 text-sm mt-1">
-                לא נמצאו גננות שעובדות ביום זה
+                לא נמצאו גננות פנויות ביום זה
               </p>
             </div>
           ) : (
@@ -180,9 +180,23 @@ export default function PlacementModal({
                     {sub.firstName[0]}
                   </div>
                   <div>
-                    <p className="font-black text-slate-800">
-                      {sub.firstName} {sub.lastName}
-                    </p>
+                    <div className="flex items-center gap-2">
+                        <p className="font-black text-slate-800">
+                          {sub.firstName} {sub.lastName}
+                        </p>
+                        
+                        {/* --- האייקונים החדשים --- */}
+                        {sub.isDayOff && (
+                            <span title="שימי לב: זהו יום חופש של הגננת" className="text-amber-500 cursor-help">
+                                <Info size={16} />
+                            </span>
+                        )}
+                        {sub.isFixedRotationToday && (
+                            <span title="גננת זו משובצת היום ברוטציה קבועה בגן אחר" className="text-blue-500 cursor-help">
+                                <Clock size={16} />
+                            </span>
+                        )}
+                    </div>
                     <p className="text-xs text-slate-400 font-medium">
                       {sub.phoneNumber}
                     </p>

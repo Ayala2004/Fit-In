@@ -1,3 +1,5 @@
+// src/app/api/supervisor/substitutes/route.ts
+
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { Day } from "@prisma/client";
@@ -5,79 +7,56 @@ import { getSession } from "@/lib/auth";
 
 export async function GET(request: Request) {
   try {
-    const session = await getSession();
-    // עדכון הרשאה
-    if (
-      !session ||
-      (!session.roles.includes("SUPERVISOR") &&
-        !session.roles.includes("INSTRUCTOR"))
-    ) {
-      return NextResponse.json({ error: "לא מורשה" }, { status: 401 });
-    }
-    // 1. חילוץ התאריך מה-URL
     const { searchParams } = new URL(request.url);
     const dateParam = searchParams.get("date");
+    const absentTeacherId = searchParams.get("absentTeacherId"); // הוספנו פרמטר חדש
 
-    if (!dateParam) {
-      return NextResponse.json({ error: "חובה לציין תאריך" }, { status: 400 });
-    }
+    const searchDate = new Date(dateParam!);
+    const dayOfWeek = ["SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"][searchDate.getDay()];
 
-    const searchDate = new Date(dateParam);
-
-    // 2. המרת התאריך ליום בשבוע (Enum של Prisma)
-    const daysMap: Day[] = [
-      "SUNDAY",
-      "MONDAY",
-      "TUESDAY",
-      "WEDNESDAY",
-      "THURSDAY",
-      "FRIDAY",
-      "SATURDAY",
-    ];
-    const dayOfWeek = daysMap[searchDate.getDay()];
-
-    // הגדרת טווח התאריכים (מתחילת היום עד סופו) כדי לבדוק כפילות שיבוץ
     const startOfDay = new Date(searchDate.setHours(0, 0, 0, 0));
     const endOfDay = new Date(searchDate.setHours(23, 59, 59, 999));
+
+    // 1. מי שבאמת תפוסה בשיבוץ Placement "סגור" - היחידות שנסנן החוצה
     const busyInPlacements = await prisma.placement.findMany({
-      where: {
-        date: { gte: startOfDay, lte: endOfDay },
-        status: "ASSIGNED",
-      },
-      select: { substituteId: true },
+      where: { date: { gte: startOfDay, lte: endOfDay }, status: "ASSIGNED" },
+      select: { substituteId: true }
     });
+    const busyIds = busyInPlacements.map(p => p.substituteId).filter(Boolean) as string[];
 
-    // 2. מי תפוסה ברוטציה קבועה (FixedRotation)
-    const busyInFixedRotation = await prisma.fixedRotation.findMany({
-      where: { day: dayOfWeek },
-      select: { rotationTeacherId: true },
-    });
-
-    const allBusyIds = [
-      ...busyInPlacements.map((p) => p.substituteId),
-      ...busyInFixedRotation.map((r) => r.rotationTeacherId),
-    ].filter(Boolean) as string[];
-
-    // 3. שאילתה חכמה ב-Prisma
-    const substitutes = await prisma.user.findMany({
+    // 2. שליפת כל המחליפות והרוטציות
+    const subs = await prisma.user.findMany({
       where: {
         roles: { hasSome: ["SUBSTITUTE", "ROTATION"] },
         isWorking: true,
-        workDays: { has: dayOfWeek },
-        id: { notIn: allBusyIds }, // הסינון הקריטי
+        id: { notIn: busyIds }
       },
-      select: {
-        id: true,
-        firstName: true,
-        lastName: true,
-        phoneNumber: true,
-        workDays: true,
-      },
+      include: { fixedRotationsAsRotation: { where: { day: dayOfWeek as any } } }
     });
 
-    return NextResponse.json(substitutes);
-  } catch (error) {
-    console.error("Error fetching substitutes:", error);
-    return NextResponse.json({ error: "שגיאת שרת" }, { status: 500 });
-  }
+    let results = subs.map(s => ({
+      id: s.id,
+      label: `${s.firstName} ${s.lastName}`,
+      isDayOff: !s.workDays.includes(dayOfWeek as any),
+      isFixedRotationToday: s.fixedRotationsAsRotation.length > 0
+    }));
+
+    // 3. תוספת מיוחדת: אם הנעדרת היא רוטציה, נמצא את גננת האם שלה ונוסיף אותה
+    if (absentTeacherId) {
+        const fixedRot = await prisma.fixedRotation.findFirst({
+            where: { rotationTeacherId: absentTeacherId, day: dayOfWeek as any },
+            include: { manager: true }
+        });
+        if (fixedRot && !busyIds.includes(fixedRot.managerId)) {
+            results.unshift({
+                id: fixedRot.managerId,
+                label: `(גננת אם) ${fixedRot.manager.firstName} ${fixedRot.manager.lastName}`,
+                isDayOff: false,
+                isFixedRotationToday: false
+            });
+        }
+    }
+
+    return NextResponse.json(results);
+  } catch (error) { return NextResponse.json({ error: "שגיאה" }, { status: 500 }); }
 }

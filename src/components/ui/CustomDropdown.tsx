@@ -1,11 +1,7 @@
 "use client";
 import { useState, useRef, useEffect, useMemo } from "react";
-import { ChevronDown, CheckCircle2, X } from "lucide-react";
-
-interface Option {
-  id: string;
-  label: string;
-}
+import { ChevronDown, CheckCircle2, X, AlertCircle, Clock } from "lucide-react";
+import { Option } from "@/types";
 
 interface Props {
   label: string;
@@ -168,7 +164,22 @@ export default function CustomDropdown({
                       : "hover:bg-indigo-50 text-slate-600"
                   }`}
                 >
-                  {opt.label}
+                  <div className="flex items-center gap-2">
+                    {opt.label}
+                    {opt.warning && (
+                      <span className="relative group text-amber-500 cursor-pointer">
+                        <AlertCircle size={16} />
+                        <span className="tooltip-dropdown">{opt.warning}</span>
+                      </span>
+                    )}
+
+                    {opt.info && (
+                      <span className="relative group text-blue-500 cursor-pointer">
+                        <Clock size={16} />
+                        <span className="tooltip-dropdown">{opt.info}</span>
+                      </span>
+                    )}
+                  </div>
                   {value === opt.id && (
                     <CheckCircle2 size={16} className="text-white" />
                   )}

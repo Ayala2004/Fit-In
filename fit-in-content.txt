@@ -235,22 +235,87 @@ export async function GET() {
 ==============================
 FILE: src/app\api\calendar\route.ts
 ==============================
+// src/app/api/calendar/route.ts
+
 import { NextResponse } from "next/server";
-import { db_getCalendarData, db_quickUpdatePlacement } from "@/services/placementService";
 import { prisma } from "@/lib/prisma";
+import { getSession } from "@/lib/auth";
+import { startOfDay } from "date-fns";
 
 export async function GET(req: Request) {
+  const session = await getSession();
+  if (!session) return NextResponse.json({ message: "לא מורשה" }, { status: 401 });
+
   const { searchParams } = new URL(req.url);
   const month = parseInt(searchParams.get("month") || "");
   const year = parseInt(searchParams.get("year") || "");
-  const supervisorId = searchParams.get("supervisorId") || "";
 
-  const data = await db_getCalendarData(month, year, supervisorId);
-  return NextResponse.json(data);
+  try {
+    let targetSupervisorId = "";
+
+    if (session.roles.includes("SUPERVISOR")) {
+      // אם זו מפקחת - נשתמש ב-ID שלה
+      targetSupervisorId = session.id;
+    } else {
+      // אם זו מדריכה - נשלוף את ה-supervisorId מהפרופיל שלה ב-DB
+      const userProfile = await prisma.user.findUnique({
+        where: { id: session.id },
+        select: { supervisorId: true }
+      });
+      
+      if (!userProfile?.supervisorId) {
+        return NextResponse.json({ message: "לא נמצא מחוז משויך" }, { status: 400 });
+      }
+      targetSupervisorId = userProfile.supervisorId;
+    }
+
+    const startDate = new Date(year, month - 1, 1);
+    const endDate = new Date(year, month, 0, 23, 59, 59);
+
+    const placements = await prisma.placement.findMany({
+      where: {
+        date: { gte: startDate, lte: endDate },
+        institution: { supervisorId: targetSupervisorId } // כולם רואים את כל המחוז
+      },
+      include: {
+        institution: {
+          include: {
+            mainManager: {
+              include: { fixedRotationsAsManager: true }
+            }
+          }
+        },
+        mainTeacher: { select: { firstName: true, lastName: true, id: true, instructorId: true } },
+        substitute: { select: { firstName: true, lastName: true, id: true } }
+      },
+      orderBy: { date: "asc" }
+    });
+
+    return NextResponse.json(placements);
+  } catch (error) {
+    return NextResponse.json({ message: "שגיאת שרת" }, { status: 500 });
+  }
 }
 
+// src/app/api/calendar/route.ts
+
 export async function DELETE(req: Request) {
+  const session = await getSession();
+  // בדיקת הרשאה
+  if (!session || (!session.roles.includes("SUPERVISOR") && !session.roles.includes("INSTRUCTOR"))) {
+    return NextResponse.json({ message: "לא מורשה" }, { status: 401 });
+  }
+
   const { id } = await req.json();
+  
+  // בונוס: למנוע ממדריכה למחוק דיווח מהעבר
+  const placement = await prisma.placement.findUnique({ where: { id } });
+  const isPast = placement && startOfDay(new Date(placement.date)) < startOfDay(new Date());
+  
+  if (isPast && !session.roles.includes("SUPERVISOR") && !session.roles.includes("INSTRUCTOR")) {
+      return NextResponse.json({ message: "רק מפקחת יכולה למחוק דיווחים מהעבר" }, { status: 403 });
+  }
+
   await prisma.placement.delete({ where: { id } });
   return NextResponse.json({ success: true });
 }
@@ -286,6 +351,99 @@ export async function POST(req: Request) {
   return NextResponse.json({ decrypted });
 }
 
+==============================
+FILE: src/app\api\instructor\dashboard\route.ts
+==============================
+import { NextResponse } from 'next/server';
+import { getSession } from '@/lib/auth';
+import { db_getInstructorDashboard } from '@/services/placementService';
+
+export async function GET() {
+  const session = await getSession();
+  
+  // בדיקה שיש לו תפקיד מדריכה (או מפקחת שיכולה לראות הכל)
+  if (!session || (!session.roles.includes("INSTRUCTOR") && !session.roles.includes("SUPERVISOR"))) {
+    return NextResponse.json({ message: "לא מורשה" }, { status: 401 });
+  }
+
+  try {
+    const data = await db_getInstructorDashboard(session.id);
+    return NextResponse.json(data);
+  } catch (error) {
+    return NextResponse.json({ message: "שגיאת שרת" }, { status: 500 });
+  }
+}
+==============================
+FILE: src/app\api\instructor\history\route.ts
+==============================
+import { getSession } from "@/lib/auth";
+import {
+  db_getMonthlyHistory,
+  db_getSupervisorIdByInstructor,
+} from "@/services/placementService";
+import { NextResponse } from "next/server";
+
+export async function GET(req: Request) {
+  const session = await getSession();
+
+  if (!session || !session.roles.includes("INSTRUCTOR")) {
+    return NextResponse.json({ message: "לא מורשה" }, { status: 401 });
+  }
+
+  const supervisorId = await db_getSupervisorIdByInstructor(session.id);
+
+  if (!supervisorId) {
+    return NextResponse.json({ message: "לא נמצא Supervisor משויך" }, { status: 400 });
+  }
+
+  const { searchParams } = new URL(req.url);
+  const month = Number(searchParams.get("month")) || new Date().getMonth() + 1;
+  const year = Number(searchParams.get("year")) || new Date().getFullYear();
+
+  const history = await db_getMonthlyHistory(supervisorId, month, year);
+  return NextResponse.json(history);
+}
+
+==============================
+FILE: src/app\api\instructor\staff\route.ts
+==============================
+import { NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { getSession } from "@/lib/auth";
+
+export async function GET() {
+  const session = await getSession();
+  
+  if (!session || !session.roles.includes("INSTRUCTOR")) {
+    return NextResponse.json({ message: "לא מורשה" }, { status: 401 });
+  }
+
+  try {
+    const staff = await prisma.user.findMany({
+      where: {
+        instructorId: session.id,
+        roles: { has: "MANAGER" }
+      },
+      include: {
+        mainManagedInstitutions: {
+          select: { name: true, institutionNumber: true }
+        },
+        fixedRotationsAsManager: {
+          include: {
+            rotationTeacher: {
+              select: { firstName: true, lastName: true, phoneNumber: true }
+            }
+          }
+        }
+      },
+      orderBy: { firstName: 'asc' }
+    });
+
+    return NextResponse.json(staff);
+  } catch (error) {
+    return NextResponse.json({ message: "שגיאת שרת" }, { status: 500 });
+  }
+}
 ==============================
 FILE: src/app\api\supervisor\dashboard\route.ts
 ==============================
@@ -490,6 +648,7 @@ export async function GET() {
 ==============================
 FILE: src/app\api\supervisor\managers\route.ts
 ==============================
+// src/app/api/supervisor/managers/route.ts
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth";
@@ -498,18 +657,41 @@ import { format } from "date-fns";
 export async function GET(req: Request) {
   try {
     const session = await getSession();
-    if (!session || !session.roles.includes("SUPERVISOR")) {
+    
+    // בדיקת הרשאה: מפקחת או מדריכה
+    if (!session || (!session.roles.includes("SUPERVISOR") && !session.roles.includes("INSTRUCTOR"))) {
       return NextResponse.json({ message: "לא מורשה" }, { status: 401 });
     }
 
     const { searchParams } = new URL(req.url);
     const dateStr = searchParams.get("date");
 
+    // --- לוגיקת זיהוי הקשר ---
+    // אם זו מפקחת, הסינון הוא לפי ה-ID שלה.
+    // אם זו מדריכה, הסינון עבור הגננות שלה הוא לפי instructorId, 
+    // אבל עבור המחליפות במחוז היא צריכה את ה-supervisorId שלה.
+    const isInstructor = session.roles.includes("INSTRUCTOR");
+    const isSupervisor = session.roles.includes("SUPERVISOR");
+
+    let districtSupervisorId = session.id;
+    if (isInstructor) {
+      const me = await prisma.user.findUnique({
+        where: { id: session.id },
+        select: { supervisorId: true }
+      });
+      districtSupervisorId = me?.supervisorId || session.id;
+    }
+
+    // פילטר בסיס לגננות: למפקחת - כל המחוז. למדריכה - רק הגננות שלה.
+    const staffFilter = isSupervisor 
+      ? { supervisorId: session.id } 
+      : { instructorId: session.id };
+
     // --- מקרה א': הקמת גן חדש (אין תאריך בבקשה) ---
     if (!dateStr) {
       const availableForNewInstitution = await prisma.user.findMany({
         where: {
-          supervisorId: session.id,
+          ...staffFilter,
           roles: { has: "MANAGER" },
           mainManagedInstitutions: {
             none: {},
@@ -531,39 +713,33 @@ export async function GET(req: Request) {
     const selectedDate = new Date(dateStr);
     const dayOfWeek = format(selectedDate, "EEEE").toUpperCase();
 
-    // 1. נמצא את כל האירועים הקיימים באותו יום ב-DB (Placements)
+    // 1. נמצא את כל האירועים הקיימים באותו יום ב-DB
     const existingPlacements = await prisma.placement.findMany({
       where: {
         date: {
           gte: new Date(new Date(selectedDate).setHours(0, 0, 0, 0)),
           lte: new Date(new Date(selectedDate).setHours(23, 59, 59, 999)),
         },
-        // status: { not: "CANCELLED" }
       },
       select: { mainTeacherId: true, substituteId: true }
     });
 
-    // רשימת גננות (אם או רוטציה) שכבר מדווח עליהן שהן חסרות היום
     const busyMainTeachers = existingPlacements.map((p) => p.mainTeacherId);
-    
-    // רשימת מחליפות שכבר תפוסות היום בשיבוץ חריג
     const busyAsSubInPlacements = existingPlacements.map((p) => p.substituteId).filter(Boolean) as string[];
 
-    // 2. נמצא את כל גננות הרוטציה שתפוסות ביום הזה בלו"ז הקבוע (FixedRotation)
+    // 2. נמצא את כל גננות הרוטציה שתפוסות ביום הזה בלו"ז הקבוע
     const permanentlyBusyRotations = await prisma.fixedRotation.findMany({
       where: { day: dayOfWeek as any },
       select: { rotationTeacherId: true }
     });
 
     const busyInFixedRotation = permanentlyBusyRotations.map(r => r.rotationTeacherId);
-
-    // איחוד כל ה-ID של מי שתפוסה היום כמחליפה (או חריג או קבוע)
     const allBusySubIds = [...busyAsSubInPlacements, ...busyInFixedRotation];
 
-    // 3. שליפת גננות אם פנויות לדיווח (יש להן גן, והן לא דווחו כבר כחסרות היום)
+    // 3. שליפת גננות אם פנויות לדיווח (מסונן לפי תפקיד המשתמש המחובר)
     const availableManagers = await prisma.user.findMany({
       where: {
-        supervisorId: session.id,
+        ...staffFilter,
         roles: { has: "MANAGER" },
         mainManagedInstitutions: { some: {} },
         id: { notIn: busyMainTeachers },
@@ -580,7 +756,7 @@ export async function GET(req: Request) {
     const activeRotations = await prisma.fixedRotation.findMany({
       where: {
         day: dayOfWeek as any,
-        manager: { supervisorId: session.id },
+        manager: staffFilter, // כאן הסינון הקריטי: רק רוטציות בגנים של המדריכה/מפקחת
         rotationTeacherId: { notIn: busyMainTeachers },
       },
       include: {
@@ -598,14 +774,19 @@ export async function GET(req: Request) {
       },
     });
 
-    // 5. שליפת מחליפות פנויות (מי שעובדת היום, לא חסרה בעצמה, ולא תפוסה בשיבוץ אחר)
+    // 5. שליפת מחליפות פנויות מהמחוז (districtSupervisorId)
     const availableSubstitutes = await prisma.user.findMany({
       where: {
+        // מחליפות מוצגות לפי המחוז הכללי (מפקחת)
+        OR: [
+            { supervisorId: districtSupervisorId },
+            { roles: { hasSome: ["SUBSTITUTE", "ROTATION"] } } // תמיכה במחליפות כלליות
+        ],
         roles: { hasSome: ["SUBSTITUTE", "ROTATION"] },
         workDays: { has: dayOfWeek as any },
         isWorking: true,
         id: { 
-          notIn: [...allBusySubIds, ...busyMainTeachers] // לא תפוסה ולא חסרה
+          notIn: [...allBusySubIds, ...busyMainTeachers] 
         },
       },
       select: { id: true, firstName: true, lastName: true },
@@ -968,68 +1149,82 @@ export async function GET(req: Request) {
 ==============================
 FILE: src/app\api\supervisor\substitutes\route.ts
 ==============================
-import { NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
-import { Day } from '@prisma/client';
+import { NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { Day } from "@prisma/client";
+import { getSession } from "@/lib/auth";
 
 export async function GET(request: Request) {
   try {
+    const session = await getSession();
+    // עדכון הרשאה
+    if (
+      !session ||
+      (!session.roles.includes("SUPERVISOR") &&
+        !session.roles.includes("INSTRUCTOR"))
+    ) {
+      return NextResponse.json({ error: "לא מורשה" }, { status: 401 });
+    }
     // 1. חילוץ התאריך מה-URL
     const { searchParams } = new URL(request.url);
-    const dateParam = searchParams.get('date');
+    const dateParam = searchParams.get("date");
 
     if (!dateParam) {
       return NextResponse.json({ error: "חובה לציין תאריך" }, { status: 400 });
     }
 
     const searchDate = new Date(dateParam);
-    
+
     // 2. המרת התאריך ליום בשבוע (Enum של Prisma)
     const daysMap: Day[] = [
-      "SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"
+      "SUNDAY",
+      "MONDAY",
+      "TUESDAY",
+      "WEDNESDAY",
+      "THURSDAY",
+      "FRIDAY",
+      "SATURDAY",
     ];
     const dayOfWeek = daysMap[searchDate.getDay()];
 
     // הגדרת טווח התאריכים (מתחילת היום עד סופו) כדי לבדוק כפילות שיבוץ
     const startOfDay = new Date(searchDate.setHours(0, 0, 0, 0));
     const endOfDay = new Date(searchDate.setHours(23, 59, 59, 999));
-const busyInPlacements = await prisma.placement.findMany({
+    const busyInPlacements = await prisma.placement.findMany({
       where: {
         date: { gte: startOfDay, lte: endOfDay },
-        status: "ASSIGNED"
+        status: "ASSIGNED",
       },
-      select: { substituteId: true }
+      select: { substituteId: true },
     });
 
     // 2. מי תפוסה ברוטציה קבועה (FixedRotation)
     const busyInFixedRotation = await prisma.fixedRotation.findMany({
       where: { day: dayOfWeek },
-      select: { rotationTeacherId: true }
+      select: { rotationTeacherId: true },
     });
 
     const allBusyIds = [
-      ...busyInPlacements.map(p => p.substituteId),
-      ...busyInFixedRotation.map(r => r.rotationTeacherId)
+      ...busyInPlacements.map((p) => p.substituteId),
+      ...busyInFixedRotation.map((r) => r.rotationTeacherId),
     ].filter(Boolean) as string[];
 
     // 3. שאילתה חכמה ב-Prisma
-     const substitutes = await prisma.user.findMany({
+    const substitutes = await prisma.user.findMany({
       where: {
         roles: { hasSome: ["SUBSTITUTE", "ROTATION"] },
         isWorking: true,
         workDays: { has: dayOfWeek },
-        id: { notIn: allBusyIds } // הסינון הקריטי
+        id: { notIn: allBusyIds }, // הסינון הקריטי
       },
       select: {
         id: true,
         firstName: true,
         lastName: true,
         phoneNumber: true,
-        workDays: true
-      }
+        workDays: true,
+      },
     });
-
-    return NextResponse.json(substitutes);
 
     return NextResponse.json(substitutes);
   } catch (error) {
@@ -1037,6 +1232,7 @@ const busyInPlacements = await prisma.placement.findMany({
     return NextResponse.json({ error: "שגיאת שרת" }, { status: 500 });
   }
 }
+
 ==============================
 FILE: src/app\api\supervisor\users\bulk-reassign\route.ts
 ==============================
@@ -1730,6 +1926,852 @@ body {
 }
 
 ==============================
+FILE: src/app\instructor\calendar\page.tsx
+==============================
+"use client";
+import { useState, useEffect, useCallback, useMemo } from "react";
+import {
+  format,
+  startOfMonth,
+  endOfMonth,
+  eachDayOfInterval,
+  addMonths,
+  subMonths,
+  isSameDay,
+  startOfDay,
+} from "date-fns";
+import { he } from "date-fns/locale";
+import {
+  Calendar as CalendarIcon,
+  ChevronRight,
+  ChevronLeft,
+  X,
+  Loader2,
+  AlertCircle,
+  User,
+  Plus,
+  Search,
+} from "lucide-react";
+import AddPlacementModal from "@/components/AddModals/AddPlacementModal";
+
+export default function InstructorCalendar() {
+  const [currentDate, setCurrentDate] = useState(new Date());
+  const [placements, setPlacements] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [user, setUser] = useState<any>(null);
+
+  const [editingPlacement, setEditingPlacement] = useState<any>(null);
+  const [availableSubs, setAvailableSubs] = useState([]);
+  const [loadingSubs, setLoadingSubs] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+
+  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [selectedDate, setSelectedDate] = useState<Date | null>(null);
+
+  const fetchAvailableSubstitutes = async (date: Date) => {
+    setLoadingSubs(true);
+    try {
+      const dateParam = encodeURIComponent(date.toISOString());
+      const res = await fetch(`/api/supervisor/substitutes?date=${dateParam}`);
+      if (res.ok) {
+        const data = await res.json();
+        setAvailableSubs(data);
+      }
+    } catch (err) {
+      console.error("Error fetching subs:", err);
+    } finally {
+      setLoadingSubs(false);
+    }
+  };
+
+  const filteredAvailableSubs = useMemo(() => {
+    return availableSubs.filter((sub: any) => {
+      const fullName = `${sub.firstName} ${sub.lastName}`.toLowerCase();
+      return (
+        fullName.includes(searchQuery.toLowerCase()) ||
+        sub.phoneNumber?.includes(searchQuery)
+      );
+    });
+  }, [availableSubs, searchQuery]);
+
+  useEffect(() => {
+    const initPage = async () => {
+      try {
+        const userRes = await fetch("/api/auth/me");
+        if (userRes.ok) {
+          const userData = await userRes.json();
+          setUser(userData);
+        }
+      } catch (err) {
+        console.error("Initialization error:", err);
+      }
+    };
+    initPage();
+  }, []);
+
+  const fetchData = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(
+        `/api/calendar?month=${
+          currentDate.getMonth() + 1
+        }&year=${currentDate.getFullYear()}`
+      );
+      const data = await res.json();
+      setPlacements(data);
+    } catch (err) {
+      console.error("Fetch error:", err);
+      setPlacements([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [currentDate]);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
+  useEffect(() => {
+    if (editingPlacement) {
+      fetchAvailableSubstitutes(new Date(editingPlacement.date));
+      setSearchQuery("");
+    }
+  }, [editingPlacement]);
+
+  const handleDelete = async (id: string) => {
+    if (!confirm("למחוק את הדיווח לצמיתות?")) return;
+    try {
+      const res = await fetch(`/api/calendar`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id }),
+      });
+      if (res.ok) setPlacements((prev) => prev.filter((p: any) => p.id !== id));
+      else alert("אין לך הרשאה למחוק דיווח זה");
+    } catch (err) {
+      alert("שגיאה במחיקה");
+    }
+  };
+
+  const handleQuickUpdate = async (val: string) => {
+    if (!editingPlacement) return;
+    try {
+      const type =
+        val === "CANCEL" || val === "OPEN" ? "updateStatus" : "assign";
+      const bodyData =
+        type === "assign"
+          ? { placementId: editingPlacement.id, substituteId: val }
+          : {
+              placementId: editingPlacement.id,
+              newStatus: val === "CANCEL" ? "CANCELLED" : "OPEN",
+              managerId: user.id,
+            };
+
+      const res = await fetch("/api/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type, data: bodyData }),
+      });
+
+      if (res.ok) {
+        setEditingPlacement(null);
+        fetchData();
+      }
+    } catch (err) {
+      alert("שגיאה בעדכון");
+    }
+  };
+
+  const getPlacementColor = (p: any) => {
+    if (p.status === "OPEN")
+      return "bg-amber-50 border-amber-200 text-amber-700";
+    if (p.status === "CANCELLED")
+      return "bg-red-50 border-red-200 text-red-700";
+
+    const subId = p.substituteId ? String(p.substituteId) : null;
+    const absentId = String(p.mainTeacherId);
+    const gardenManagerId = String(p.institution?.mainManagerId);
+    const gardenRotationIds = (
+      p.institution?.mainManager?.fixedRotationsAsManager || []
+    ).map((r: any) => String(r.rotationTeacherId));
+
+    if (gardenRotationIds.includes(absentId)) {
+      if (subId === gardenManagerId)
+        return "bg-indigo-200 border-indigo-400 text-indigo-900 shadow-sm";
+      return "bg-purple-200 border-purple-400 text-purple-900 shadow-sm";
+    }
+    if (absentId === gardenManagerId) {
+      if (subId && gardenRotationIds.includes(subId))
+        return "bg-slate-300 border-slate-400 text-slate-900 shadow-sm";
+      return "bg-white border-slate-200 text-slate-700";
+    }
+    return "bg-white border-slate-100 text-slate-700";
+  };
+
+  const isMyPlacement = (p: any) => p.mainTeacher?.instructorId === user?.id;
+
+  const firstDayOfMonth = startOfMonth(currentDate);
+  const startWeekDay = firstDayOfMonth.getDay();
+  const realDays = eachDayOfInterval({
+    start: startOfMonth(currentDate),
+    end: endOfMonth(currentDate),
+  });
+  const paddingDays = Array.from({ length: startWeekDay }, () => null);
+  const days = [...paddingDays, ...realDays];
+
+  if (!user && loading) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-slate-50">
+        <Loader2 className="animate-spin text-indigo-600" size={48} />
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-8 bg-slate-50 min-h-screen font-sans" dir="rtl">
+      <div className="max-w-7xl mx-auto">
+        {/* Header Section */}
+        <div className="flex justify-between items-center mb-8 bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+          <div className="flex items-center gap-4">
+            <div className="bg-indigo-600 p-3 rounded-xl text-white shadow-lg shadow-indigo-200">
+              <CalendarIcon size={24} />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold text-slate-800">
+                יומן שיבוצים חודשי
+              </h1>
+              <p className="text-slate-400 text-sm font-medium italic">
+                המפקחת: {user?.name}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-6 bg-slate-100 p-2 rounded-2xl border border-slate-200">
+            <button
+              onClick={() => setCurrentDate(subMonths(currentDate, 1))}
+              className="p-2 hover:bg-white rounded-xl shadow-sm transition-all"
+            >
+              <ChevronRight />
+            </button>
+            <span className="text-xl font-bold text-slate-700 min-w-[140px] text-center">
+              {format(currentDate, "MMMM yyyy", { locale: he })}
+            </span>
+            <button
+              onClick={() => setCurrentDate(addMonths(currentDate, 1))}
+              className="p-2 hover:bg-white rounded-xl shadow-sm transition-all"
+            >
+              <ChevronLeft />
+            </button>
+          </div>
+        </div>
+
+        {/* Legend / מפת צבעים */}
+        <div className="bg-white p-4 rounded-2xl mb-6 shadow-sm border border-slate-100 flex flex-wrap gap-4 text-xs font-bold justify-center md:justify-start">
+          <div className="flex items-center gap-2">
+            <div className="w-4 h-4 bg-indigo-200 border border-indigo-400 rounded"></div>
+            <span>אם מחליפה רוטציה</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-4 h-4 bg-purple-200 border border-purple-400 rounded"></div>
+            <span>מחליפה לרוטציה</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-4 h-4 bg-slate-200 border border-slate-400 rounded"></div>
+            <span>רוטציה קבועה מחליפה אם</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-4 h-4 bg-white border border-slate-200 rounded"></div>
+            <span>מחליפה חיצונית לאם</span>
+          </div>
+        </div>
+
+          {/* Calendar Grid */}
+          <div className="bg-white rounded-[2.5rem] shadow-xl border border-slate-200 overflow-hidden">
+            <div className="grid grid-cols-7 bg-slate-50/50 border-b border-slate-200">
+              {["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת"].map(
+                (d) => (
+                  <div
+                    key={d}
+                    className="p-4 text-center font-bold text-slate-400 text-xs uppercase tracking-widest"
+                  >
+                    {d}
+                  </div>
+                )
+              )}
+            </div>
+
+            <div className="grid grid-cols-7">
+              {days.map((day, index) => {
+                if (!day) {
+                  return (
+                    <div
+                      key={`empty-${index}`}
+                      className="min-h-[150px] border-l border-b border-slate-50"
+                    />
+                  );
+                }
+
+              const isSaturday = day.getDay() === 6;
+              const isToday = isSameDay(day, new Date());
+               const isPast = day < startOfDay(new Date()) && !isToday;
+              const dayPlacements = Array.isArray(placements)
+                ? placements.filter((p: any) =>
+                    isSameDay(new Date(p.date), day)
+                  )
+                : [];
+
+              return (
+                <div
+                  key={day.toString()}
+                  className={`min-h-37.5 border-l border-b border-slate-100 p-5 flex flex-col transition-all ${
+                    isSaturday ? "bg-slate-50/50" : "hover:bg-indigo-50/5"
+                  }`}
+                >
+                  <div className="flex justify-between items-center mb-3">
+                    <span
+                      className={`text-sm font-black transition-colors ${
+                        isToday
+                          ? "bg-indigo-600 text-white w-7 h-7 flex items-center justify-center rounded-full shadow-md shadow-indigo-100"
+                          : "text-slate-400"
+                      }`}
+                    >
+                      {format(day, "d")}
+                    </span>
+                   {!isSaturday && (!isPast || user?.roles.includes("SUPERVISOR")) && (
+                      <button 
+                        onClick={() => { setSelectedDate(day); setIsAddModalOpen(true); }} 
+                        className="p-1 text-slate-400 hover:bg-indigo-600 hover:text-white rounded-md transition-all group/btn" 
+                        title="הוספת דיווח"
+                      >
+                        <Plus size={14} strokeWidth={3} />
+                      </button>
+                    )}
+                  </div>
+
+                  {isSaturday ? (
+                    <div className="mt-8 text-center text-[10px] font-bold text-slate-300 uppercase tracking-tighter">
+                      יום מנוחה
+                    </div>
+                  ) : (
+                    <div className="flex-1 space-y-2 overflow-y-auto overflow-x-hidden custom-calendar-scroll">
+                      {" "}
+                      {dayPlacements.map((p: any) => {
+                        const colorClass = getPlacementColor(p); // חישוב הצבע
+
+                        return (
+                          <div
+                            key={p.id}
+                            // התיקון כאן: הסרנו את bg-white ו-border-slate-100 הקבועים והשתמשנו ב-colorClass
+                            className={`group relative p-2 rounded-xl border shadow-sm hover:shadow-md transition-all cursor-pointer ${colorClass}`}
+                            onClick={() => setEditingPlacement(p)}
+                          >
+                            <div className="text-[14px] font-bold leading-tight">
+                              {p.mainTeacher?.firstName}{" "}
+                              {p.mainTeacher?.lastName}
+                            </div>
+
+                            <div
+                              className={`text-[12px] mt-1 flex items-center gap-1.5 font-bold`}
+                            >
+                              <div
+                                className={`w-1.5 h-1.5 rounded-full ${
+                                  p.status === "OPEN"
+                                    ? "bg-amber-500 animate-pulse"
+                                    : p.status === "CANCELLED"
+                                    ? "bg-red-500"
+                                    : "bg-emerald-500"
+                                }`}
+                              />
+                              {p.status === "OPEN"
+                                ? "ממתין"
+                                : p.status === "CANCELLED"
+                                ? "סגור"
+                                : p.substitute
+                                ? `${p.substitute.firstName} ${p.substitute.lastName[0]}.`
+                                : "משובץ"}
+                            </div>
+
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDelete(p.id);
+                              }}
+                              className="absolute -top-1.5 -left-1.5 opacity-0 group-hover:opacity-100 bg-white text-red-500 p-1 rounded-full shadow-md border border-red-50 hover:bg-red-500 hover:text-white transition-all"
+                            >
+                              <X size={10} />
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      {/* --- מודאל עריכה (התיקון שעשינו) --- */}
+      {editingPlacement && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-[100] p-4 animate-in fade-in duration-300">
+          <div className="bg-white w-full max-w-lg rounded-[2.5rem] shadow-2xl overflow-hidden flex flex-col max-h-[85vh] border border-slate-100">
+            <div className="p-8 bg-slate-900 text-white flex justify-between items-center relative overflow-hidden">
+              <div className="absolute top-0 left-0 w-full h-full opacity-10 pointer-events-none">
+                <div className="absolute -top-10 -right-10 w-32 h-32 bg-indigo-500 rounded-full blur-3xl"></div>
+              </div>
+
+              <div className="relative z-10">
+                <h3 className="text-2xl font-black tracking-tight">
+                  עריכת שיבוץ
+                </h3>
+                <p className="text-slate-400 text-sm font-medium mt-1">
+                  {format(new Date(editingPlacement.date), "EEEE, dd/MM/yyyy", {
+                    locale: he,
+                  })}
+                  <span className="mx-2">|</span> גן{" "}
+                  {editingPlacement.institution?.name}
+                </p>
+              </div>
+
+              <button
+                onClick={() => setEditingPlacement(null)}
+                className="relative z-10 p-2 hover:bg-white/10 rounded-full transition-colors"
+              >
+                <X size={24} />
+              </button>
+            </div>
+
+            <div className="p-6 bg-slate-50 border-b border-slate-100 grid grid-cols-2 gap-4">
+              <button
+                onClick={() => handleQuickUpdate("CANCEL")}
+                className="flex flex-col items-center justify-center gap-2 p-4 bg-white rounded-2xl border-2 border-transparent hover:border-red-500 hover:text-red-600 transition-all shadow-sm group"
+              >
+                <div className="p-2 bg-red-50 rounded-xl group-hover:bg-red-500 group-hover:text-white transition-colors">
+                  <X size={20} />
+                </div>
+                <span className="text-xs font-black uppercase">סגירת הגן</span>
+              </button>
+              <button
+                onClick={() => handleQuickUpdate("OPEN")}
+                className="flex flex-col items-center justify-center gap-2 p-4 bg-white rounded-2xl border-2 border-transparent hover:border-amber-500 hover:text-amber-600 transition-all shadow-sm group"
+              >
+                <div className="p-2 bg-amber-50 rounded-xl group-hover:bg-amber-500 group-hover:text-white transition-colors">
+                  <AlertCircle size={20} />
+                </div>
+                <span className="text-xs font-black uppercase">
+                  החזרה להמתנה
+                </span>
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <label className="block text-sm font-black text-slate-700 flex items-center gap-2">
+                <Search size={16} className="text-indigo-500" /> שיבוץ גננת
+                מחליפה:
+              </label>
+              <input
+                type="text"
+                placeholder="חפשי לפי שם או טלפון..."
+                className="w-full px-5 py-3.5 bg-slate-50 border-none rounded-2xl focus:ring-2 focus:ring-indigo-500 font-bold text-slate-700 transition-all"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-6 pb-8 space-y-2">
+              {loadingSubs ? (
+                <div className="flex flex-col items-center justify-center p-12 space-y-3">
+                  <Loader2 className="animate-spin text-indigo-500 w-8 h-8" />
+                  <p className="text-slate-400 text-sm font-bold">
+                    בודק זמינות מחליפות...
+                  </p>
+                </div>
+              ) : filteredAvailableSubs.length > 0 ? (
+                filteredAvailableSubs.map((sub: any) => (
+                  <div
+                    key={sub.id}
+                    className="flex items-center justify-between p-4 bg-white rounded-2xl border border-slate-100 hover:border-indigo-200 hover:bg-indigo-50/30 transition-all group shadow-sm"
+                  >
+                    <div className="flex items-center gap-4">
+                      <div className="w-10 h-10 bg-indigo-600 text-white rounded-full flex items-center justify-center font-black shadow-md">
+                        {sub.firstName[0]}
+                      </div>
+                      <div>
+                        <p className="font-black text-slate-800">
+                          {sub.firstName} {sub.lastName}
+                        </p>
+                        <p className="text-xs text-slate-400 font-medium">
+                          {sub.phoneNumber}
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => handleQuickUpdate(sub.id)}
+                      className="px-4 py-2 bg-indigo-50 text-indigo-600 rounded-xl font-black text-xs hover:bg-indigo-600 hover:text-white transition-all"
+                    >
+                      שבצי
+                    </button>
+                  </div>
+                ))
+              ) : (
+                <div className="text-center py-12 px-6 bg-slate-50 rounded-[2rem] border-2 border-dashed border-slate-200">
+                  <User size={20} className="mx-auto text-slate-400 mb-4" />
+                  <p className="text-slate-900 font-black text-lg">
+                    אין מחליפות פנויות
+                  </p>
+                  <p className="text-slate-500 text-sm">
+                    נסו לבדוק תאריך אחר או לשנות סטטוס
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isAddModalOpen && selectedDate && (
+        <AddPlacementModal
+          isOpen={isAddModalOpen}
+          date={selectedDate}
+          onClose={() => setIsAddModalOpen(false)}
+          refreshData={fetchData}
+          user={user}
+        />
+      )}
+    </div>
+  );
+}
+
+==============================
+FILE: src/app\instructor\layout.tsx
+==============================
+import InstructorNavbar from "@/components/NavBars/InstructorNavbar";
+
+export default function InstructorLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="min-h-screen bg-slate-50" dir="rtl">
+      <InstructorNavbar />
+      <main className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8">
+        {children}
+      </main>
+    </div>
+  );
+}
+==============================
+FILE: src/app\instructor\page.tsx
+==============================
+"use client";
+import { useEffect, useState } from "react";
+import { AlertCircle, Clock, Phone, ChevronLeft } from "lucide-react";
+import LoadingScreen from "@/components/ui/LoadingScreen";
+import PlacementModal from "@/components/PlacementModal";
+import AddPlacementModal from "@/components/AddModals/AddPlacementModal";
+import RecentActivityModal from "@/components/RecentActivityModal";
+import { useRecentActivityHistory } from "@/hooks/useRecentActivityHistory";
+
+export default function InstructorDashboard() {
+  const [data, setData] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [user, setUser] = useState<any>(null);
+
+  const history = useRecentActivityHistory("/api/instructor/history");
+
+  // Modals
+  const [selectedPlacement, setSelectedPlacement] = useState<any>(null);
+  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+
+  const loadDashboard = async () => {
+    try {
+      const [dbRes, userRes] = await Promise.all([
+        fetch("/api/instructor/dashboard"),
+        fetch("/api/auth/me"),
+      ]);
+      const dbData = await dbRes.json();
+      const userData = await userRes.json();
+
+      setData(dbData);
+      setUser(userData);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadDashboard();
+  }, []);
+
+  if (loading) return <LoadingScreen message="טוען את הגנים שלך..." />;
+
+  return (
+    <div className="space-y-8">
+      {/* Header */}
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+        <div>
+          <h1 className="text-3xl font-black text-slate-900">
+            שלום, {user?.name} 👋
+          </h1>
+          <p className="text-slate-500 font-medium">
+            ניהול שוטף של {data?.myInstitutionsCount} גנים שתחת חסותך
+          </p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        {/* Main Content: Urgent Alerts */}
+        <div className="lg:col-span-2 space-y-6">
+          <h2 className="text-xl font-black text-slate-800 flex items-center gap-3">
+            🚨 גנים ללא שיבוץ
+            <span className="bg-red-500 text-white text-xs px-2 py-0.5 rounded-full">
+              {data?.urgentAlerts?.length || 0}
+            </span>
+          </h2>
+
+          <div className="grid gap-4">
+            {data?.urgentAlerts.map((alert: any) => (
+              <div
+                key={alert.id}
+                className="bg-white p-5 rounded-3xl border border-slate-200 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4"
+              >
+                <div className="flex items-center gap-4">
+                  <div className="w-12 h-12 bg-red-50 text-red-500 rounded-2xl flex items-center justify-center">
+                    <AlertCircle size={24} />
+                  </div>
+                  <div>
+                    <h3 className="font-black text-slate-800">
+                      {alert.institution.name}
+                    </h3>
+                    <p className="text-sm text-slate-500 font-bold">
+                      הגננת {alert.mainTeacher.firstName} לא תגיע ב-
+                      {new Date(alert.date).toLocaleDateString("he-IL")}
+                    </p>
+                    <a
+                      href={`tel:${alert.mainTeacher.phoneNumber}`}
+                      className="text-xs text-indigo-600 font-bold flex items-center gap-1 mt-1"
+                    >
+                      <Phone size={12} /> {alert.mainTeacher.phoneNumber}
+                    </a>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setSelectedPlacement(alert)}
+                  className="px-6 py-2 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 transition-all text-sm"
+                >
+                  מצא מחליפה
+                </button>
+              </div>
+            ))}
+
+            {data?.urgentAlerts.length === 0 && (
+              <div className="bg-indigo-50/50 p-12 rounded-[2rem] border-2 border-dashed border-indigo-100 text-center">
+                <p className="text-indigo-600 font-bold italic">
+                  כל הגנים שלך מאוישים כרגע. עבודה מצוינת! ✨
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Sidebar: Recent Activity */}
+        <div className="space-y-6">
+          <h2 className="text-xl font-black text-slate-800 flex items-center gap-3">
+            <Clock size={22} className="text-slate-400" />
+            עדכונים אחרונים
+          </h2>
+
+          <div className="bg-white rounded-[2rem] border border-slate-200 shadow-sm overflow-hidden flex flex-col">
+            <div className="p-6 space-y-5 flex-1">
+              {data.recentActivity.slice(0, 5).map((act: any, idx: number) => (
+                <div
+                  key={act.id}
+                  className={`relative pr-6 py-1 group ${
+                    idx !== 4
+                      ? "before:content-[''] before:absolute before:right-0 before:top-8 before:w-0.5 before:h-8 before:bg-slate-100"
+                      : ""
+                  }`}
+                >
+                  <div className="absolute right-[-4px] top-2 w-2.5 h-2.5 rounded-full bg-slate-300 group-hover:bg-indigo-500 transition-colors border-2 border-white shadow-sm ring-4 ring-white"></div>
+                  <p className="text-[13.5px] font-bold text-slate-700 leading-relaxed mb-1">
+                    {act.status === "CANCELLED"
+                      ? `הגן ${act.institution.name} נסגר `
+                      : act.substitute
+                      ? `שובצה ${act.substitute.firstName} לגן ${act.institution.name}`
+                      : `דווחה היעדרות בגן ${act.institution.name}`}
+                  </p>
+                </div>
+              ))}
+
+              {data.recentActivity.length === 0 && (
+                <div className="text-center py-10">
+                  <p className="text-sm text-slate-400 font-medium italic">
+                    אין עדכונים חדשים
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <button
+              onClick={history.open} // קריאה לפונקציה החדשה
+              className="w-full py-4 bg-slate-50 border-t border-slate-100 text-sm font-black text-indigo-600 hover:bg-indigo-50 transition-colors flex items-center justify-center gap-2"
+            >
+              {history.loadingHistory ? (
+                <LoadingScreen />
+              ) : (
+                "צפה בהיסטוריה המלאה"
+              )}
+              <ChevronLeft size={16} />
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Modals */}
+      {selectedPlacement && (
+        <PlacementModal
+          isOpen={!!selectedPlacement}
+          placement={selectedPlacement}
+          onClose={() => setSelectedPlacement(null)}
+          onSuccess={loadDashboard}
+        />
+      )}
+
+      {isAddModalOpen && (
+        <AddPlacementModal
+          isOpen={isAddModalOpen}
+          date={new Date()}
+          onClose={() => setIsAddModalOpen(false)}
+          refreshData={loadDashboard}
+          user={user}
+        />
+      )}
+      <RecentActivityModal
+        isOpen={history.isOpen}
+        onClose={history.close}
+        activities={history.fullHistory}
+        isLoading={history.loadingHistory}
+      />
+    </div>
+  );
+}
+
+==============================
+FILE: src/app\instructor\staff\page.tsx
+==============================
+"use client";
+import { useEffect, useState } from "react";
+import { Search, Phone, Mail, Building2, CalendarDays, User, ArrowLeftRight } from "lucide-react";
+import LoadingScreen from "@/components/ui/LoadingScreen";
+import { highlightText } from "@/lib/utils/formatters";
+
+export default function InstructorStaffPage() {
+  const [staff, setStaff] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [searchTerm, setSearchTerm] = useState("");
+
+  useEffect(() => {
+    fetch("/api/instructor/staff")
+      .then(res => res.json())
+      .then(data => {
+        setStaff(Array.isArray(data) ? data : []);
+        setLoading(false);
+      });
+  }, []);
+
+  const filteredStaff = staff.filter(member => 
+    `${member.firstName} ${member.lastName}`.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    member.mainManagedInstitutions?.[0]?.name.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
+  const dayTranslations: any = {
+    SUNDAY: "א'", MONDAY: "ב'", TUESDAY: "ג'", WEDNESDAY: "ד'", THURSDAY: "ה'", FRIDAY: "ו'"
+  };
+
+  if (loading) return <LoadingScreen message="טוען את צוות הגננות..." />;
+
+  return (
+    <div className="space-y-8 animate-in fade-in duration-500">
+      {/* Header & Search */}
+      <div className="flex flex-col md:flex-row justify-between items-end gap-6">
+        <div className="w-full">
+          <h1 className="text-3xl font-black text-slate-800">הצוות שלי</h1>
+          <p className="text-slate-500 font-medium">ניהול ומעקב אחר גננות האם במחוז שלך</p>
+        </div>
+        
+        <div className="relative w-full max-w-md group">
+          <Search className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-indigo-500 transition-colors" size={20} />
+          <input 
+            type="text" 
+            placeholder="חיפוש גננת או שם גן..."
+            className="w-full pr-12 pl-4 py-3.5 bg-white border border-slate-200 rounded-2xl shadow-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all font-bold"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+          />
+        </div>
+      </div>
+
+      {/* Staff Grid */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        {filteredStaff.map((member) => (
+          <div key={member.id} className="bg-white rounded-[2.5rem] border border-slate-100 shadow-sm hover:shadow-xl transition-all duration-300 overflow-hidden flex flex-col">
+            {/* Top Section */}
+            <div className="p-8 pb-4">
+              <div className="flex justify-between items-start mb-4">
+                <div className="w-14 h-14 bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center font-black text-xl shadow-inner">
+                  {member.firstName[0]}
+                </div>
+                {!member.isWorking && (
+                  <span className="bg-red-100 text-red-600 px-3 py-1 rounded-full text-[10px] font-black uppercase">לא פעילה</span>
+                )}
+              </div>
+
+              <h3 className="text-xl font-black text-slate-800">
+                {highlightText(`${member.firstName} ${member.lastName}`, searchTerm)}
+              </h3>
+              
+              <div className="flex items-center gap-2 text-indigo-600 font-bold text-sm mt-1">
+                <Building2 size={16} />
+                <span>{highlightText(member.mainManagedInstitutions?.[0]?.name || "טרם שויך גן", searchTerm)}</span>
+              </div>
+            </div>
+
+            {/* Stats/Info Section */}
+            <div className="px-8 py-6 space-y-4 bg-slate-50/50 border-t border-slate-50 flex-1">
+              
+              {/* Rotation Info */}
+              <div className="space-y-2">
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">צוות משלים קבוע (רוטציה):</p>
+                {member.fixedRotationsAsManager?.length > 0 ? (
+                  <div className="grid gap-2">
+                    {member.fixedRotationsAsManager.map((rot: any) => (
+                      <div key={rot.id} className="flex items-center justify-between bg-white p-3 rounded-xl border border-slate-100 text-xs shadow-sm">
+                        <span className="font-black text-indigo-600">יום {dayTranslations[rot.day]}</span>
+                        <div className="flex items-center gap-2 font-bold text-slate-700">
+                          <User size={12} className="text-slate-400" />
+                          {rot.rotationTeacher.firstName} {rot.rotationTeacher.lastName}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-slate-400 italic">לא הוגדרה רוטציה קבועה</p>
+                )}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {filteredStaff.length === 0 && (
+        <div className="text-center py-20 bg-white rounded-[3rem] border-2 border-dashed border-slate-100">
+          <p className="text-slate-400 font-bold italic">לא נמצאו גננות התואמות לחיפוש שלך</p>
+        </div>
+      )}
+    </div>
+  );
+}
+==============================
 FILE: src/app\layout.tsx
 ==============================
 import type { Metadata } from "next";
@@ -1848,46 +2890,55 @@ FILE: src/app\login\login.module.css
 ==============================
 FILE: src/app\login\page.tsx
 ==============================
-'use client';
+"use client";
 
-import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState } from "react";
+import { useRouter } from "next/navigation";
 
 export default function LoginPage() {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const router = useRouter();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    setError('');
+    setError("");
 
     try {
-      const res = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password }),
       });
 
       if (res.ok) {
         const user = await res.json();
-        
-        // בדיקה אם הוא supervisor - אם כן, שלח אותו לדף הפלייסמנטס
-        if (user.roles.includes('SUPERVISOR')) {
-          router.push('/supervisor/placements');
+
+        if (user.roles.includes("SUPERVISOR")) {
+          router.push("/supervisor");
+        } else if (user.roles.includes("INSTRUCTOR")) {
+          router.push("/instructor");
+        } else if (user.roles.includes("MANAGER")) {
+          router.push("/manager"); // נבנה בהמשך
+        } else if (
+          user.roles.includes("SUBSTITUTE") ||
+          user.roles.includes("ROTATION")
+        ) {
+          router.push("/jobs"); // נבנה בהמשך
         } else {
-          router.push('/'); // או דף אחר למשתמשים רגילים
+          router.push("/");
         }
-        router.refresh(); // מרענן את ה-middleware כדי שיזהה את ה-cookie החדש
+
+        router.refresh();
       } else {
         const data = await res.json();
-        setError(data.message || 'משהו השתבש');
+        setError(data.message || "משהו השתבש");
       }
     } catch (err) {
-      setError('שגיאת תקשורת עם השרת');
+      setError("שגיאת תקשורת עם השרת");
     } finally {
       setLoading(false);
     }
@@ -1896,11 +2947,15 @@ export default function LoginPage() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-gray-50">
       <div className="w-full max-w-md p-8 space-y-6 bg-white rounded-xl shadow-lg">
-        <h1 className="text-2xl font-bold text-center text-gray-900">כניסת מפקחים</h1>
-        
+        <h1 className="text-2xl font-bold text-center text-gray-900">
+          כניסת מפקחים
+        </h1>
+
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700">אימייל</label>
+            <label className="block text-sm font-medium text-gray-700">
+              אימייל
+            </label>
             <input
               type="email"
               required
@@ -1910,9 +2965,11 @@ export default function LoginPage() {
               onChange={(e) => setEmail(e.target.value)}
             />
           </div>
-          
+
           <div>
-            <label className="block text-sm font-medium text-gray-700">סיסמה</label>
+            <label className="block text-sm font-medium text-gray-700">
+              סיסמה
+            </label>
             <input
               type="password"
               required
@@ -1930,13 +2987,14 @@ export default function LoginPage() {
             disabled={loading}
             className="w-full px-4 py-2 text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:bg-blue-300 transition-colors"
           >
-            {loading ? 'מתחבר...' : 'התחבר'}
+            {loading ? "מתחבר..." : "התחבר"}
           </button>
         </form>
       </div>
     </div>
   );
 }
+
 ==============================
 FILE: src/app\page.tsx
 ==============================
@@ -2117,7 +3175,7 @@ import {
   Plus,
   Search,
 } from "lucide-react";
-import AddPlacementModal from "@/components/AddPlacementModal";
+import AddPlacementModal from "@/components/AddModals/AddPlacementModal";
 
 export default function SupervisorCalendar() {
   const [currentDate, setCurrentDate] = useState(new Date());
@@ -2380,31 +3438,31 @@ export default function SupervisorCalendar() {
           </div>
         </div>
 
-        {/* Calendar Grid */}
-        <div className="bg-white rounded-[2.5rem] shadow-xl border border-slate-200 overflow-hidden">
-          <div className="grid grid-cols-7 bg-slate-50/50 border-b border-slate-200">
-            {["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת"].map(
-              (d) => (
-                <div
-                  key={d}
-                  className="p-4 text-center font-bold text-slate-400 text-xs uppercase tracking-widest"
-                >
-                  {d}
-                </div>
-              )
-            )}
-          </div>
-
-          <div className="grid grid-cols-7">
-            {days.map((day, index) => {
-              if (!day) {
-                return (
+          {/* Calendar Grid */}
+          <div className="bg-white rounded-[2.5rem] shadow-xl border border-slate-200 overflow-hidden">
+            <div className="grid grid-cols-7 bg-slate-50/50 border-b border-slate-200">
+              {["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת"].map(
+                (d) => (
                   <div
-                    key={`empty-${index}`}
-                    className="min-h-[150px] border-l border-b border-slate-50"
-                  />
-                );
-              }
+                    key={d}
+                    className="p-4 text-center font-bold text-slate-400 text-xs uppercase tracking-widest"
+                  >
+                    {d}
+                  </div>
+                )
+              )}
+            </div>
+
+            <div className="grid grid-cols-7">
+              {days.map((day, index) => {
+                if (!day) {
+                  return (
+                    <div
+                      key={`empty-${index}`}
+                      className="min-h-[150px] border-l border-b border-slate-50"
+                    />
+                  );
+                }
 
               const isSaturday = day.getDay() === 6;
               const isToday = isSameDay(day, new Date());
@@ -2645,7 +3703,7 @@ FILE: src/app\supervisor\layout.tsx
 ==============================
 'use client';
 
-import Navbar from '@/components/Navbar';
+import SupervisorNavbar from '@/components/NavBars/SupervisorNavbar';
 
 export default function SupervisorLayout({
   children,
@@ -2655,7 +3713,7 @@ export default function SupervisorLayout({
   return (
     <div className="min-h-screen bg-slate-50" dir="rtl">
       {/* ה-Navbar החדש שכולל את כל הניווט */}
-      <Navbar />
+      <SupervisorNavbar />
 
       {/* תוכן הדף */}
       <main className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8">
@@ -2684,15 +3742,15 @@ import {
 import PlacementModal from "@/components/PlacementModal";
 import RecentActivityModal from "@/components/RecentActivityModal";
 import LoadingScreen from "@/components/ui/LoadingScreen";
+import { useRecentActivityHistory } from "@/hooks/useRecentActivityHistory";
 
 export default function SupervisorDashboardPage() {
   const [dashboardData, setDashboardData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedPlacement, setSelectedPlacement] = useState<any>(null);
-  const [isActivityModalOpen, setIsActivityModalOpen] = useState(false);
-  const [fullHistory, setFullHistory] = useState([]);
-  const [loadingHistory, setLoadingHistory] = useState(false);
+
+const history = useRecentActivityHistory("/api/supervisor/history");
 
   const loadData = async () => {
     try {
@@ -2707,19 +3765,6 @@ export default function SupervisorDashboardPage() {
     }
   };
 
-  const loadFullHistory = async () => {
-    setLoadingHistory(true);
-    setIsActivityModalOpen(true);
-    try {
-      const res = await fetch("/api/supervisor/history"); // יטען אוטומטית לחודש הנוכחי
-      const data = await res.json();
-      setFullHistory(data);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoadingHistory(false);
-    }
-  };
   useEffect(() => {
     loadData();
   }, []);
@@ -3056,10 +4101,14 @@ export default function SupervisorDashboardPage() {
               </div>
 
               <button
-                onClick={loadFullHistory} // קריאה לפונקציה החדשה
+                onClick={history.open} // קריאה לפונקציה החדשה
                 className="w-full py-4 bg-slate-50 border-t border-slate-100 text-sm font-black text-indigo-600 hover:bg-indigo-50 transition-colors flex items-center justify-center gap-2"
               >
-                {loadingHistory ? <LoadingScreen /> : "צפה בהיסטוריה המלאה"}
+                {history.loadingHistory ? (
+                  <LoadingScreen />
+                ) : (
+                  "צפה בהיסטוריה המלאה"
+                )}
                 <ChevronLeft size={16} />
               </button>
             </div>
@@ -3078,10 +4127,10 @@ export default function SupervisorDashboardPage() {
       )}
 
       <RecentActivityModal
-        isOpen={isActivityModalOpen}
-        onClose={() => setIsActivityModalOpen(false)}
-        activities={fullHistory}
-        isLoading={loadingHistory}
+        isOpen={history.isOpen}
+        onClose={history.close}
+        activities={history.fullHistory}
+        isLoading={history.loadingHistory}
       />
     </div>
   );
@@ -3095,9 +4144,6 @@ FILE: src/app\supervisor\placements\page.tsx
 
 import { useEffect, useState } from "react";
 import { highlightText } from "@/lib/utils/formatters";
-import AddInstitutionModal from "@/components/AddInstitutionModal";
-import AddUserModal from "@/components/AddUserModal.tsx";
-import AddSubstituteModal from "@/components/AddSubstituteModal";
 import InstructorPlacementsModal from "@/components/InstructorCardModal";
 import PlacementModal from "@/components/PlacementModal";
 import {
@@ -3116,10 +4162,13 @@ import {
   PlusCircle,
   Power,
 } from "lucide-react";
-import EditUserModal from "@/components/EditUserModal";
-import EditInstitutionModal from "@/components/EditInstitutionModal";
+import EditUserModal from "@/components/EditModals/EditUserModal";
+import EditInstitutionModal from "@/components/EditModals/EditInstitutionModal";
 import ReassignTeachersModal from "@/components/ReassignTeachersModal";
 import LoadingScreen from "@/components/ui/LoadingScreen";
+import AddUserModal from "@/components/AddModals/AddUserModal.tsx";
+import AddSubstituteModal from "@/components/AddModals/AddSubstituteModal";
+import AddInstitutionModal from "@/components/AddModals/AddInstitutionModal";
 
 export default function DistrictManagementPage() {
   const [activeTab, setActiveTab] = useState<
@@ -3938,7 +4987,7 @@ FILE: src/app\supervisor\statistics\page.tsx
 import { useState, useEffect, useMemo } from "react";
 import { format, subMonths, subYears, startOfMonth } from "date-fns";
 import { BarChart3, Calendar, User, Info } from "lucide-react";
-import EditUserModal from "@/components/EditUserModal";
+import EditUserModal from "@/components/EditModals/EditUserModal";
 import LoadingScreen from "@/components/ui/LoadingScreen";
 import CustomDatePicker from "@/components/ui/CustomDatePicker";
 import CustomDropdown from "@/components/ui/CustomDropdown";
@@ -4427,7 +5476,7 @@ return (
   );
 }
 ==============================
-FILE: src/components\AddInstitutionModal.tsx
+FILE: src/components\AddModals\AddInstitutionModal.tsx
 ==============================
 "use client";
 import { useState, useEffect } from "react";
@@ -4444,7 +5493,6 @@ import {
   Sparkles,
   Building,
 } from "lucide-react";
-import LoadingScreen from "./ui/LoadingScreen";
 
 export default function AddInstitutionModal({
   isOpen,
@@ -4721,7 +5769,7 @@ export default function AddInstitutionModal({
 }
 
 ==============================
-FILE: src/components\AddPlacementModal.tsx
+FILE: src/components\AddModals\AddPlacementModal.tsx
 ==============================
 "use client";
 import { useState, useEffect } from "react";
@@ -4737,7 +5785,7 @@ import {
   RefreshCcw,
 } from "lucide-react";
 import { Teacher, RotationRecord } from "@/types";
-import CustomDropdown from "./ui/CustomDropdown";
+import CustomDropdown from "../ui/CustomDropdown";
 
 interface Props {
   isOpen: boolean;
@@ -5044,14 +6092,13 @@ export default function AddPlacementModal({
 }
 
 ==============================
-FILE: src/components\AddSubstituteModal.tsx
+FILE: src/components\AddModals\AddSubstituteModal.tsx
 ==============================
 "use client";
 import { useState, useEffect } from "react";
 import { X, UserCheck, Clock, Info, Calendar } from "lucide-react";
-import FormInput from "./FormInput";
 import { validations } from "@/utils/validations";
-import LoadingScreen from "./ui/LoadingScreen";
+import FormInput from "../FormInput";
 
 export default function AddSubstituteModal({
   isOpen,
@@ -5365,7 +6412,7 @@ export default function AddSubstituteModal({
 }
 
 ==============================
-FILE: src/components\AddUserModal.tsx.tsx
+FILE: src/components\AddModals\AddUserModal.tsx.tsx
 ==============================
 "use client";
 import { useState, useEffect } from "react";
@@ -5386,12 +6433,10 @@ import {
   Award,
   Clock,
 } from "lucide-react";
-import ValidatedField from "./ValidatedField";
 import { validations } from "@/utils/validations";
-import FormInput from "./FormInput";
-import LoadingScreen from "./ui/LoadingScreen";
-import CustomDropdown from "./ui/CustomDropdown";
 import { InputChange } from "@/types";
+import CustomDropdown from "../ui/CustomDropdown";
+import FormInput from "../FormInput";
 
 type AddUserFormData = {
   firstName: string;
@@ -5865,12 +6910,12 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }: any) {
 }
 
 ==============================
-FILE: src/components\EditInstitutionModal.tsx
+FILE: src/components\EditModals\EditInstitutionModal.tsx
 ==============================
 "use client";
 import { useState, useEffect } from "react";
 import { X, Building2, MapPin, Hash, User, Save, Loader2, Search, Info } from "lucide-react";
-import LoadingScreen from "./ui/LoadingScreen";
+import LoadingScreen from "../ui/LoadingScreen";
 
 export default function EditInstitutionModal({ isOpen, onClose, onSuccess, institution }: any) {
   const [managers, setManagers] = useState<any[]>([]);
@@ -6016,7 +7061,7 @@ export default function EditInstitutionModal({ isOpen, onClose, onSuccess, insti
   );
 }
 ==============================
-FILE: src/components\EditUserModal.tsx
+FILE: src/components\EditModals\EditUserModal.tsx
 ==============================
 "use client";
 
@@ -6035,10 +7080,11 @@ import {
   RefreshCcw,
   Lock,
 } from "lucide-react";
-import FormInput from "./FormInput";
-import ReassignTeachersModal from "./ReassignTeachersModal";
-import CustomDropdown from "./ui/CustomDropdown";
-import ReassignRotationModal from "./ReassignRotationModal";
+import FormInput from "../FormInput";
+import CustomDropdown from "../ui/CustomDropdown";
+import ReassignTeachersModal from "../ReassignTeachersModal";
+import ReassignRotationModal from "../ReassignRotationModal";
+
 
 export default function EditUserModal({
   user,
@@ -6939,7 +7985,98 @@ export default function InstructorPlacementsModal({
   );
 }
 ==============================
-FILE: src/components\Navbar.tsx
+FILE: src/components\NavBars\InstructorNavbar.tsx
+==============================
+"use client";
+import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
+import {
+  LayoutDashboard,
+  Calendar,
+  LogOut,
+  ClipboardList,
+  Users,
+} from "lucide-react";
+
+export default function InstructorNavbar() {
+  const router = useRouter();
+  const pathname = usePathname();
+
+  const handleLogout = async () => {
+    if (!confirm("להתנתק מהמערכת?")) return;
+    await fetch("/api/auth/logout", { method: "POST" });
+    router.push("/login");
+    router.refresh();
+  };
+
+  const isActive = (path: string) => pathname === path;
+
+  return (
+    <nav className="bg-white shadow-sm border-b border-slate-200 sticky top-0 z-40">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="flex justify-between h-16 items-center">
+          <div className="flex items-center gap-8">
+            <div className="flex items-center gap-3">
+              <div className="bg-indigo-600 text-white p-2 rounded-xl font-bold shadow-md shadow-indigo-100">
+                FitIn
+              </div>
+              <span className="text-lg font-extrabold text-slate-800 hidden md:block">
+                מרכז הדרכה
+              </span>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <Link
+                href="/instructor"
+                className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all ${
+                  isActive("/instructor")
+                    ? "bg-indigo-50 text-indigo-600"
+                    : "text-slate-500 hover:bg-slate-50"
+                }`}
+              >
+                <LayoutDashboard size={18} />
+                <span>הגנים שלי</span>
+              </Link>
+              <Link
+                href="/instructor/calendar"
+                className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all ${
+                  isActive("/instructor/calendar")
+                    ? "bg-indigo-50 text-indigo-600"
+                    : "text-slate-500 hover:bg-slate-50"
+                }`}
+              >
+                <Calendar size={18} />
+                <span>לוח שיבוצים</span>
+              </Link>
+              <Link
+                href="/instructor/staff"
+                className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all ${
+                  isActive("/instructor/staff")
+                    ? "bg-indigo-50 text-indigo-600"
+                    : "text-slate-500 hover:bg-slate-50"
+                }`}
+              >
+                <Users size={18} />
+                <span>הצוות שלי</span>
+              </Link>
+            </div>
+          </div>
+
+          <button
+            onClick={handleLogout}
+            className="flex items-center gap-2 text-sm font-bold text-red-500 hover:bg-red-50 px-4 py-2 rounded-xl transition-all"
+          >
+            <LogOut size={18} />
+            <span className="hidden sm:inline">התנתקות</span>
+          </button>
+        </div>
+      </div>
+    </nav>
+  );
+}
+
+==============================
+FILE: src/components\NavBars\SupervisorNavbar.tsx
 ==============================
 "use client";
 
@@ -6952,7 +8089,7 @@ import {
   PieChartIcon,
   BarChart3,
 } from "lucide-react";
-export default function Navbar() {
+export default function SupervisorNavbar() {
   const router = useRouter();
   const pathname = usePathname();
 
@@ -8542,6 +9679,42 @@ export default function ValidatedField({
 }
 
 ==============================
+FILE: src/hooks\useRecentActivityHistory.ts
+==============================
+import { useState } from "react";
+
+export function useRecentActivityHistory(endpoint: string) {
+  const [fullHistory, setFullHistory] = useState<any[]>([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+  const [isOpen, setIsOpen] = useState(false);
+
+  const open = async () => {
+    setLoadingHistory(true);
+    setIsOpen(true);
+    try {
+      const res = await fetch(endpoint);
+      const data = await res.json();
+      console.log("History response from", endpoint, data);
+      setFullHistory(data);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoadingHistory(false);
+    }
+  };
+
+  const close = () => setIsOpen(false);
+
+  return {
+    fullHistory,
+    loadingHistory,
+    isOpen,
+    open,
+    close,
+  };
+}
+
+==============================
 FILE: src/lib\api.ts
 ==============================
 
@@ -8636,34 +9809,39 @@ FILE: src/middleware.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { decrypt } from '@/lib/auth';
 
+// src/middleware.ts (עדכון חלקי)
+
 export async function middleware(request: NextRequest) {
   const session = request.cookies.get('session')?.value;
   const { pathname } = request.nextUrl;
 
-  // הגנה על נתיבי ה-supervisor
-  if (pathname.startsWith('/supervisor')) {
-    if (!session) {
+  if (!session) {
+    if (pathname.startsWith('/supervisor') || pathname.startsWith('/instructor')) {
       return NextResponse.redirect(new URL('/login', request.url));
     }
+    return NextResponse.next();
+  }
 
-    try {
-      const payload = await decrypt(session);
-      // בדיקה אם המשתמש הוא אכן supervisor
-      if (!payload.roles.includes('SUPERVISOR')) {
-        return NextResponse.redirect(new URL('/', request.url)); // חזרה לדף הבית אם אין הרשאה
-      }
-    } catch (err) {
-      return NextResponse.redirect(new URL('/login', request.url));
-    }
+  const payload = await decrypt(session);
+
+  // הגנה על נתיב מפקחת
+  if (pathname.startsWith('/supervisor') && !payload.roles.includes('SUPERVISOR')) {
+    return NextResponse.redirect(new URL('/', request.url));
+  }
+
+  // הגנה על נתיב מדריכה
+  if (pathname.startsWith('/instructor') && !payload.roles.includes('INSTRUCTOR')) {
+    return NextResponse.redirect(new URL('/', request.url));
   }
 
   return NextResponse.next();
 }
 
-// הגדרה על אילו נתיבים ה-Middleware ירוץ
 export const config = {
-  matcher: ['/supervisor/:path*'],
+  matcher: ['/supervisor/:path*', '/instructor/:path*'],
 };
+
+
 ==============================
 FILE: src/services\authService.ts
 ==============================
@@ -9018,6 +10196,14 @@ export async function db_getMonthlyHistory(
     orderBy: { updatedAt: "desc" },
   });
 }
+export async function db_getSupervisorIdByInstructor(instructorId: string) {
+  const instructor = await prisma.user.findUnique({
+    where: { id: instructorId },
+    select: { supervisorId: true },
+  });
+
+  return instructor?.supervisorId || null;
+}
 
 /**
  * אימות תקינות שיבוץ
@@ -9333,6 +10519,54 @@ export async function db_assignSubstitute(
   return updatedPlacement;
 }
 
+
+
+
+//פונקציות למדריכה
+
+export async function db_getInstructorDashboard(instructorId: string) {
+  const today = startOfDay(new Date());
+  
+  // 1. שליפת כל המוסדות שמשויכים למדריכה הזו
+  const myInstitutions = await prisma.institution.findMany({
+    where: { instructorId: instructorId },
+    select: { id: true, name: true }
+  });
+
+  const institutionIds = myInstitutions.map(inst => inst.id);
+
+  // 2. קריאות דחופות רק לגנים שלה
+  const urgentAlerts = await prisma.placement.findMany({
+    where: {
+      institutionId: { in: institutionIds },
+      status: "OPEN",
+      date: { gte: today },
+    },
+    include: {
+      institution: { select: { name: true } },
+      mainTeacher: { select: { firstName: true, lastName: true, phoneNumber: true } },
+    },
+    orderBy: { date: "asc" },
+  });
+
+  // 3. פעילות אחרונה רק בגנים שלה
+  const recentActivity = await prisma.placement.findMany({
+    where: { institutionId: { in: institutionIds } },
+    take: 10,
+    orderBy: { updatedAt: "desc" },
+    include: {
+      institution: { select: { name: true } },
+      substitute: { select: { firstName: true, lastName: true } },
+      mainTeacher: { select: { firstName: true, lastName: true } },
+    },
+  });
+
+  return {
+    urgentAlerts,
+    recentActivity,
+    myInstitutionsCount: institutionIds.length
+  };
+}
 ==============================
 FILE: src/services\userService.ts
 ==============================

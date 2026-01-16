@@ -110,3 +110,9 @@ export interface Option {
 
 export type InputChange = React.ChangeEvent<HTMLInputElement | HTMLSelectElement> | { name: string; value: string };
 
+export interface Option {
+  id: string;
+  label: string;
+  warning?: string; // הודעת האזהרה ל-Tooltip
+  info?: string;    // הודעת מידע נוספת
+}

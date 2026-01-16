@@ -164,3 +164,65 @@ body {
   transition: all 0.15s ease-in-out; /* transition-all */
   cursor: pointer;
 }
+
+/* Tooltip for the replace mants */
+.tooltip-dropdown {
+  @apply
+    pointer-events-none
+    absolute
+    top-full
+    right-1/2
+    -translate-x-4
+    mt-2
+    whitespace-nowrap
+    bg-white
+    text-indigo-700
+    text-xs
+    font-bold
+    px-3
+    py-1.5
+    rounded-xl
+    border
+    border-indigo-100
+    shadow-lg
+    shadow-indigo-100
+    opacity-0
+    scale-95
+    transition-all
+    duration-200
+    z-50;
+}
+
+.group:hover .tooltip-dropdown {
+  @apply opacity-100 scale-100;
+}
+
+
+.tooltip-add-models {
+  @apply
+    pointer-events-none
+    absolute
+    top-full
+    left-0.5
+    mt-2
+    whitespace-nowrap
+    bg-white
+    text-xs
+    font-bold
+    px-3
+    py-1.5
+    rounded-xl
+    border
+    border-indigo-100
+    shadow-lg
+    shadow-indigo-100
+    opacity-0
+    scale-95
+    transition-all
+    duration-200
+    z-50;
+}
+
+.group:hover .tooltip-add-models {
+  @apply opacity-100 scale-100;
+}

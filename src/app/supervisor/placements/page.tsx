@@ -307,27 +307,38 @@ export default function DistrictManagementPage() {
         </div>
 
         <div className="flex gap-2 w-full md:w-auto p-1 bg-white rounded-2xl shadow-sm border border-slate-100">
-          <button
-            onClick={() => setIsAddTeacherOpen(true)}
-            className="p-3 hover:bg-slate-50 rounded-xl text-indigo-600"
-            title="הוספת צוות ניהול"
-          >
-            <UserPlus size={22} />
-          </button>
-          <button
-            onClick={() => setIsAddSubstituteOpen(true)}
-            className="p-3 hover:bg-slate-50 rounded-xl text-emerald-600"
-            title="הוספת צוות מחליף"
-          >
-            <PlusCircle size={22} />
-          </button>
-          <button
-            onClick={() => setIsAddInstitutionOpen(true)}
-            className="p-3 hover:bg-slate-50 rounded-xl text-pink-600"
-            title="הקמת גן חדש"
-          >
-            <Plus size={22} />
-          </button>
+          {/* הוספת צוות ניהול */}
+          <span className="relative group">
+            <button
+              onClick={() => setIsAddTeacherOpen(true)}
+              className="p-3 hover:bg-slate-50 rounded-xl text-indigo-600"
+            >
+              <UserPlus size={22} />
+            </button>
+            <span className="tooltip-add-models text-indigo-600">הוספת צוות ניהול</span>
+          </span>
+
+          {/* הוספת צוות מחליף */}
+          <span className="relative group">
+            <button
+              onClick={() => setIsAddSubstituteOpen(true)}
+              className="p-3 hover:bg-slate-50 rounded-xl text-emerald-600"
+            >
+              <PlusCircle size={22} />
+            </button>
+            <span className="tooltip-add-models text-emerald-600">הוספת צוות מחליף</span>
+          </span>
+
+          {/* הקמת גן חדש */}
+          <span className="relative group">
+            <button
+              onClick={() => setIsAddInstitutionOpen(true)}
+              className="p-3 hover:bg-slate-50 rounded-xl text-pink-600"
+            >
+              <Plus size={22} />
+            </button>
+            <span className="tooltip-add-models text-pink-600">הקמת גן חדש</span>
+          </span>
         </div>
       </div>
 
