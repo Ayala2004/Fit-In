@@ -13,19 +13,22 @@ export async function POST(req: Request) {
   try {
     const { dateAbsent, dateWorking, rotationTeacherId } = await req.json();
 
+    // שליפת המוסד כולל פרטי המפקחת והמדריכה
     const institution = await prisma.institution.findFirst({
       where: { mainManagerId: session.id },
     });
+
     if (!institution) throw new Error("לא נמצא מוסד משויך");
 
     const absentDate = startOfDay(new Date(dateAbsent));
     const workingDate = startOfDay(new Date(dateWorking));
 
-    // --- בדיקת כפילות בשרת ---
+    // בדיקת כפילות
     const existing = await prisma.placement.findFirst({
       where: {
         institutionId: institution.id,
         date: { in: [absentDate, workingDate] },
+        status: { not: "CANCELLED" }
       },
     });
 
@@ -36,6 +39,7 @@ export async function POST(req: Request) {
       );
     }
 
+    // ביצוע ההחלפה במסד הנתונים
     await prisma.$transaction([
       prisma.placement.create({
         data: {
@@ -59,36 +63,49 @@ export async function POST(req: Request) {
       }),
     ]);
 
-    // שליחת התראות על ההחלפה
-    const dateStr1 = new Date(dateAbsent).toLocaleDateString("he-IL");
-    const dateStr2 = new Date(dateWorking).toLocaleDateString("he-IL");
-    const mainTeacher = await prisma.user.findFirst({
-      where: { id:institution.mainManagerId },
+    // הכנת נתונים להתראות
+    const dateStr1 = absentDate.toLocaleDateString("he-IL");
+    const dateStr2 = workingDate.toLocaleDateString("he-IL");
+    const mainTeacherName = session.name; // השם מהסשן
+    const gardenInfo = `בגן ${institution.name} (כתובת: ${institution.address})`;
+
+    // 1. התראה למפקחת
+    await db_createNotification({
+      userId: institution.supervisorId,
+      title: `החלפה פנימית: ${institution.name}`,
+      message: `מפקחת יקרה, בוצעה החלפה פנימית ${gardenInfo}. גננת האם ${mainTeacherName} תעדר בתאריך ${dateStr1} ותחליף את הרוטציה בתאריך ${dateStr2}.`,
+      type: "STATUS_UPDATE",
     });
 
-    const notificationTargets = [
-      institution.supervisorId,
-      institution.instructorId,
-    ].filter(Boolean);
-
-    for (const targetId of notificationTargets) {
+    // 2. התראה למדריכה (אם קיימת)
+    if (institution.instructorId) {
       await db_createNotification({
-        userId: targetId!,
-        title: `החלפה פנימית: גן ${institution.name}`,
-        message: `בוצעה החלפה בין גננת האם ${mainTeacher?.firstName} ${mainTeacher?.lastName}  לרוטציה בתאריכים ${dateStr1} ו-${dateStr2}`,
+        userId: institution.instructorId,
+        title: `החלפה פנימית: ${institution.name}`,
+        message: `מדריכה יקרה, בוצעה החלפה פנימית ${gardenInfo}. גננת האם ${mainTeacherName} תעדר בתאריך ${dateStr1} ותחליף את הרוטציה בתאריך ${dateStr2}.`,
         type: "STATUS_UPDATE",
       });
     }
 
-    // התראה לגננת הרוטציה (היא חייבת לדעת שזה קרה)
+    // 3. התראה לגננת הרוטציה (המחליפה)
     await db_createNotification({
       userId: rotationTeacherId,
-      title: "עודכן שיבוץ חדש (החלפה פנימית)",
-      message: `עודכנה החלפה מול גננת האם בתאריכים ${dateStr1} ו-${dateStr2}`,
+      title: "שיבוץ חדש (החלפה פנימית)",
+      message: `גננת רוטציה יקרה, יש לך הזדמנות להחליף את ${mainTeacherName} ${gardenInfo} בתאריך ${dateStr1}, ובתמורה גננת האם תחליף אותך בתאריך ${dateStr2}.`,
       type: "STATUS_UPDATE",
     });
+
+    // 4. התראה לגננת האם (אישור פעולה)
+    await db_createNotification({
+      userId: session.id,
+      title: "אישור ביצוע החלפה",
+      message: `גננת אם יקרה, ההחלפה הפנימית בוצעה בהצלחה ${gardenInfo}. היעדרותך: ${dateStr1}, יום החלפתך את הרוטציה: ${dateStr2}.`,
+      type: "STATUS_UPDATE",
+    });
+
     return NextResponse.json({ success: true });
   } catch (error: any) {
+    console.error("Swap Error:", error);
     return NextResponse.json({ message: error.message }, { status: 400 });
   }
 }

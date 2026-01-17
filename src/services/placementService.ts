@@ -314,37 +314,37 @@ export async function db_createPlacement(data: any) {
       }),
       type: "STATUS_UPDATE",
     });
-   } else if (status === "OPEN") {
+  } else if (status === "OPEN") {
     // 1. התראה למפקחת (אלא אם היא יצרה את הדיווח)
     if (!data.creatorRoles.includes("SUPERVISOR")) {
-        await db_createNotification({
-            userId: institution.supervisorId,
-            title: "דרושה מחליפה",
-            message: formatMessage({ 
-                prefix: "מפקחת יקרה", 
-                statusText: "דווחה היעדרות (ממתין למחליפה)", 
-                gardenName: institution.name, 
-                address: institution.address, 
-                mainName, 
-                date: dateStr 
-            }),
-            type: "STATUS_UPDATE"
-        });
+      await db_createNotification({
+        userId: institution.supervisorId,
+        title: "דרושה מחליפה",
+        message: formatMessage({
+          prefix: "מפקחת יקרה",
+          statusText: "דווחה היעדרות (ממתין למחליפה)",
+          gardenName: institution.name,
+          address: institution.address,
+          mainName,
+          date: dateStr,
+        }),
+        type: "STATUS_UPDATE",
+      });
     }
-     if (institution.instructorId && !data.creatorRoles.includes("INSTRUCTOR")) {
-        await db_createNotification({
-            userId: institution.instructorId,
-            title: "דרושה מחליפה",
-            message: formatMessage({ 
-                prefix: "מדריכה יקרה", 
-                statusText: "דווחה היעדרות (ממתין למחליפה)", 
-                gardenName: institution.name, 
-                address: institution.address, 
-                mainName, 
-                date: dateStr 
-            }),
-            type: "STATUS_UPDATE"
-        });
+    if (institution.instructorId && !data.creatorRoles.includes("INSTRUCTOR")) {
+      await db_createNotification({
+        userId: institution.instructorId,
+        title: "דרושה מחליפה",
+        message: formatMessage({
+          prefix: "מדריכה יקרה",
+          statusText: "דווחה היעדרות (ממתין למחליפה)",
+          gardenName: institution.name,
+          address: institution.address,
+          mainName,
+          date: dateStr,
+        }),
+        type: "STATUS_UPDATE",
+      });
     }
 
     // קריאה למחליפות
@@ -423,7 +423,6 @@ function formatMessage(params: {
   return msg;
 }
 
-
 /**
  * עדכון סטטוס
   עדכון סטטוס קיים (למשל סגירת גן)
@@ -442,8 +441,16 @@ export async function db_updatePlacementStatus(params: any) {
     include: {
       institution: true,
       mainTeacher: { select: { firstName: true, lastName: true } },
+      substitute: { select: { firstName: true, lastName: true } },
     },
   });
+  const statusHebrew =
+    updated.status === "CANCELLED"
+      ? "הגן נסגר (אין פעילות)"
+      : "השיבוץ הוחזר להמתנה";
+
+  // עדכון המפקחת והמדריכה על שינוי הסטטוס
+  await notifyHierarchy(updated, statusHebrew, params.actorRoles || []);
 
   const dateStr = new Date(updated.date).toLocaleDateString("he-IL");
   const mainName = `${updated.mainTeacher.firstName} ${updated.mainTeacher.lastName}`;
@@ -550,9 +557,13 @@ export async function db_quickUpdatePlacement(
 /**
  * אישור שיבוץ
  */
+/**
+ * עדכון שיבוץ קיים (איוש מחליפה)
+ */
 export async function db_assignSubstitute(
   placementId: string,
-  substituteId: string
+  substituteId: string,
+  actorRoles: string[] = []
 ) {
   const updatedPlacement = await prisma.placement.update({
     where: { id: placementId },
@@ -564,36 +575,34 @@ export async function db_assignSubstitute(
     },
   });
 
-  const { institution, mainTeacher, substitute } = updatedPlacement;
   const dateStr = updatedPlacement.date.toLocaleDateString("he-IL");
-  const mainName = `${mainTeacher.firstName} ${mainTeacher.lastName}`;
-  const subName = `${substitute!.firstName} ${substitute!.lastName}`;
+  const mainName = `${updatedPlacement.mainTeacher.firstName} ${updatedPlacement.mainTeacher.lastName}`;
+  const subName = `${updatedPlacement.substitute!.firstName} ${
+    updatedPlacement.substitute!.lastName
+  }`;
 
-  // 1. עדכון מנהלות ואם (כמו ביצירה)
-  // ... (קוד דומה ל-db_createPlacement)
+  // א. עדכון מפקחת ומדריכה
+  await notifyHierarchy(updatedPlacement, "השיבוץ אוייש בהצלחה", actorRoles);
 
-  // 2. ההוספה החדשה: עדכון כל שאר המחליפות שהגן כבר לא רלוונטי
-  const otherSubs = await getAvailableForNotification(updatedPlacement.date);
-  const notifyIds = otherSubs.filter((id) => id !== substituteId);
+  // ב. עדכון גננת האם
+  await db_createNotification({
+    userId: updatedPlacement.mainTeacherId,
+    title: "נמצאה עבורך מחליפה",
+    message: `גננת אם יקרה, נמצאה עבורך מחליפה: ${subName} תגיע להחליף אותך בגן ${updatedPlacement.institution.name} בתאריך ${dateStr}.`,
+    type: "STATUS_UPDATE",
+  });
 
-  if (notifyIds.length > 0) {
-    await db_notifyMultipleUsers(
-      notifyIds,
-      "השיבוץ כבר אינו זמין",
-      formatMessage({
-        prefix: "גננת יקרה",
-        statusText: "הגן כבר מאוייש ואין צורך בהחלפה",
-        gardenName: institution.name,
-        address: institution.address,
-        mainName,
-        date: dateStr,
-      }),
-      "SYSTEM"
-    );
-  }
+  // ג. עדכון המחליפה
+  await db_createNotification({
+    userId: substituteId,
+    title: "שיבוץ חדש עבורך",
+    message: `גננת יקרה, שובצת להחליף את ${mainName} בגן ${updatedPlacement.institution.name} בתאריך ${dateStr}.`,
+    type: "STATUS_UPDATE",
+  });
 
   return updatedPlacement;
 }
+
 
 //פונקציות למדריכה
 
@@ -682,3 +691,42 @@ async function getAvailableForNotification(date: Date) {
   return potentialUsers.map((u) => u.id);
 }
 
+// src/services/placementService.ts
+
+// --- פונקציית עזר פנימית לשליחת הודעה לדרגים הניהוליים ---
+async function notifyHierarchy(
+  placement: any,
+  statusText: string,
+  actorRoles: string[] = []
+) {
+  const dateStr = placement.date.toLocaleDateString("he-IL");
+  const mainName = `${placement.mainTeacher.firstName} ${placement.mainTeacher.lastName}`;
+  const subName = placement.substitute
+    ? `${placement.substitute.firstName} ${placement.substitute.lastName}`
+    : "טרם נקבעה";
+
+  const gardenInfo = `גן ${placement.institution.name} (כתובת: ${placement.institution.address})`;
+
+  // 1. התראה למפקחת (רק אם היא לא זו שביצעה את הפעולה)
+  if (!actorRoles.includes("SUPERVISOR")) {
+    await db_createNotification({
+      userId: placement.institution.supervisorId,
+      title: "עדכון בשיבוץ גן",
+      message: `מפקחת יקרה, ${statusText}: ${gardenInfo}, גננת אם: ${mainName}, בתאריך: ${dateStr}. אוייש ע"י: ${subName}.`,
+      type: "STATUS_UPDATE",
+    });
+  }
+
+  // 2. התראה למדריכה (רק אם היא לא זו שביצעה את הפעולה)
+  if (
+    placement.institution.instructorId &&
+    !actorRoles.includes("INSTRUCTOR")
+  ) {
+    await db_createNotification({
+      userId: placement.institution.instructorId,
+      title: "עדכון בשיבוץ גן",
+      message: `מדריכה יקרה, ${statusText}: ${gardenInfo}, גננת אם: ${mainName}, בתאריך: ${dateStr}. אוייש ע"י: ${subName}.`,
+      type: "STATUS_UPDATE",
+    });
+  }
+}

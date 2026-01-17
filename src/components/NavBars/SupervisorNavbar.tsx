@@ -9,6 +9,7 @@ import {
   PieChartIcon,
   BarChart3,
 } from "lucide-react";
+import NotificationBell from "../NotificationBell";
 export default function SupervisorNavbar() {
   const router = useRouter();
   const pathname = usePathname();
@@ -86,9 +87,8 @@ export default function SupervisorNavbar() {
               </Link>
             </div>
           </div>
-
-          {/* צד שמאל: כפתור התנתקות */}
-          <div className="flex items-center">
+          <div className="flex items-center gap-4">
+            <NotificationBell /> 
             <button
               onClick={handleLogout}
               className="flex items-center gap-2 text-sm font-bold text-red-500 hover:bg-red-50 px-4 py-2 rounded-xl transition-all border border-transparent hover:border-red-100"
@@ -97,6 +97,7 @@ export default function SupervisorNavbar() {
               <span className="hidden sm:inline">התנתקות</span>
             </button>
           </div>
+
         </div>
       </div>
     </nav>

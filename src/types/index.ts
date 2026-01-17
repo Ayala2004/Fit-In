@@ -116,3 +116,17 @@ export interface Option {
   warning?: string; // הודעת האזהרה ל-Tooltip
   info?: string;    // הודעת מידע נוספת
 }
+
+export type Notification = {
+  id: string;
+  userId: string;
+
+  title: string;
+  message: string;
+
+  type: "URGENT_CALL" | "STATUS_UPDATE" | "SYSTEM";
+  status: "PENDING" | "SENT" | "FAILED";
+
+  isRead: boolean;
+  createdAt: string; // ISO date מה־API
+};

@@ -134,5 +134,6 @@ model Notification {
   message     String   // למשל: "דרושה מחליפה למחר עקב מחלה"
   type        String   // "URGENT_CALL" | "STATUS_UPDATE" | "SYSTEM"
   status      String   @default("PENDING") // PENDING, SENT, FAILED
+  isRead      Boolean  @default(false)
   createdAt   DateTime @default(now())
 }
