@@ -31,7 +31,16 @@ export default function AddInstitutionModal({
     fetch("/api/supervisor/managers")
       .then((res) => res.json())
       .then((data) => {
-        setManagers(Array.isArray(data) ? data : []);
+        // התיקון כאן: השרת מחזיר { managers: [...] }, אז ניגש ל-data.managers
+        if (data && data.managers) {
+          setManagers(data.managers);
+        } else {
+          setManagers([]);
+        }
+      })
+      .catch(err => {
+        console.error("Error fetching managers:", err);
+        setManagers([]);
       });
   }
 }, [isOpen]);

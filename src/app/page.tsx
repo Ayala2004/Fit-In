@@ -8,12 +8,14 @@ export default function Home() {
 
   useEffect(() => {
     fetch("/api/auth/me")
-      .then(res => res.json())
-      .then(user => {
+      .then((res) => res.json())
+      .then((user) => {
         if (user.roles.includes("SUPERVISOR")) router.push("/supervisor");
-        else if (user.roles.includes("INSTRUCTOR")) router.push("/instructor");
-        else if (user.roles.includes("MANAGER")) router.push("/manager");
-        else router.push("/login");
+        else if (user.roles.includes("INSTRUCTOR")) {
+          router.push("/instructor"); // מדריכה (גם אם היא גננת אם) תנחת כאן
+        } else if (user.roles.includes("MANAGER")) {
+          router.push("/manager");
+        } else router.push("/login");
       })
       .catch(() => router.push("/login"));
   }, []);

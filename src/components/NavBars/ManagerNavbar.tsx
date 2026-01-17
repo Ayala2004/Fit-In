@@ -1,12 +1,21 @@
+// src/components/NavBars/ManagerNavbar.tsx
 "use client";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { LayoutDashboard, LogOut } from "lucide-react";
+import { LayoutDashboard, LogOut, GraduationCap } from "lucide-react"; // אייקון הדרכה
 import NotificationBell from "../NotificationBell";
 
 export default function ManagerNavbar() {
   const router = useRouter();
   const pathname = usePathname();
+  const [userRoles, setUserRoles] = useState<string[]>([]);
+
+  useEffect(() => {
+    fetch("/api/auth/me")
+      .then(res => res.json())
+      .then(data => setUserRoles(data.roles || []));
+  }, []);
 
   const handleLogout = async () => {
     if (!confirm("להתנתק מהמערכת?")) return;
@@ -15,7 +24,6 @@ export default function ManagerNavbar() {
     router.refresh();
   };
 
-  // פונקציית עזר לבדיקה אם הקישור פעיל
   const isActive = (path: string) => pathname === path;
 
   return (
@@ -24,38 +32,31 @@ export default function ManagerNavbar() {
         <div className="flex justify-between h-16 items-center">
           <div className="flex items-center gap-8">
             <div className="flex items-center gap-3">
-              <div className="bg-indigo-600 text-white p-2 rounded-xl font-bold shadow-md shadow-indigo-100">
-                FitIn
-              </div>
-              <span className="text-lg font-extrabold text-slate-800 hidden md:block tracking-tight">
-                מרכז ניהול גן
-              </span>
+              <div className="bg-indigo-600 text-white p-2 rounded-xl font-bold">FitIn</div>
+              <span className="text-lg font-extrabold text-slate-800">מרכז ניהול גן</span>
             </div>
 
-            {/* הקישור המתוקן לדאשבורד */}
-            <Link 
-              href="/manager" 
-              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all ${
-                isActive("/manager")
-                  ? "bg-indigo-50 text-indigo-600" // צבע אינדיגו רק כשהוא פעיל
-                  : "text-slate-500 hover:bg-slate-50" // אפור כשאנחנו בדף אחר
-              }`}
-            >
-              <LayoutDashboard size={18} />
-              <span>הגן שלי</span>
-            </Link>
+            <div className="flex items-center gap-2">
+                <Link href="/manager" className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all ${isActive("/manager") ? "bg-indigo-50 text-indigo-600" : "text-slate-500 hover:bg-slate-50"}`}>
+                <LayoutDashboard size={18} />
+                <span>הגן שלי</span>
+                </Link>
+
+                {/* --- הוספת כפתור חזרה להדרכה --- */}
+                {userRoles.includes("INSTRUCTOR") && (
+                    <Link href="/instructor" className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold text-purple-600 hover:bg-purple-50 transition-all">
+                        <GraduationCap size={18} />
+                        <span>ממשק הדרכה</span>
+                    </Link>
+                )}
+            </div>
           </div>
 
           <div className="flex items-center gap-4">
-            {/* הפעמון המעודכן שלנו */}
             <NotificationBell />
-
-            <button
-              onClick={handleLogout}
-              className="flex items-center gap-2 text-sm font-bold text-red-500 hover:bg-red-50 px-4 py-2 rounded-xl transition-all"
-            >
+            <button onClick={handleLogout} className="text-sm font-bold text-red-500 hover:bg-red-50 px-4 py-2 rounded-xl flex items-center gap-2">
               <LogOut size={18} />
-              <span className="hidden sm:inline">התנתקות</span>
+              התנתקות
             </button>
           </div>
         </div>

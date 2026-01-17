@@ -7,20 +7,35 @@ import { format } from "date-fns";
 export async function GET(req: Request) {
   try {
     const session = await getSession();
-    if (!session) return NextResponse.json({ message: "לא מורשה" }, { status: 401 });
+    // שינוי 1: אפשור גישה למפקחת או מדריכה
+    if (!session || (!session.roles.includes("SUPERVISOR") && !session.roles.includes("INSTRUCTOR"))) {
+      return NextResponse.json({ message: "לא מורשה" }, { status: 401 });
+    }
+
+    let targetSupervisorId = "";
+
+    // שינוי 2: זיהוי מזהה המפקחת האחראית על המחוז
+    if (session.roles.includes("SUPERVISOR")) {
+      targetSupervisorId = session.id;
+    } else {
+      // אם זו מדריכה - נשלוף את ה-supervisorId מהפרופיל שלה
+      const userProfile = await prisma.user.findUnique({
+        where: { id: session.id },
+        select: { supervisorId: true }
+      });
+      if (!userProfile?.supervisorId) return NextResponse.json({ message: "לא נמצא מחוז משויך" }, { status: 400 });
+      targetSupervisorId = userProfile.supervisorId;
+    }
 
     const { searchParams } = new URL(req.url);
     const dateStr = searchParams.get("date");
-    if (!dateStr) return NextResponse.json({ message: "חובה לציין תאריך" }, { status: 400 });
 
-    const selectedDate = new Date(dateStr);
-    const dayOfWeek = format(selectedDate, "EEEE").toUpperCase();
-
-    // 1. שליפת כל גננות האם במערכת (ללא סינון)
+    // שליפת גננות אם באותו מחוז
     const allManagers = await prisma.user.findMany({
       where: {
         roles: { has: "MANAGER" },
         isWorking: true,
+        supervisorId: targetSupervisorId // סינון לפי המחוז הנכון
       },
       select: {
         id: true,
@@ -30,17 +45,21 @@ export async function GET(req: Request) {
       },
     });
 
-    // 2. שליפת כל גננות הרוטציה במערכת (ללא סינון)
-    // אנחנו מביאים גם את המידע על הגן שבו הן אמורות להיות היום בלו"ז הקבוע
+    if (!dateStr) return NextResponse.json({ managers: allManagers, rotations: [] });
+
+    const selectedDate = new Date(dateStr);
+    const dayOfWeek = format(selectedDate, "EEEE").toUpperCase();
+
+    // שליפת רוטציות
     const allRotations = await prisma.user.findMany({
       where: {
         roles: { has: "ROTATION" },
         isWorking: true,
+        // רוטציות הן בדרך כלל כלל-מערכתיות או משויכות למפקחת
+        OR: [{ supervisorId: targetSupervisorId }, { supervisorId: null }]
       },
       select: {
-        id: true,
-        firstName: true,
-        lastName: true,
+        id: true, firstName: true, lastName: true,
         fixedRotationsAsRotation: {
             where: { day: dayOfWeek as any },
             include: {
@@ -52,10 +71,7 @@ export async function GET(req: Request) {
       },
     });
 
-    return NextResponse.json({
-      managers: allManagers,
-      rotations: allRotations,
-    });
+    return NextResponse.json({ managers: allManagers, rotations: allRotations });
   } catch (error) {
     return NextResponse.json({ message: "שגיאה בטעינת נתונים" }, { status: 500 });
   }

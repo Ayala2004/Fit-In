@@ -7,6 +7,11 @@ import { getSession } from "@/lib/auth";
 
 export async function GET(request: Request) {
   try {
+    const session = await getSession();
+    // אפשור למדריכה ומפקחת
+    if (!session || (!session.roles.includes("SUPERVISOR") && !session.roles.includes("INSTRUCTOR"))) {
+        return NextResponse.json({ message: "לא מורשה" }, { status: 401 });
+    }
     const { searchParams } = new URL(request.url);
     const dateParam = searchParams.get("date");
     const absentTeacherId = searchParams.get("absentTeacherId"); // הוספנו פרמטר חדש
