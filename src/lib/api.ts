@@ -1,12 +1,15 @@
-
 export async function callApi(type: string, data: any) {
   const response = await fetch('/api/test', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ type, data }),
   });
+
+  if (response.status === 401) {
+    // אם קיבלנו 401, ננקה את הסשן ונשלח ללוגין
+    window.location.href = '/login';
+    return;
+  }
 
   if (!response.ok) {
     const error = await response.json();
