@@ -79,7 +79,7 @@ export default function ReassignTeachersModal({
         )}
 
         {/* Header */}
-        <div className="p-8 bg-amber-500 text-white shrink-0">
+        <div className="p-8 bg-gray-800 text-white shrink-0">
           <h2 className="text-2xl font-black flex items-center gap-3">
             <AlertTriangle size={28} /> שיבוץ מחדש של גננות
           </h2>
@@ -157,7 +157,7 @@ export default function ReassignTeachersModal({
             disabled={loading || selectedIds.length === 0 || !newInstructorId}
             className="flex-1 py-4 bg-indigo-600 text-white rounded-2xl font-black shadow-lg disabled:bg-slate-300"
           >
-            {loading ? <LoadingScreen /> : "בצע שיבוץ מחדש"}
+            {loading ? "שומר..." : "בצע שיבוץ מחדש"}
           </button>
           {isForced && (
             <button

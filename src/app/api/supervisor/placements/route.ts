@@ -158,6 +158,8 @@ export async function PATCH(request: Request) {
       },
     });
 
+    
+
     if (updatedPlacement.substitute && updatedPlacement.mainTeacher) {
       const dateStr = new Date(updatedPlacement.date).toLocaleDateString(
         "he-IL"

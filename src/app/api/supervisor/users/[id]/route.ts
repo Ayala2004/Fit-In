@@ -88,8 +88,12 @@ export async function PATCH(
       roles: restOfFields.roles,
       workDays: restOfFields.workDays,
       isWorking: restOfFields.isWorking,
-      instructorId: instructorId || null,
     };
+    if (instructorId !== undefined) {
+      // אם שלחו מחרוזת ריקה או REMOVE - נמחק את השיוך (null)
+      // אחרת - נשים את ה-ID ששלחו
+      updateData.instructorId = (instructorId === "" || instructorId === "REMOVE") ? null : instructorId;
+    }
 
     // עדכון תאריך לידה אם קיים
     if (restOfFields.dateOfBirth) {

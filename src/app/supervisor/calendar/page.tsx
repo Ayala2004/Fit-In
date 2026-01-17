@@ -178,45 +178,48 @@ export default function SupervisorCalendar() {
   const days = [...paddingDays, ...realDays];
 
   const getPlacementColor = (p: any) => {
-  // 1. צבעי סטטוס (ממתין / סגור)
-  if (p.status === "OPEN") return "bg-amber-50 border-amber-200 text-amber-700";
-  if (p.status === "CANCELLED") return "bg-red-50 border-red-200 text-red-700";
+    // 1. צבעי סטטוס (ממתין / סגור)
+    if (p.status === "OPEN")
+      return "bg-amber-50 border-amber-200 text-amber-700";
+    if (p.status === "CANCELLED")
+      return "bg-red-50 border-red-200 text-red-700";
 
-  const subId = p.substituteId ? String(p.substituteId) : null;
-  const absentId = String(p.mainTeacherId);
-  const gardenManagerId = String(p.institution?.mainManagerId);
+    const subId = p.substituteId ? String(p.substituteId) : null;
+    const absentId = String(p.mainTeacherId);
+    const gardenManagerId = String(p.institution?.mainManagerId);
 
-  // רשימת כל ה-IDs של גננות הרוטציה הקבועות של הגן הזה (מכל הימים)
-  const gardenRotationIds = (p.institution?.mainManager?.fixedRotationsAsManager || [])
-    .map((r: any) => String(r.rotationTeacherId));
+    // רשימת כל ה-IDs של גננות הרוטציה הקבועות של הגן הזה (מכל הימים)
+    const gardenRotationIds = (
+      p.institution?.mainManager?.fixedRotationsAsManager || []
+    ).map((r: any) => String(r.rotationTeacherId));
 
-  // זיהוי מי חסרה
-  const isOfficialRotationAbsent = gardenRotationIds.includes(absentId);
-  const isGardenManagerAbsent = absentId === gardenManagerId;
+    // זיהוי מי חסרה
+    const isOfficialRotationAbsent = gardenRotationIds.includes(absentId);
+    const isGardenManagerAbsent = absentId === gardenManagerId;
 
-  // --- מקרה א': גננת רוטציה חסרה ---
-  if (isOfficialRotationAbsent) {
-    // אם מנהלת הגן (גננת האם) היא זו שהגיעה להחליף
-    if (subId === gardenManagerId) {
-      return "bg-indigo-200 border-indigo-400 text-indigo-900 shadow-sm"; 
+    // --- מקרה א': גננת רוטציה חסרה ---
+    if (isOfficialRotationAbsent) {
+      // אם מנהלת הגן (גננת האם) היא זו שהגיעה להחליף
+      if (subId === gardenManagerId) {
+        return "bg-indigo-200 border-indigo-400 text-indigo-900 shadow-sm";
+      }
+      // אם מחליפה אחרת (חיצונית) הגיעה
+      return "bg-purple-200 border-purple-400 text-purple-900 shadow-sm";
     }
-    // אם מחליפה אחרת (חיצונית) הגיעה
-    return "bg-purple-200 border-purple-400 text-purple-900 shadow-sm";
-  }
 
-  // --- מקרה ב': גננת אם חסרה ---
-  if (isGardenManagerAbsent) {
-    // אם אחת מגננות הרוטציה הקבועות של הגן הגיעה להחליף
-    if (subId && gardenRotationIds.includes(subId)) {
-      return "bg-slate-300 border-slate-400 text-slate-900 shadow-sm"; 
+    // --- מקרה ב': גננת אם חסרה ---
+    if (isGardenManagerAbsent) {
+      // אם אחת מגננות הרוטציה הקבועות של הגן הגיעה להחליף
+      if (subId && gardenRotationIds.includes(subId)) {
+        return "bg-slate-300 border-slate-400 text-slate-900 shadow-sm";
+      }
+      // אם גננת מחליפה חיצונית הגיעה (לבן)
+      return "bg-white border-slate-200 text-slate-700";
     }
-    // אם גננת מחליפה חיצונית הגיעה (לבן)
-    return "bg-white border-slate-200 text-slate-700";
-  }
 
-  // ברירת מחדל לכל מקרה אחר
-  return "bg-white border-slate-100 text-slate-700";
-};
+    // ברירת מחדל לכל מקרה אחר
+    return "bg-white border-slate-100 text-slate-700";
+  };
 
   if (!user && loading) {
     return (
@@ -284,31 +287,31 @@ export default function SupervisorCalendar() {
           </div>
         </div>
 
-          {/* Calendar Grid */}
-          <div className="bg-white rounded-[2.5rem] shadow-xl border border-slate-200 overflow-hidden">
-            <div className="grid grid-cols-7 bg-slate-50/50 border-b border-slate-200">
-              {["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת"].map(
-                (d) => (
-                  <div
-                    key={d}
-                    className="p-4 text-center font-bold text-slate-400 text-xs uppercase tracking-widest"
-                  >
-                    {d}
-                  </div>
-                )
-              )}
-            </div>
+        {/* Calendar Grid */}
+        <div className="bg-white rounded-[2.5rem] shadow-xl border border-slate-200 overflow-hidden">
+          <div className="grid grid-cols-7 bg-slate-50/50 border-b border-slate-200">
+            {["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת"].map(
+              (d) => (
+                <div
+                  key={d}
+                  className="p-4 text-center font-bold text-slate-400 text-xs uppercase tracking-widest"
+                >
+                  {d}
+                </div>
+              )
+            )}
+          </div>
 
-            <div className="grid grid-cols-7">
-              {days.map((day, index) => {
-                if (!day) {
-                  return (
-                    <div
-                      key={`empty-${index}`}
-                      className="min-h-[150px] border-l border-b border-slate-50"
-                    />
-                  );
-                }
+          <div className="grid grid-cols-7">
+            {days.map((day, index) => {
+              if (!day) {
+                return (
+                  <div
+                    key={`empty-${index}`}
+                    className="min-h-[150px] border-l border-b border-slate-50"
+                  />
+                );
+              }
 
               const isSaturday = day.getDay() === 6;
               const isToday = isSameDay(day, new Date());
@@ -495,15 +498,16 @@ export default function SupervisorCalendar() {
                     className="flex items-center justify-between p-4 bg-white rounded-2xl border border-slate-100 hover:border-indigo-200 hover:bg-indigo-50/30 transition-all group shadow-sm"
                   >
                     <div className="flex items-center gap-4">
+                      {/* התיקון כאן: שימוש ב-label במקום ב-firstName שאינו קיים */}
                       <div className="w-10 h-10 bg-indigo-600 text-white rounded-full flex items-center justify-center font-black shadow-md">
-                        {sub.firstName[0]}
+                        {sub.label ? sub.label[0] : "?"}
                       </div>
                       <div>
                         <p className="font-black text-slate-800">
-                          {sub.firstName} {sub.lastName}
+                          {sub.label} {/* שימוש בתווית המלאה שה-API בנה */}
                         </p>
                         <p className="text-xs text-slate-400 font-medium">
-                          {sub.phoneNumber}
+                          {sub.phoneNumber || "אין טלפון"}
                         </p>
                       </div>
                     </div>

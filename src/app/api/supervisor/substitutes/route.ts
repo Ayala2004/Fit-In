@@ -12,7 +12,15 @@ export async function GET(request: Request) {
     const absentTeacherId = searchParams.get("absentTeacherId"); // הוספנו פרמטר חדש
 
     const searchDate = new Date(dateParam!);
-    const dayOfWeek = ["SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"][searchDate.getDay()];
+    const dayOfWeek = [
+      "SUNDAY",
+      "MONDAY",
+      "TUESDAY",
+      "WEDNESDAY",
+      "THURSDAY",
+      "FRIDAY",
+      "SATURDAY",
+    ][searchDate.getDay()];
 
     const startOfDay = new Date(searchDate.setHours(0, 0, 0, 0));
     const endOfDay = new Date(searchDate.setHours(23, 59, 59, 999));
@@ -20,43 +28,54 @@ export async function GET(request: Request) {
     // 1. מי שבאמת תפוסה בשיבוץ Placement "סגור" - היחידות שנסנן החוצה
     const busyInPlacements = await prisma.placement.findMany({
       where: { date: { gte: startOfDay, lte: endOfDay }, status: "ASSIGNED" },
-      select: { substituteId: true }
+      select: { substituteId: true },
     });
-    const busyIds = busyInPlacements.map(p => p.substituteId).filter(Boolean) as string[];
+    const busyIds = busyInPlacements
+      .map((p) => p.substituteId)
+      .filter(Boolean) as string[];
 
     // 2. שליפת כל המחליפות והרוטציות
     const subs = await prisma.user.findMany({
       where: {
         roles: { hasSome: ["SUBSTITUTE", "ROTATION"] },
         isWorking: true,
-        id: { notIn: busyIds }
+        id: { notIn: busyIds },
       },
-      include: { fixedRotationsAsRotation: { where: { day: dayOfWeek as any } } }
+      include: {
+        fixedRotationsAsRotation: { where: { day: dayOfWeek as any } },
+      },
     });
 
-    let results = subs.map(s => ({
+    let results = subs.map((s) => ({
       id: s.id,
+      firstName: s.firstName, // הוספת השדה במפורש
+      lastName: s.lastName, // הוספת השדה במפורש
       label: `${s.firstName} ${s.lastName}`,
+      phoneNumber: s.phoneNumber, // וודאי שגם זה עובר
       isDayOff: !s.workDays.includes(dayOfWeek as any),
-      isFixedRotationToday: s.fixedRotationsAsRotation.length > 0
+      isFixedRotationToday: s.fixedRotationsAsRotation.length > 0,
     }));
 
     // 3. תוספת מיוחדת: אם הנעדרת היא רוטציה, נמצא את גננת האם שלה ונוסיף אותה
     if (absentTeacherId) {
-        const fixedRot = await prisma.fixedRotation.findFirst({
-            where: { rotationTeacherId: absentTeacherId, day: dayOfWeek as any },
-            include: { manager: true }
+      const fixedRot = await prisma.fixedRotation.findFirst({
+        where: { rotationTeacherId: absentTeacherId, day: dayOfWeek as any },
+        include: { manager: true },
+      });
+      if (fixedRot && !busyIds.includes(fixedRot.managerId)) {
+        results.unshift({
+          id: fixedRot.managerId,
+          firstName: fixedRot.manager.firstName,
+          lastName: fixedRot.manager.lastName,
+          label: `(גננת אם) ${fixedRot.manager.firstName} ${fixedRot.manager.lastName}`,
+          phoneNumber: fixedRot.manager.phoneNumber,
+          isDayOff: false,
+          isFixedRotationToday: false,
         });
-        if (fixedRot && !busyIds.includes(fixedRot.managerId)) {
-            results.unshift({
-                id: fixedRot.managerId,
-                label: `(גננת אם) ${fixedRot.manager.firstName} ${fixedRot.manager.lastName}`,
-                isDayOff: false,
-                isFixedRotationToday: false
-            });
-        }
+      }
     }
-
     return NextResponse.json(results);
-  } catch (error) { return NextResponse.json({ error: "שגיאה" }, { status: 500 }); }
+  } catch (error) {
+    return NextResponse.json({ error: "שגיאה" }, { status: 500 });
+  }
 }

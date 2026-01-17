@@ -20,7 +20,6 @@ import CustomDropdown from "../ui/CustomDropdown";
 import ReassignTeachersModal from "../ReassignTeachersModal";
 import ReassignRotationModal from "../ReassignRotationModal";
 
-
 export default function EditUserModal({
   user,
   isOpen,
@@ -152,7 +151,12 @@ export default function EditUserModal({
 
       const payload = {
         ...formData,
-        rotationData: cleanedRotationData, // שולחים את הנתונים המנוקים
+        // וידוא: אם המשתמשת היא לא MANAGER, אל תשלח בכלל instructorId
+        // אם היא MANAGER והשדה ריק, שלח null בפירוש
+        instructorId: formData.roles.includes("MANAGER")
+          ? formData.instructorId || null
+          : undefined,
+        rotationData: cleanedRotationData,
         dateOfBirth: formData.dateOfBirth
           ? new Date(formData.dateOfBirth).toISOString()
           : null,
@@ -165,17 +169,19 @@ export default function EditUserModal({
       });
 
       const data = await res.json();
-
       if (res.ok) {
         if (data.needsRotationMigration) {
           setBrokenRotations(data.brokenRotations);
           setShowRotationMigration(true);
         } else if (data.needsReassignment) {
-          // ... הלוגיקה של המדריכות ...
+          setOrphanedTeachers(data.orphanedManagers);
+          setShowReassignModal(true);
         } else {
           onUpdateSuccess();
           onClose();
         }
+      } else {
+        alert(data.message || "שגיאה בעדכון");
       }
     } catch (err) {
       console.error("Update error:", err);
@@ -184,6 +190,7 @@ export default function EditUserModal({
       setLoading(false);
     }
   };
+
   const handleComboSelect = (roles: string[]) => {
     setFormData((prev: any) => ({ ...prev, roles }));
   };
