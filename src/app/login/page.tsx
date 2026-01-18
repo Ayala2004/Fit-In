@@ -25,17 +25,19 @@ export default function LoginPage() {
       if (res.ok) {
         const user = await res.json();
 
+        // סדר העדיפויות לניתוב (לפי חוזק התפקיד)
         if (user.roles.includes("SUPERVISOR")) {
           router.push("/supervisor");
         } else if (user.roles.includes("INSTRUCTOR")) {
           router.push("/instructor");
         } else if (user.roles.includes("MANAGER")) {
-          router.push("/manager"); // נבנה בהמשך
-        } else if (
-          user.roles.includes("SUBSTITUTE") ||
-          user.roles.includes("ROTATION")
-        ) {
-          router.push("/jobs"); // נבנה בהמשך
+          router.push("/manager");
+        } else if (user.roles.includes("ROTATION")) {
+          // --- השינוי כאן: גננת רוטציה הולכת לממשק החדש ---
+          router.push("/rotation"); 
+        } else if (user.roles.includes("SUBSTITUTE")) {
+          // גננת מחליפה נשארת ב-jobs (או ממשק עתידי שתבני)
+          router.push("/jobs");
         } else {
           router.push("/");
         }
@@ -55,8 +57,9 @@ export default function LoginPage() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-gray-50">
       <div className="w-full max-w-md p-8 space-y-6 bg-white rounded-xl shadow-lg">
+        {/* שיניתי את הכותרת לכללית יותר */}
         <h1 className="text-2xl font-bold text-center text-gray-900">
-          כניסת מפקחים
+          כניסה למערכת FitIn
         </h1>
 
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -93,7 +96,7 @@ export default function LoginPage() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full px-4 py-2 text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:bg-blue-300 transition-colors"
+            className="w-full px-4 py-2 text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:bg-blue-300 transition-colors font-bold"
           >
             {loading ? "מתחבר..." : "התחבר"}
           </button>

@@ -39,7 +39,6 @@ export async function GET() {
   }
 }
 
-// ... ה-POST הקיים שלך נשאר מתחת ...
 export async function POST(req: Request) {
   try {
     const session = await getSession();
@@ -49,7 +48,14 @@ export async function POST(req: Request) {
 
     const body = await req.json();
 
-    // הוספת ה-supervisorId מהסשן באופן אוטומטי
+    // בדיקה נוספת: האם המדריכה קיימת?
+    if (!body.instructorId) {
+      return NextResponse.json(
+        { message: "לא ניתן להקים גן: לגננת האם הנבחרת אין מדריכה משויכת. יש לעדכן את פרטי הגננת תחילה." },
+        { status: 400 }
+      );
+    }
+
     const institutionData = {
       ...body,
       supervisorId: session.id,
@@ -62,13 +68,7 @@ export async function POST(req: Request) {
       institution: newInstitution,
     });
   } catch (error: any) {
-    console.error(error);
-    if (error.code === "P2002") {
-      return NextResponse.json(
-        { message: "מספר מוסד זה כבר קיים במערכת" },
-        { status: 400 }
-      );
-    }
-    return NextResponse.json({ message: "שגיאה ביצירת הגן" }, { status: 500 });
+    console.error("Institution Creation Error:", error);
+    return NextResponse.json({ message: error.message || "שגיאה ביצירת הגן" }, { status: 500 });
   }
 }

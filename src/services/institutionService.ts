@@ -9,8 +9,21 @@ export async function db_createInstitution(data: {
   instructorId: string;
   mainManagerId: string;
 }) {
+  // בדיקה שכל ה-IDs קיימים לפני השליחה
+  if (!data.supervisorId || !data.instructorId || !data.mainManagerId) {
+    throw new Error("חסר מידע קריטי: מפקחת, מדריכה או גננת אם לא הוגדרו כראוי.");
+  }
+
   return await prisma.institution.create({
-    data
+    data: {
+      name: data.name,
+      address: data.address,
+      institutionNumber: data.institutionNumber,
+      // שימוש ב-connect מבטיח שפריזמה תקשר את האובייקטים נכון
+      supervisor: { connect: { id: data.supervisorId } },
+      instructor: { connect: { id: data.instructorId } },
+      mainManager: { connect: { id: data.mainManagerId } },
+    }
   });
 }
 

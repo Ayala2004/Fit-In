@@ -59,7 +59,7 @@ export default function AddInstitutionModal({
     setLoading(true);
     const formData = new FormData(e.target);
     const selectedManager = managers.find((m) => m.id === selectedId);
-
+  console.log("Selected Manager Data:", selectedManager);
     const payload = {
       name: formData.get("name"),
       address: formData.get("address"),

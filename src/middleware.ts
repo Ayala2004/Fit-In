@@ -9,7 +9,8 @@ export async function middleware(request: NextRequest) {
   if (!session) {
     if (pathname.startsWith('/supervisor') || 
         pathname.startsWith('/instructor') || 
-        pathname.startsWith('/manager')) {
+        pathname.startsWith('/manager') ||
+        pathname.startsWith('/rotation')) { // <--- הוספנו הגנה על נתיב rotation
       return NextResponse.redirect(new URL('/login', request.url));
     }
     return NextResponse.next();
@@ -20,7 +21,6 @@ export async function middleware(request: NextRequest) {
   try {
     payload = await decrypt(session);
   } catch (e) {
-    // טוקן לא תקין או פג תוקף
     const res = NextResponse.redirect(new URL('/login', request.url));
     res.cookies.delete('session');
     return res;
@@ -31,6 +31,7 @@ export async function middleware(request: NextRequest) {
     if (payload.roles.includes('SUPERVISOR')) return NextResponse.redirect(new URL('/supervisor', request.url));
     if (payload.roles.includes('INSTRUCTOR')) return NextResponse.redirect(new URL('/instructor', request.url));
     if (payload.roles.includes('MANAGER')) return NextResponse.redirect(new URL('/manager', request.url));
+    if (payload.roles.includes('ROTATION')) return NextResponse.redirect(new URL('/rotation', request.url)); // <--- הוספנו ניתוב לרוטציה
   }
 
   // 4. הגנת נתיבים לפי תפקידים (Role Based Access Control)
@@ -43,6 +44,10 @@ export async function middleware(request: NextRequest) {
   if (pathname.startsWith('/manager') && !payload.roles.includes('MANAGER')) {
     return NextResponse.redirect(new URL(getHomePath(payload.roles), request.url));
   }
+  // <--- התנאי החדש עבור גננת רוטציה:
+  if (pathname.startsWith('/rotation') && !payload.roles.includes('ROTATION')) {
+    return NextResponse.redirect(new URL(getHomePath(payload.roles), request.url));
+  }
 
   return NextResponse.next();
 }
@@ -52,9 +57,10 @@ function getHomePath(roles: string[]) {
     if (roles.includes('SUPERVISOR')) return '/supervisor';
     if (roles.includes('INSTRUCTOR')) return '/instructor';
     if (roles.includes('MANAGER')) return '/manager';
+    if (roles.includes('ROTATION')) return '/rotation'; // <--- הוספנו כאן
     return '/';
 }
 
 export const config = {
-  matcher: ['/supervisor/:path*', '/instructor/:path*', '/manager/:path*', '/login'],
+  matcher: ['/supervisor/:path*', '/instructor/:path*', '/manager/:path*', '/rotation/:path*', '/login'],
 };

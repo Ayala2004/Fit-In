@@ -8,7 +8,11 @@ export async function GET(req: Request) {
   try {
     const session = await getSession();
     // שינוי 1: אפשור גישה למפקחת או מדריכה
-    if (!session || (!session.roles.includes("SUPERVISOR") && !session.roles.includes("INSTRUCTOR"))) {
+    if (
+      !session ||
+      (!session.roles.includes("SUPERVISOR") &&
+        !session.roles.includes("INSTRUCTOR"))
+    ) {
       return NextResponse.json({ message: "לא מורשה" }, { status: 401 });
     }
 
@@ -21,9 +25,13 @@ export async function GET(req: Request) {
       // אם זו מדריכה - נשלוף את ה-supervisorId מהפרופיל שלה
       const userProfile = await prisma.user.findUnique({
         where: { id: session.id },
-        select: { supervisorId: true }
+        select: { supervisorId: true },
       });
-      if (!userProfile?.supervisorId) return NextResponse.json({ message: "לא נמצא מחוז משויך" }, { status: 400 });
+      if (!userProfile?.supervisorId)
+        return NextResponse.json(
+          { message: "לא נמצא מחוז משויך" },
+          { status: 400 },
+        );
       targetSupervisorId = userProfile.supervisorId;
     }
 
@@ -31,21 +39,24 @@ export async function GET(req: Request) {
     const dateStr = searchParams.get("date");
 
     // שליפת גננות אם באותו מחוז
+
     const allManagers = await prisma.user.findMany({
       where: {
         roles: { has: "MANAGER" },
         isWorking: true,
-        supervisorId: targetSupervisorId // סינון לפי המחוז הנכון
+        supervisorId: targetSupervisorId,
       },
       select: {
         id: true,
         firstName: true,
         lastName: true,
+        instructorId: true, 
         mainManagedInstitutions: { select: { id: true, name: true } },
       },
     });
 
-    if (!dateStr) return NextResponse.json({ managers: allManagers, rotations: [] });
+    if (!dateStr)
+      return NextResponse.json({ managers: allManagers, rotations: [] });
 
     const selectedDate = new Date(dateStr);
     const dayOfWeek = format(selectedDate, "EEEE").toUpperCase();
@@ -56,23 +67,33 @@ export async function GET(req: Request) {
         roles: { has: "ROTATION" },
         isWorking: true,
         // רוטציות הן בדרך כלל כלל-מערכתיות או משויכות למפקחת
-        OR: [{ supervisorId: targetSupervisorId }, { supervisorId: null }]
+        OR: [{ supervisorId: targetSupervisorId }, { supervisorId: null }],
       },
       select: {
-        id: true, firstName: true, lastName: true,
+        id: true,
+        firstName: true,
+        lastName: true,
         fixedRotationsAsRotation: {
-            where: { day: dayOfWeek as any },
-            include: {
-                manager: {
-                    include: { mainManagedInstitutions: { select: { id: true, name: true } } }
-                }
-            }
-        }
+          where: { day: dayOfWeek as any },
+          include: {
+            manager: {
+              include: {
+                mainManagedInstitutions: { select: { id: true, name: true } },
+              },
+            },
+          },
+        },
       },
     });
 
-    return NextResponse.json({ managers: allManagers, rotations: allRotations });
+    return NextResponse.json({
+      managers: allManagers,
+      rotations: allRotations,
+    });
   } catch (error) {
-    return NextResponse.json({ message: "שגיאה בטעינת נתונים" }, { status: 500 });
+    return NextResponse.json(
+      { message: "שגיאה בטעינת נתונים" },
+      { status: 500 },
+    );
   }
 }

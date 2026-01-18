@@ -47,6 +47,7 @@ export default function InstructorNavbar() {
                 <span>לוח שיבוצים</span>
               </Link>
 
+
               {/* --- ההוספה עבור גננת אם --- */}
               {userRoles.includes("MANAGER") && (
                 <Link href="/manager" className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all text-purple-600 hover:bg-purple-50  ${isActive("/manager") ? "text-purple-600 hover:bg-purple-50 " : "text-purple-600 hover:bg-purple-50 "}`}>
