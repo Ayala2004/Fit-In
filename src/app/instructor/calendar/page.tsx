@@ -323,7 +323,7 @@ export default function InstructorCalendar() {
                       יום מנוחה
                     </div>
                   ) : (
-                    <div className="flex-1 space-y-2 overflow-y-auto overflow-x-hidden custom-calendar-scroll">
+                    <div className="flex-1 space-y-2 overflow-y-auto overflow-x-hidden custom-scrollbar">
                       {" "}
                       {dayPlacements.map((p: any) => {
                         const colorClass = getPlacementColor(p); // חישוב הצבע
@@ -331,7 +331,6 @@ export default function InstructorCalendar() {
                         return (
                           <div
                             key={p.id}
-                            // התיקון כאן: הסרנו את bg-white ו-border-slate-100 הקבועים והשתמשנו ב-colorClass
                             className={`group relative p-2 rounded-xl border shadow-sm hover:shadow-md transition-all cursor-pointer ${colorClass}`}
                             onClick={() => setEditingPlacement(p)}
                           >

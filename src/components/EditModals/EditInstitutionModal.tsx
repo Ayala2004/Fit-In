@@ -179,7 +179,7 @@ export default function EditInstitutionModal({
 
         <form
           onSubmit={handleSubmit}
-          className="p-8 space-y-8 overflow-y-auto custom-calendar-scroll"
+          className="p-8 space-y-8 overflow-y-auto custom-scrollbar"
         >
           {/* פרטי המוסד */}
           <section className="space-y-4">

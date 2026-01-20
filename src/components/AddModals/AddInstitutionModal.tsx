@@ -120,7 +120,7 @@ export default function AddInstitutionModal({
 
         <form
           onSubmit={handleSubmit}
-          className="flex-1 overflow-y-auto p-8 space-y-6 custom-calendar-scroll"
+          className="flex-1 overflow-y-auto p-8 space-y-6 custom-scrollbar"
         >
           {/* פרטי הגן */}
           <div className="space-y-4">
@@ -203,7 +203,7 @@ export default function AddInstitutionModal({
               />
             </div>
 
-            <div className="max-h-48 overflow-y-auto rounded-2xl border border-slate-100 bg-slate-50/50 custom-calendar-scroll">
+            <div className="max-h-48 overflow-y-auto rounded-2xl border border-slate-100 bg-slate-50/50 custom-scrollbar">
               {filteredManagers.length > 0 ? (
                 filteredManagers.map((m: any) => (
                   <div

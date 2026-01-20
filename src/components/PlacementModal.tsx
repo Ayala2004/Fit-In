@@ -156,7 +156,7 @@ export default function PlacementModal({
         </div>
 
         {/* List */}
-        <div className="flex-1 overflow-y-auto px-6 pb-8 space-y-2 mt-4 custom-calendar-scroll">
+        <div className="flex-1 overflow-y-auto px-6 pb-8 space-y-2 mt-4 custom-scrollbar">
           {loading ? (
             <LoadingScreen message="בודק זמינות מחליפות..." />
           ) : filteredSubstitutes.length === 0 ? (

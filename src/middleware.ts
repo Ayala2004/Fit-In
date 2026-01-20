@@ -10,13 +10,13 @@ export async function middleware(request: NextRequest) {
     if (pathname.startsWith('/supervisor') || 
         pathname.startsWith('/instructor') || 
         pathname.startsWith('/manager') ||
-        pathname.startsWith('/rotation')) { // <--- הוספנו הגנה על נתיב rotation
+        pathname.startsWith('/rotation') ||
+        pathname.startsWith('/substitute')) { 
       return NextResponse.redirect(new URL('/login', request.url));
     }
     return NextResponse.next();
   }
 
-  // 2. פענוח הטוקן
   let payload;
   try {
     payload = await decrypt(session);
@@ -26,15 +26,12 @@ export async function middleware(request: NextRequest) {
     return res;
   }
 
-  // 3. אם הוא מחובר ומנסה להיכנס ללוגין
+  // 3. ניתוב אוטומטי אם כבר מחוברים ומנסים להיכנס ללוגין
   if (pathname === '/login') {
-    if (payload.roles.includes('SUPERVISOR')) return NextResponse.redirect(new URL('/supervisor', request.url));
-    if (payload.roles.includes('INSTRUCTOR')) return NextResponse.redirect(new URL('/instructor', request.url));
-    if (payload.roles.includes('MANAGER')) return NextResponse.redirect(new URL('/manager', request.url));
-    if (payload.roles.includes('ROTATION')) return NextResponse.redirect(new URL('/rotation', request.url)); // <--- הוספנו ניתוב לרוטציה
+    return NextResponse.redirect(new URL(getHomePath(payload.roles), request.url));
   }
 
-  // 4. הגנת נתיבים לפי תפקידים (Role Based Access Control)
+  // 4. הגנת נתיבים לפי תפקידים (RBAC)
   if (pathname.startsWith('/supervisor') && !payload.roles.includes('SUPERVISOR')) {
     return NextResponse.redirect(new URL(getHomePath(payload.roles), request.url));
   }
@@ -44,23 +41,33 @@ export async function middleware(request: NextRequest) {
   if (pathname.startsWith('/manager') && !payload.roles.includes('MANAGER')) {
     return NextResponse.redirect(new URL(getHomePath(payload.roles), request.url));
   }
-  // <--- התנאי החדש עבור גננת רוטציה:
   if (pathname.startsWith('/rotation') && !payload.roles.includes('ROTATION')) {
+    return NextResponse.redirect(new URL(getHomePath(payload.roles), request.url));
+  }
+  // <--- הוספת הגנה לנתיב מחליפה:
+  if (pathname.startsWith('/substitute') && !payload.roles.includes('SUBSTITUTE')) {
     return NextResponse.redirect(new URL(getHomePath(payload.roles), request.url));
   }
 
   return NextResponse.next();
 }
 
-// פונקציית עזר למציאת הבית של המשתמש
 function getHomePath(roles: string[]) {
     if (roles.includes('SUPERVISOR')) return '/supervisor';
     if (roles.includes('INSTRUCTOR')) return '/instructor';
     if (roles.includes('MANAGER')) return '/manager';
-    if (roles.includes('ROTATION')) return '/rotation'; // <--- הוספנו כאן
+    if (roles.includes('ROTATION')) return '/rotation';
+    if (roles.includes('SUBSTITUTE')) return '/substitute'; 
     return '/';
 }
 
 export const config = {
-  matcher: ['/supervisor/:path*', '/instructor/:path*', '/manager/:path*', '/rotation/:path*', '/login'],
+  matcher: [
+    '/supervisor/:path*', 
+    '/instructor/:path*', 
+    '/manager/:path*', 
+    '/rotation/:path*', 
+    '/substitute/:path*', 
+    '/login'
+  ],
 };

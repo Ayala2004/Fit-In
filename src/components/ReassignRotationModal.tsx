@@ -72,7 +72,7 @@ export default function ReassignRotationModal({
         </button>
         </div>
 
-        <div className="p-6 flex-1 overflow-y-auto space-y-6 custom-calendar-scroll">
+        <div className="p-6 flex-1 overflow-y-auto space-y-6 custom-scrollbar">
           {brokenRotations.map((br: any) => {
             const dayNames: any = {
               SUNDAY: "ראשון",

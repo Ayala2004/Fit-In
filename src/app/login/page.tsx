@@ -34,10 +34,9 @@ export default function LoginPage() {
           router.push("/manager");
         } else if (user.roles.includes("ROTATION")) {
           // --- השינוי כאן: גננת רוטציה הולכת לממשק החדש ---
-          router.push("/rotation"); 
+          router.push("/rotation");
         } else if (user.roles.includes("SUBSTITUTE")) {
-          // גננת מחליפה נשארת ב-jobs (או ממשק עתידי שתבני)
-          router.push("/jobs");
+          router.push("/substitute");
         } else {
           router.push("/");
         }

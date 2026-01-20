@@ -209,7 +209,7 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }: any) {
 
         <form
           onSubmit={handleSubmit}
-          className="flex-1 overflow-y-auto p-8 space-y-8 custom-calendar-scroll"
+          className="flex-1 overflow-y-auto p-8 space-y-8 custom-scrollbar"
         >
           {/* תפקידים */}
           <div className="space-y-4">

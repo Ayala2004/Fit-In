@@ -354,7 +354,7 @@ export async function db_createPlacement(data: any) {
         notifyIds,
         "הזדמנות להחלפה",
         formatMessage({
-          prefix: "גננת יקרה",
+          prefix: "גננת  מחליפה יקרה",
           statusText: "יש לך הזדמנות להחליף",
           gardenName: institution.name,
           address: institution.address,
@@ -596,7 +596,7 @@ export async function db_assignSubstitute(
   await db_createNotification({
     userId: substituteId,
     title: "שיבוץ חדש עבורך",
-    message: `גננת יקרה, שובצת להחליף את ${mainName} בגן ${updatedPlacement.institution.name} בתאריך ${dateStr}.`,
+    message: `גננת מחליפה יקרה, שובצת להחליף את ${mainName} בגן ${updatedPlacement.institution.name} בתאריך ${dateStr}.`,
     type: "STATUS_UPDATE",
   });
 

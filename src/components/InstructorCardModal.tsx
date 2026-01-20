@@ -78,7 +78,7 @@ export default function InstructorPlacementsModal({
         </div>
 
         {/* Content */}
-        <div className="p-6 overflow-y-auto space-y-4 custom-calendar-scroll bg-slate-50/50">
+        <div className="p-6 overflow-y-auto space-y-4 custom-scrollbar bg-slate-50/50">
           {managers.length === 0 ? (
             <div className="text-center py-16 bg-white rounded-[2rem] border-2 border-dashed border-slate-100">
               <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-4">

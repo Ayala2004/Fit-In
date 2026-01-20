@@ -326,7 +326,7 @@ export default function EditUserModal({
 
         <form
           onSubmit={handleUpdate}
-          className="flex-1 overflow-y-auto p-8 space-y-8 custom-calendar-scroll"
+          className="flex-1 overflow-y-auto p-8 space-y-8 custom-scrollbar"
         >
           {/* פרטים אישיים */}
           <section className="space-y-4">

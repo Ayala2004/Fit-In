@@ -4,7 +4,7 @@ export default function InstructorLayout({ children }: { children: React.ReactNo
   return (
     <div className="min-h-screen bg-slate-50" dir="rtl">
       <InstructorNavbar />
-      <main className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8">
+      <main className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8 ">
         {children}
       </main>
     </div>

@@ -152,7 +152,7 @@ export default function CustomDropdown({
 
       {isOpen && (
         <div className="absolute z-[110] mt-2 right-0 w-full bg-white border border-slate-200 rounded-[2rem] shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200">
-          <div className="p-2 max-h-60 overflow-y-auto custom-calendar-scroll">
+          <div className="p-2 max-h-60 overflow-y-auto custom-scrollbar">
             {filteredOptions.length > 0 ? (
               filteredOptions.map((opt) => (
                 <button
