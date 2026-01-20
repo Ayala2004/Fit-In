@@ -32,7 +32,7 @@ export async function GET() {
         date: { gte: startOfDay(new Date()) }
       },
       include: {
-        institution: { select: { name: true } },
+        institution: { select: { name: true, address: true } },
         mainTeacher: { select: { firstName: true, lastName: true } },
         substitute: { select: { firstName: true, lastName: true } }
       },

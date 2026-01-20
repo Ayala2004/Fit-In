@@ -698,6 +698,249 @@ export async function PATCH() {
   }
 }
 ==============================
+FILE: src/app\api\rotation\dashboard\route.ts
+==============================
+import { NextResponse } from 'next/server';
+import { prisma } from '@/lib/prisma';
+import { getSession } from '@/lib/auth';
+import { startOfDay } from 'date-fns';
+
+export async function GET() {
+  const session = await getSession();
+  if (!session || !session.roles.includes('ROTATION')) {
+    return NextResponse.json({ message: "לא מורשה" }, { status: 401 });
+  }
+
+  try {
+    // 1. שליפת הלו"ז הקבוע (מאיזה גננות אם היא מקבלת ימי חופש)
+    const fixedSchedule = await prisma.fixedRotation.findMany({
+      where: { rotationTeacherId: session.id },
+      include: {
+        manager: {
+          include: {
+            mainManagedInstitutions: { select: { name: true, address: true, id: true } }
+          }
+        }
+      }
+    });
+
+    // 2. שליפת שיבוצים עתידיים שבהם היא רשומה (או כנעדרת או כמחליפה)
+    const placements = await prisma.placement.findMany({
+      where: {
+        OR: [
+          { mainTeacherId: session.id },
+          { substituteId: session.id }
+        ],
+        date: { gte: startOfDay(new Date()) }
+      },
+      include: {
+        institution: { select: { name: true } },
+        mainTeacher: { select: { firstName: true, lastName: true } },
+        substitute: { select: { firstName: true, lastName: true } }
+      },
+      orderBy: { date: 'asc' }
+    });
+
+    return NextResponse.json({
+      fixedSchedule,
+      placements
+    });
+  } catch (error) {
+    return NextResponse.json({ message: "שגיאת שרת" }, { status: 500 });
+  }
+}
+==============================
+FILE: src/app\api\rotation\report\route.ts
+==============================
+import { NextResponse } from 'next/server';
+import { prisma } from '@/lib/prisma';
+import { getSession } from '@/lib/auth';
+import { db_createPlacement } from '@/services/placementService';
+
+export async function POST(req: Request) {
+  const session = await getSession();
+  if (!session || !session.roles.includes('ROTATION')) {
+    return NextResponse.json({ message: "לא מורשה" }, { status: 401 });
+  }
+
+  try {
+    const { date } = await req.json(); // מקבל למשל "2024-05-19"
+    
+    // פתרון בעיית התאריך: פירוק המחרוזת ידנית כדי למנוע קפיצה ליום קודם בגלל שעות
+    const [year, month, day] = date.split('-').map(Number);
+    const selectedDate = new Date(year, month - 1, day, 12, 0, 0); // קובעים לשעה 12 בצהריים כדי להיות בטוחים
+    
+    const daysArray = ["SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"];
+    const dayIndex = selectedDate.getDay(); 
+    const dayOfWeek = daysArray[dayIndex];
+
+    // --- לוגים לדיבאג (יופיעו בטרמינל של ה-VS Code) ---
+    console.log("--- Absence Report Debug ---");
+    console.log("Input Date String:", date);
+    console.log("Calculated Day Name:", dayOfWeek);
+    console.log("User ID from Session:", session.id);
+    // -----------------------------------------------
+
+    // חיפוש בטבלה
+    const assignment = await prisma.fixedRotation.findFirst({
+      where: {
+        rotationTeacherId: session.id,
+        day: dayOfWeek as any
+      },
+      include: {
+        manager: {
+          include: { 
+            mainManagedInstitutions: true 
+          }
+        }
+      }
+    });
+
+    if (!assignment) {
+      console.log("RESULT: No assignment found in FixedRotation table for this user and day.");
+      return NextResponse.json({ 
+        message: `לא נמצא שיבוץ קבוע עבורך ליום ${dayOfWeek}. וודאי שאת רשומה כרוטציה אצל גננת אם ביום זה.` 
+      }, { status: 400 });
+    }
+
+    if (!assignment.manager.mainManagedInstitutions || assignment.manager.mainManagedInstitutions.length === 0) {
+      console.log("RESULT: Assignment found, but the Lead Teacher (Manager) has no institution assigned.");
+      return NextResponse.json({ 
+        message: `נמצא שאת משובצת אצל ${assignment.manager.firstName}, אך לא מוגדר עבורה גן במערכת.` 
+      }, { status: 400 });
+    }
+
+    const institutionId = assignment.manager.mainManagedInstitutions[0].id;
+
+    const newPlacement = await db_createPlacement({
+      date: selectedDate,
+      institutionId: institutionId,
+      mainTeacherId: session.id,
+      creatorRoles: session.roles,
+      status: "OPEN"
+    });
+
+    console.log("RESULT: Success! Placement created.");
+    return NextResponse.json(newPlacement);
+
+  } catch (error: any) {
+    console.error("CRITICAL ERROR:", error);
+    return NextResponse.json({ message: "שגיאת שרת פנימית: " + error.message }, { status: 500 });
+  }
+}
+==============================
+FILE: src/app\api\substitute\assign\route.ts
+==============================
+import { NextResponse } from 'next/server';
+import { prisma } from '@/lib/prisma';
+import { getSession } from '@/lib/auth';
+import { db_assignSubstitute } from '@/services/placementService';
+
+export async function POST(req: Request) {
+  const session = await getSession();
+  if (!session) return NextResponse.json({ message: "לא מורשה" }, { status: 401 });
+
+  try {
+    const { placementId } = await req.json();
+
+    // בדיקה שהשיבוץ עדיין פתוח
+    const placement = await prisma.placement.findUnique({
+      where: { id: placementId }
+    });
+
+    if (!placement || placement.status !== "OPEN") {
+      return NextResponse.json({ message: "אופס, מישהי כבר הקדימה אותך והשתבצה לגן זה." }, { status: 400 });
+    }
+
+    // שימוש ב-Service הקיים שלך לעדכון השיבוץ ושליחת התראות
+    const updated = await db_assignSubstitute(placementId, session.id, session.roles);
+
+    return NextResponse.json({ success: true, updated });
+  } catch (error: any) {
+    return NextResponse.json({ message: error.message }, { status: 500 });
+  }
+}
+==============================
+FILE: src/app\api\substitute\dashboard\route.ts
+==============================
+import { NextResponse } from 'next/server';
+import { prisma } from '@/lib/prisma';
+import { getSession } from '@/lib/auth';
+import { startOfDay } from 'date-fns';
+import { Day } from '@prisma/client';
+
+function getDayName(date: Date): Day {
+  const days: Day[] = [
+    Day.SUNDAY,
+    Day.MONDAY,
+    Day.TUESDAY,
+    Day.WEDNESDAY,
+    Day.THURSDAY,
+    Day.FRIDAY,
+    Day.SATURDAY,
+  ];
+  return days[date.getDay()];
+}
+
+
+export async function GET() {
+  const session = await getSession();
+  if (!session || !session.roles.includes('SUBSTITUTE')) {
+    return NextResponse.json({ message: "לא מורשה" }, { status: 401 });
+  }
+
+  try {
+    // 1. שליפת פרטי הגננת כדי לדעת מי המפקחת "האם" שלה
+    const subProfile = await prisma.user.findUnique({
+      where: { id: session.id },
+      select: { supervisorId: true, workDays: true }
+    });
+
+    // 2. שליפת שיבוצים קיימים שלה (הלו"ז החודשי שלה)
+    const mySchedule = await prisma.placement.findMany({
+      where: { substituteId: session.id, status: "ASSIGNED" },
+      include: {
+        institution: true,
+        mainTeacher: { select: { firstName: true, lastName: true } }
+      },
+      orderBy: { date: 'asc' }
+    });
+
+    // 3. שליפת כל הקריאות הפתוחות במערכת (מכל המחוזות)
+    const openJobs = await prisma.placement.findMany({
+      where: { 
+        status: "OPEN", 
+        date: { gte: startOfDay(new Date()) } 
+      },
+      include: {
+        institution: {
+          select: { name: true, address: true, supervisorId: true }
+        },
+        mainTeacher: { select: { firstName: true, lastName: true } }
+      }
+    });
+
+    // 4. לוגיקת עדיפות: סימון ומיון
+    const formattedJobs = openJobs.map(job => ({
+      ...job,
+      isPriority: job.institution.supervisorId === subProfile?.supervisorId,
+      matchesWorkDay: subProfile?.workDays.includes(getDayName(new Date(job.date)))
+    })).sort((a, b) => {
+      // קודם עדיפות למחוז הבית, אחר כך לפי תאריך
+      if (a.isPriority && !b.isPriority) return -1;
+      if (!a.isPriority && b.isPriority) return 1;
+      return new Date(a.date).getTime() - new Date(b.date).getTime();
+    });
+
+    return NextResponse.json({
+      mySchedule,
+      availableJobs: formattedJobs
+    });
+  } catch (error) {
+    return NextResponse.json({ message: "שגיאת שרת" }, { status: 500 });
+  }
+}
+==============================
 FILE: src/app\api\supervisor\dashboard\route.ts
 ==============================
 import { NextResponse } from 'next/server';
@@ -791,7 +1034,6 @@ export async function GET() {
   }
 }
 
-// ... ה-POST הקיים שלך נשאר מתחת ...
 export async function POST(req: Request) {
   try {
     const session = await getSession();
@@ -801,7 +1043,14 @@ export async function POST(req: Request) {
 
     const body = await req.json();
 
-    // הוספת ה-supervisorId מהסשן באופן אוטומטי
+    // בדיקה נוספת: האם המדריכה קיימת?
+    if (!body.instructorId) {
+      return NextResponse.json(
+        { message: "לא ניתן להקים גן: לגננת האם הנבחרת אין מדריכה משויכת. יש לעדכן את פרטי הגננת תחילה." },
+        { status: 400 }
+      );
+    }
+
     const institutionData = {
       ...body,
       supervisorId: session.id,
@@ -814,14 +1063,8 @@ export async function POST(req: Request) {
       institution: newInstitution,
     });
   } catch (error: any) {
-    console.error(error);
-    if (error.code === "P2002") {
-      return NextResponse.json(
-        { message: "מספר מוסד זה כבר קיים במערכת" },
-        { status: 400 }
-      );
-    }
-    return NextResponse.json({ message: "שגיאה ביצירת הגן" }, { status: 500 });
+    console.error("Institution Creation Error:", error);
+    return NextResponse.json({ message: error.message || "שגיאה ביצירת הגן" }, { status: 500 });
   }
 }
 
@@ -911,7 +1154,11 @@ export async function GET(req: Request) {
   try {
     const session = await getSession();
     // שינוי 1: אפשור גישה למפקחת או מדריכה
-    if (!session || (!session.roles.includes("SUPERVISOR") && !session.roles.includes("INSTRUCTOR"))) {
+    if (
+      !session ||
+      (!session.roles.includes("SUPERVISOR") &&
+        !session.roles.includes("INSTRUCTOR"))
+    ) {
       return NextResponse.json({ message: "לא מורשה" }, { status: 401 });
     }
 
@@ -924,9 +1171,13 @@ export async function GET(req: Request) {
       // אם זו מדריכה - נשלוף את ה-supervisorId מהפרופיל שלה
       const userProfile = await prisma.user.findUnique({
         where: { id: session.id },
-        select: { supervisorId: true }
+        select: { supervisorId: true },
       });
-      if (!userProfile?.supervisorId) return NextResponse.json({ message: "לא נמצא מחוז משויך" }, { status: 400 });
+      if (!userProfile?.supervisorId)
+        return NextResponse.json(
+          { message: "לא נמצא מחוז משויך" },
+          { status: 400 },
+        );
       targetSupervisorId = userProfile.supervisorId;
     }
 
@@ -934,21 +1185,24 @@ export async function GET(req: Request) {
     const dateStr = searchParams.get("date");
 
     // שליפת גננות אם באותו מחוז
+
     const allManagers = await prisma.user.findMany({
       where: {
         roles: { has: "MANAGER" },
         isWorking: true,
-        supervisorId: targetSupervisorId // סינון לפי המחוז הנכון
+        supervisorId: targetSupervisorId,
       },
       select: {
         id: true,
         firstName: true,
         lastName: true,
+        instructorId: true, 
         mainManagedInstitutions: { select: { id: true, name: true } },
       },
     });
 
-    if (!dateStr) return NextResponse.json({ managers: allManagers, rotations: [] });
+    if (!dateStr)
+      return NextResponse.json({ managers: allManagers, rotations: [] });
 
     const selectedDate = new Date(dateStr);
     const dayOfWeek = format(selectedDate, "EEEE").toUpperCase();
@@ -959,26 +1213,37 @@ export async function GET(req: Request) {
         roles: { has: "ROTATION" },
         isWorking: true,
         // רוטציות הן בדרך כלל כלל-מערכתיות או משויכות למפקחת
-        OR: [{ supervisorId: targetSupervisorId }, { supervisorId: null }]
+        OR: [{ supervisorId: targetSupervisorId }, { supervisorId: null }],
       },
       select: {
-        id: true, firstName: true, lastName: true,
+        id: true,
+        firstName: true,
+        lastName: true,
         fixedRotationsAsRotation: {
-            where: { day: dayOfWeek as any },
-            include: {
-                manager: {
-                    include: { mainManagedInstitutions: { select: { id: true, name: true } } }
-                }
-            }
-        }
+          where: { day: dayOfWeek as any },
+          include: {
+            manager: {
+              include: {
+                mainManagedInstitutions: { select: { id: true, name: true } },
+              },
+            },
+          },
+        },
       },
     });
 
-    return NextResponse.json({ managers: allManagers, rotations: allRotations });
+    return NextResponse.json({
+      managers: allManagers,
+      rotations: allRotations,
+    });
   } catch (error) {
-    return NextResponse.json({ message: "שגיאה בטעינת נתונים" }, { status: 500 });
+    return NextResponse.json(
+      { message: "שגיאה בטעינת נתונים" },
+      { status: 500 },
+    );
   }
 }
+
 ==============================
 FILE: src/app\api\supervisor\placements\route.ts
 ==============================
@@ -2021,17 +2286,17 @@ body {
   }
 
   /* גלגלת עדינה לתיבות בלוח השנה */
-  .custom-calendar-scroll::-webkit-scrollbar {
+  .custom-scrollbar::-webkit-scrollbar {
     width: 4px;
   }
-  .custom-calendar-scroll::-webkit-scrollbar-track {
+  .custom-scrollbar::-webkit-scrollbar-track {
     background: transparent;
   }
-  .custom-calendar-scroll::-webkit-scrollbar-thumb {
+  .custom-scrollbar::-webkit-scrollbar-thumb {
     background: #e2e8f0; /* slate-200 */
     border-radius: 10px;
   }
-  .custom-calendar-scroll::-webkit-scrollbar-thumb:hover {
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
     background: #6366f1; /* indigo-500 */
   }
 }
@@ -2170,6 +2435,26 @@ body {
 .group:hover .tooltip-add-models {
   @apply opacity-100 scale-100;
 }
+/* 
+.custom-scrollbar {
+  scrollbar-width: thin; 
+  scrollbar-color: rgba(0,0,0,0.2) transparent; 
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px; 
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent; 
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background-color: rgba(0,0,0,0.15); 
+  border-radius: 9999px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(0,0,0,0.25);
+} */
+
 ==============================
 FILE: src/app\instructor\calendar\page.tsx
 ==============================
@@ -2498,7 +2783,7 @@ export default function InstructorCalendar() {
                       יום מנוחה
                     </div>
                   ) : (
-                    <div className="flex-1 space-y-2 overflow-y-auto overflow-x-hidden custom-calendar-scroll">
+                    <div className="flex-1 space-y-2 overflow-y-auto overflow-x-hidden custom-scrollbar">
                       {" "}
                       {dayPlacements.map((p: any) => {
                         const colorClass = getPlacementColor(p); // חישוב הצבע
@@ -2506,7 +2791,6 @@ export default function InstructorCalendar() {
                         return (
                           <div
                             key={p.id}
-                            // התיקון כאן: הסרנו את bg-white ו-border-slate-100 הקבועים והשתמשנו ב-colorClass
                             className={`group relative p-2 rounded-xl border shadow-sm hover:shadow-md transition-all cursor-pointer ${colorClass}`}
                             onClick={() => setEditingPlacement(p)}
                           >
@@ -2697,7 +2981,7 @@ export default function InstructorLayout({ children }: { children: React.ReactNo
   return (
     <div className="min-h-screen bg-slate-50" dir="rtl">
       <InstructorNavbar />
-      <main className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8">
+      <main className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8 ">
         {children}
       </main>
     </div>
@@ -3167,17 +3451,18 @@ export default function LoginPage() {
       if (res.ok) {
         const user = await res.json();
 
+        // סדר העדיפויות לניתוב (לפי חוזק התפקיד)
         if (user.roles.includes("SUPERVISOR")) {
           router.push("/supervisor");
         } else if (user.roles.includes("INSTRUCTOR")) {
           router.push("/instructor");
         } else if (user.roles.includes("MANAGER")) {
-          router.push("/manager"); // נבנה בהמשך
-        } else if (
-          user.roles.includes("SUBSTITUTE") ||
-          user.roles.includes("ROTATION")
-        ) {
-          router.push("/jobs"); // נבנה בהמשך
+          router.push("/manager");
+        } else if (user.roles.includes("ROTATION")) {
+          // --- השינוי כאן: גננת רוטציה הולכת לממשק החדש ---
+          router.push("/rotation");
+        } else if (user.roles.includes("SUBSTITUTE")) {
+          router.push("/substitute");
         } else {
           router.push("/");
         }
@@ -3197,8 +3482,9 @@ export default function LoginPage() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-gray-50">
       <div className="w-full max-w-md p-8 space-y-6 bg-white rounded-xl shadow-lg">
+        {/* שיניתי את הכותרת לכללית יותר */}
         <h1 className="text-2xl font-bold text-center text-gray-900">
-          כניסת מפקחים
+          כניסה למערכת FitIn
         </h1>
 
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -3235,7 +3521,7 @@ export default function LoginPage() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full px-4 py-2 text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:bg-blue-300 transition-colors"
+            className="w-full px-4 py-2 text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:bg-blue-300 transition-colors font-bold"
           >
             {loading ? "מתחבר..." : "התחבר"}
           </button>
@@ -3803,6 +4089,613 @@ export default function ReportAbsencePage() {
   );
 }
 ==============================
+FILE: src/app\rotation\layout.tsx
+==============================
+import RotationNavbar from "@/components/NavBars/RotationNavbar";
+
+export default function RotationLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="min-h-screen bg-[#F8FAFC]" dir="rtl">
+      {/* תפריט ניווט לגננת רוטציה */}
+      <RotationNavbar /> 
+      
+      {/* תוכן העמוד המרכזי */}
+      <main className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8">
+        {children}
+      </main>
+    </div>
+  );
+}
+==============================
+FILE: src/app\rotation\page.tsx
+==============================
+"use client";
+import { useEffect, useState } from "react";
+import {
+  Calendar,
+  MapPin,
+  Clock,
+  User,
+  AlertCircle,
+  CheckCircle2,
+  ArrowLeftRight,
+  Plus,
+  ChevronLeft,
+  Building2,
+  RefreshCcwDot
+} from "lucide-react";
+import LoadingScreen from "@/components/ui/LoadingScreen";
+import CustomDatePicker from "@/components/ui/CustomDatePicker";
+
+// תרגום ימים
+const dayMap: any = {
+  SUNDAY: "ראשון",
+  MONDAY: "שני",
+  TUESDAY: "שלישי",
+  WEDNESDAY: "רביעי",
+  THURSDAY: "חמישי",
+  FRIDAY: "שישי",
+};
+
+export default function RotationDashboard() {
+  const [data, setData] = useState<any>(null);
+  const [user, setUser] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [reportDate, setReportDate] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  const loadDashboard = async () => {
+    try {
+      const [dbRes, userRes] = await Promise.all([
+        fetch("/api/rotation/dashboard"),
+        fetch("/api/auth/me"),
+      ]);
+      if (dbRes.ok && userRes.ok) {
+        setData(await dbRes.json());
+        setUser(await userRes.json());
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadDashboard();
+  }, []);
+
+  const handleReportAbsence = async (e: any) => {
+    e.preventDefault();
+    if (!reportDate) return;
+    setSubmitting(true);
+    try {
+      const res = await fetch("/api/rotation/report", {
+        method: "POST",
+        body: JSON.stringify({ date: reportDate }),
+        headers: { "Content-Type": "application/json" },
+      });
+      if (res.ok) {
+        setIsModalOpen(false);
+        setReportDate("");
+        loadDashboard();
+      } else {
+        const err = await res.json();
+        alert(err.message);
+      }
+    } catch (e) {
+      alert("שגיאה בתקשורת");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  if (loading) return <LoadingScreen message="טוען את סידור העבודה שלך..." />;
+
+  // מציאת הגן של היום לפי הלו"ז הקבוע
+  const todayName = new Date()
+    .toLocaleDateString("en-US", { weekday: "long" })
+    .toUpperCase();
+  const todayFixedAssignment = data?.fixedSchedule?.find(
+    (s: any) => s.day === todayName,
+  );
+
+  // בדיקה האם יש שיבוץ מיוחד להיום (החלפה פנימית או מחליפה שנכנסה במקומי)
+  const todayPlacement = data?.placements?.find(
+    (p: any) => new Date(p.date).toDateString() === new Date().toDateString(),
+  );
+
+  const getTodayStatus = () => {
+    const today = new Date();
+    const dayNameEn = today
+      .toLocaleDateString("en-US", { weekday: "long" })
+      .toUpperCase();
+
+    // 1. חיפוש שיבוץ בפועל בטבלת Placements (היעדרות שלי או החלפה שאני עושה)
+    const todayAct = data?.placements?.find(
+      (p: any) => new Date(p.date).toDateString() === today.toDateString(),
+    );
+
+    // 2. חיפוש גן קבוע בלו"ז
+    const fixed = data?.fixedSchedule?.find((s: any) => s.day === dayNameEn);
+
+    // מקרה א': דיווחתי על היעדרות (אני ה-mainTeacher בשיבוץ)
+    if (todayAct && todayAct.mainTeacherId === user?.id) {
+      return {
+        title: "דיווחת על היעדרות",
+        sub: todayAct.institution?.name || "בגן הקבוע שלך",
+        type: "ABSENT",
+        color: "bg-red-50 border-red-200 text-red-700",
+        icon: <AlertCircle size={32} />,
+      };
+    }
+
+    // מקרה ב': אני רשומה כמחליפה (מישהו ביקש ממני להגיע, או החלפה פנימית)
+    if (todayAct && todayAct.substituteId === user?.id) {
+      return {
+        title: `מילוי מקום: ${todayAct.institution?.name}`,
+        sub: todayAct.institution?.address,
+        type: "SPECIAL",
+        color: "bg-purple-50 border-purple-200 text-purple-700",
+        icon: <ArrowLeftRight size={32} />,
+      };
+    }
+
+    // מקרה ג': יום עבודה רגיל בגן הקבוע
+    if (fixed) {
+      const inst = fixed.manager.mainManagedInstitutions[0];
+      return {
+        title: inst?.name || "גן קבוע",
+        sub: inst?.address || "כתובת לא הוזנה",
+        type: "FIXED",
+        color: "bg-white border-indigo-100 text-slate-800",
+        icon: <Building2 size={32} />,
+      };
+    }
+
+    // מקרה ד': יום חופשי (אין גן קבוע ואין שיבוץ מיוחד)
+    return {
+      title: "יום חופשי",
+      sub: "לא מוגדר גן ליום זה",
+      type: "FREE",
+      color: "bg-slate-50 border-slate-200 text-slate-500",
+      icon: <Clock size={32} />,
+    };
+  };
+
+  const status = getTodayStatus();
+
+  return (
+    <div className="space-y-8 animate-in fade-in duration-500 pb-12">
+      {/* Header */}
+      <header className="flex flex-col md:flex-row md:items-center justify-between gap-6 pb-6 border-b border-slate-200">
+        <div>
+          <h1 className="text-3xl font-black text-slate-900">
+            שלום, {user?.name?.split(" ")[0]} 👋
+          </h1>
+          <p className="text-slate-500 font-medium">
+            מרכז ניהול אישי לגננת רוטציה
+          </p>
+        </div>
+        <button
+          onClick={() => setIsModalOpen(true)}
+          className="bg-indigo-600 text-white px-6 py-3 rounded-2xl font-black shadow-lg hover:bg-indigo-700 transition-all flex items-center gap-2"
+        >
+          <Plus size={20} /> דיווח היעדרות
+        </button>
+      </header>
+
+      {/* Hero Section: איפה אני היום? */}
+      <section
+        className={`rounded-[2.5rem] p-8 border-2 shadow-xl shadow-indigo-100/20 relative overflow-hidden transition-all ${status.color}`}
+      >
+        <div className="flex flex-col md:flex-row justify-between items-center gap-6 relative z-10">
+          <div className="flex items-center gap-6 text-right w-full md:w-auto">
+            <div
+              className={`w-16 h-16 rounded-2xl flex items-center justify-center shadow-lg shrink-0 ${
+                status.type === "FIXED"
+                  ? "bg-indigo-600 text-white"
+                  : status.type === "ABSENT"
+                    ? "bg-red-500 text-white"
+                    : status.type === "SPECIAL"
+                      ? "bg-purple-600 text-white"
+                      : "bg-slate-300 text-white"
+              }`}
+            >
+              {status.icon}
+            </div>
+            <div>
+              <p className="font-black text-[10px] uppercase tracking-[0.15em] opacity-60 mb-1">
+                {status.type === "FIXED"
+                  ? "הגן הקבוע שלי להיום:"
+                  : status.type === "SPECIAL"
+                    ? "שיבוץ מיוחד להיום:"
+                    : status.type === "ABSENT"
+                      ? "סטטוס נוכחות:"
+                      : "היום שלך:"}
+              </p>
+              <h2 className="text-3xl font-black leading-tight">
+                {status.title}
+              </h2>
+              <div className="flex items-center gap-2 mt-1 opacity-80 font-bold text-sm">
+                {status.type !== "FREE" && <MapPin size={14} />}
+                <span>{status.sub}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* כפתור מהיר / תג סטטוס */}
+          <div className="bg-white/50 backdrop-blur-sm px-6 py-4 rounded-3xl border border-black/5 flex items-center gap-3">
+            <div
+              className={`w-2.5 h-2.5 rounded-full animate-pulse ${
+                status.type === "ABSENT" ? "bg-red-500" : "bg-emerald-500"
+              }`}
+            />
+            <span className="font-black text-sm uppercase">
+              {status.type === "ABSENT" ? "לא בעבודה" : "פעילה במערכת"}
+            </span>
+          </div>
+        </div>
+
+        {/* עיטור רקע עדין */}
+        <div className="absolute -bottom-6 -left-6 opacity-[0.03] pointer-events-none">
+          {status.icon}
+        </div>
+      </section>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        {/* הלו"ז השבועי הקבוע שלי */}
+        <div className="lg:col-span-2 space-y-6">
+          <h2 className="text-xl font-black text-slate-800 flex items-center gap-2">
+            <div className="w-1.5 h-6 bg-indigo-600 rounded-full" />
+            לו"ז שבועי קבוע
+          </h2>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {Object.keys(dayMap).map((dayKey) => {
+              const assignment = data.fixedSchedule.find(
+                (s: any) => s.day === dayKey,
+              );
+              return (
+                <div
+                  key={dayKey}
+                  className={`p-5 rounded-3xl border transition-all ${assignment ? "bg-white border-slate-200" : "bg-slate-50/50 border-dashed border-slate-200 opacity-60"}`}
+                >
+                  <div className="flex justify-between items-start mb-3">
+                    <span className="font-black text-indigo-600 text-sm">
+                      יום {dayMap[dayKey]}
+                    </span>
+                    {assignment && (
+                      <Clock size={16} className="text-slate-300" />
+                    )}
+                  </div>
+                  {assignment ? (
+                    <div>
+                      <p className="font-black text-slate-800">
+                        {assignment.manager.mainManagedInstitutions[0]?.name}
+                      </p>
+                      <p className="text-xs text-slate-400 font-bold mt-1 flex items-center gap-1">
+                        <User size={12} /> גננת אם:{" "}
+                        {assignment.manager.firstName}{" "}
+                        {assignment.manager.lastName}
+                      </p>
+                    </div>
+                  ) : (
+                    <p className="text-slate-400 text-xs font-bold italic">
+                      יום חופשי / ללא שיבוץ קבוע
+                    </p>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* עדכונים ושינויים */}
+        <div className="space-y-6">
+          <h2 className="text-xl font-black text-slate-800 flex items-center gap-2">
+            <RefreshCcwDot  size={22} className="text-slate-400" />
+            שינויים ועדכונים
+          </h2>
+
+          <div className="bg-white rounded-[2rem] border border-slate-200 shadow-sm overflow-hidden flex flex-col min-h-[400px]">
+            <div className="p-6 space-y-5 flex-1">
+              {data.placements.length > 0 ? (
+                data.placements.map((p: any, idx: number) => (
+                  <div key={p.id} className="relative pr-6 py-1 group">
+                    <div
+                      className={`absolute right-[-4px] top-2 w-2.5 h-2.5 rounded-full border-2 border-white shadow-sm ring-4 ring-white ${p.mainTeacherId === user.id ? "bg-red-400" : "bg-indigo-400"}`}
+                    ></div>
+                    <p className="text-[13.5px] font-bold text-slate-700 leading-relaxed">
+                      {p.mainTeacherId === user.id
+                        ? `היעדרות מדווחת ב-${new Date(p.date).toLocaleDateString("he-IL")}`
+                        : `החלפת את ${p.mainTeacher.firstName} ב-${new Date(p.date).toLocaleDateString("he-IL")}`}
+                    </p>
+                    <p className="text-[11px] text-slate-400 font-bold mt-0.5 uppercase tracking-tighter">
+                      גן: {p.institution.name}
+                    </p>
+                  </div>
+                ))
+              ) : (
+                <div className="text-center py-10 text-slate-400 font-bold italic text-sm">
+                  אין שינויים עתידיים
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* מודאל דיווח היעדרות */}
+      {isModalOpen && (
+        <div className="fixed inset-0 z-[150] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">
+          <div className="bg-white w-full max-w-md rounded-[2.5rem] shadow-2xl overflow-hidden border border-slate-100 animate-in zoom-in-95 duration-200">
+            <div className="p-8 bg-slate-900 text-white flex justify-between items-center">
+              <h2 className="text-2xl font-black">דיווח על היעדרות</h2>
+              <button onClick={() => setIsModalOpen(false)}>
+                <Plus size={24} className="rotate-45" />
+              </button>
+            </div>
+            <form onSubmit={handleReportAbsence} className="p-8 space-y-6">
+              <CustomDatePicker
+                label="בחרי את תאריך ההיעדרות"
+                value={reportDate}
+                onChange={setReportDate}
+                allowFutureDates={true}
+              />
+              <div className="bg-amber-50 p-4 rounded-2xl border border-amber-100 flex gap-3 items-start">
+                <AlertCircle className="text-amber-500 shrink-0" size={18} />
+                <p className="text-xs text-amber-800 font-bold leading-relaxed">
+                  שימי לב: המערכת תזהה אוטומטית באיזה גן את אמורה להיות ביום זה
+                  ותשלח התראה למנהלת הגן ולמפקחת.
+                </p>
+              </div>
+              <button
+                type="submit"
+                disabled={submitting || !reportDate}
+                className="w-full py-5 bg-indigo-600 text-white rounded-2xl font-black shadow-lg disabled:bg-slate-200"
+              >
+                {submitting ? "מעדכן..." : "שליחת דיווח"}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+==============================
+FILE: src/app\substitute\layout.tsx
+==============================
+import SubstituteNavbar from "@/components/NavBars/SubstituteNavbar";
+
+export default function SubstituteLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="min-h-screen bg-[#F8FAFC]" dir="rtl">
+      <SubstituteNavbar /> 
+      <main className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8  max-h-[90vh] overflow-y-hidden ">
+        {children}
+      </main>
+    </div>
+  );
+}
+==============================
+FILE: src/app\substitute\page.tsx
+==============================
+"use client";
+import { useEffect, useState } from "react";
+import {
+  Briefcase,
+  MapPin,
+  Calendar as CalendarIcon,
+  User,
+  Star,
+  CheckCircle2,
+  ChevronLeft,
+  Info,
+  Clock,
+  Building2,
+  RefreshCcwDot,
+  CalendarCheck,
+} from "lucide-react";
+import LoadingScreen from "@/components/ui/LoadingScreen";
+
+export default function SubstituteDashboard() {
+  const [data, setData] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+
+  const loadData = async () => {
+    try {
+      const res = await fetch("/api/substitute/dashboard");
+      if (res.ok) setData(await res.json());
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  const handleAssign = async (placementId: string) => {
+    if (!confirm("האם את בטוחה שברצונך להשתבץ לגן זה?")) return;
+    try {
+      const res = await fetch("/api/substitute/assign", {
+        method: "POST",
+        body: JSON.stringify({ placementId }),
+        headers: { "Content-Type": "application/json" },
+      });
+      if (res.ok) {
+        alert("השיבוץ בוצע בהצלחה! הודעה נשלחה לגננת האם ולמפקחת.");
+        loadData();
+      } else {
+        const err = await res.json();
+        alert(err.message);
+      }
+    } catch (e) {
+      alert("שגיאת תקשורת");
+    }
+  };
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  if (loading) return <LoadingScreen message="מחפש עבורך הזדמנויות החלפה..." />;
+
+  return (
+<div className="space-y-10 animate-in fade-in duration-500 pb-20">
+  {/* Header */}
+  <div className="flex flex-col gap-2">
+    <h1 className="text-3xl font-black text-slate-900">מרכז שיבוצים</h1>
+    <p className="text-slate-500 font-medium">
+      כאן תוכלי למצוא גנים שצריכים אותך ולהשתבץ בלחיצת כפתור
+    </p>
+  </div>
+
+  <div className="grid grid-cols-1 lg:grid-cols-3 gap-10">
+    {/* עמודה מרכזית: הזדמנויות החלפה */}
+    <div className="lg:col-span-2 flex flex-col bg-white rounded-2xl border border-slate-200 shadow-sm max-h-[63vh]">
+      <h2 className="text-xl font-black text-slate-800 flex items-center gap-3 p-6">
+        <div className="w-2 h-6 bg-indigo-600 rounded-full" />
+        הזדמנויות החלפה פנויות
+      </h2>
+
+      <div className="flex-1 p-6 space-y-4 overflow-y-auto custom-scrollbar">
+        {data.availableJobs.length > 0 ? (
+          data.availableJobs.map((job: any) => (
+            <div
+              key={job.id}
+              className="group bg-white p-6 rounded-xl border border-indigo-200 shadow-sm relative overflow-hidden transition-all"
+            >
+              <div className="absolute top-0 right-0 bg-slate-100 px-3 py-1.5  rounded-lg text-slate-700 font-semibold text-sm flex items-center gap-2">
+                <CalendarIcon size={16} />
+                {new Date(job.date).toLocaleDateString("he-IL", {
+                  weekday: "long",
+                  day: "numeric",
+                  month: "numeric",
+                })}
+              </div>
+
+              <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 mt-4 md:mt-0">
+                <div className="flex items-center gap-4 mt-4">
+                 
+                  <div>
+                    <h3 className="text-lg font-semibold text-slate-800">
+                      {job.institution.name}
+                    </h3>
+                    <div className="flex items-center gap-2 text-sm text-slate-500 font-medium mt-1">
+                      <MapPin size={14} className="text-indigo-500" />
+                      <span>{job.institution.address}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex flex-col items-end gap-2 w-full md:w-auto">
+                  <button
+                    onClick={() => handleAssign(job.id)}
+                    className="
+                      inline-flex items-center justify-center gap-2
+                      px-6 py-2.5
+                      bg-indigo-600 text-white
+                      text-sm font-semibold
+                      rounded-xl
+                      shadow-sm
+                      hover:bg-indigo-700
+                      focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:ring-offset-2
+                      transition-all duration-200
+                      active:scale-[0.98]
+                    "
+                  >
+                    אני רוצה להחליף
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))
+        ) : (
+          <div className="bg-slate-50 p-16 rounded-2xl border-2 border-dashed border-slate-200 text-center">
+            <Info className="mx-auto text-slate-300 mb-4" size={48} />
+            <p className="text-slate-500 font-bold">
+              אין כרגע קריאות פתוחות במערכת.
+            </p>
+          </div>
+        )}
+      </div>
+    </div>
+
+    {/* עמודה צדדית: השיבוצים שלי */}
+    <div className="flex flex-col bg-white rounded-2xl border border-slate-200 shadow-sm max-h-[63vh]">
+      <h2 className="text-xl font-black text-slate-800 flex items-center gap-3 p-6">
+        <CalendarCheck size={22} className="text-slate-400" />
+        השיבוצים שלך
+      </h2>
+
+      <div className="flex-1 p-6 space-y-4 overflow-y-auto custom-scrollbar">
+        {data.mySchedule.length > 0 ? (
+          data.mySchedule
+            .filter((p: any) => {
+              const d = new Date(p.date);
+              d.setHours(0, 0, 0, 0);
+              return d >= today;
+            })
+            .map((p: any) => (
+              <div key={p.id} className="flex gap-4 group">
+                <div className="flex flex-col items-center">
+                  <div className="w-10 h-10 bg-emerald-50 text-emerald-600 rounded-xl flex items-center justify-center font-bold text-xs shadow-sm group-hover:bg-emerald-600 group-hover:text-white transition-all">
+                    {new Date(p.date).getDate()}
+                  </div>
+                  <div className="w-0.5 h-full bg-slate-100 mt-2"></div>
+                </div>
+                <div className="flex-1 pb-8">
+                  <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-tighter">
+                    {new Date(p.date).toLocaleDateString("he-IL", { month: "long" })}
+                  </p>
+                  <h4 className="font-semibold text-slate-800 leading-tight">
+                    {p.institution.name}
+                  </h4>
+                  <p className="text-xs text-slate-500 font-medium mt-1">
+                    החלפה עבור: {p.mainTeacher.firstName} {p.mainTeacher.lastName}
+                  </p>
+                  <div className="mt-2 flex items-center gap-1.5 text-[10px] text-indigo-600 font-medium">
+                    <MapPin size={10} /> {p.institution.address}
+                  </div>
+                </div>
+              </div>
+            ))
+        ) : (
+          <div className="text-center py-20">
+            <p className="text-slate-400 font-bold italic text-sm">
+              טרם נקבעו לך שיבוצים
+            </p>
+          </div>
+        )}
+      </div>
+
+      <footer className="p-5 bg-slate-50 border-b rounded-2xl border-slate-100">
+        <p className="text-[10px] text-red-400 font-extrabold leading-relaxed">
+          * במידה ואינך יכולה להגיע לשיבוץ שנקבע, יש ליצור קשר עם המפקחת בהקדם.
+        </p>
+      </footer>
+    </div>
+  </div>
+</div>
+
+  );
+}
+
+==============================
 FILE: src/app\supervisor\calendar\page.tsx
 ==============================
 "use client";
@@ -4164,7 +5057,7 @@ export default function SupervisorCalendar() {
                       יום מנוחה
                     </div>
                   ) : (
-                    <div className="flex-1 space-y-2 overflow-y-auto overflow-x-hidden custom-calendar-scroll">
+                    <div className="flex-1 space-y-2 overflow-y-auto overflow-x-hidden custom-scrollbar">
                       {" "}
                       {dayPlacements.map((p: any) => {
                         const colorClass = getPlacementColor(p); // חישוב הצבע
@@ -6210,7 +7103,7 @@ export default function AddInstitutionModal({
     setLoading(true);
     const formData = new FormData(e.target);
     const selectedManager = managers.find((m) => m.id === selectedId);
-
+  console.log("Selected Manager Data:", selectedManager);
     const payload = {
       name: formData.get("name"),
       address: formData.get("address"),
@@ -6271,7 +7164,7 @@ export default function AddInstitutionModal({
 
         <form
           onSubmit={handleSubmit}
-          className="flex-1 overflow-y-auto p-8 space-y-6 custom-calendar-scroll"
+          className="flex-1 overflow-y-auto p-8 space-y-6 custom-scrollbar"
         >
           {/* פרטי הגן */}
           <div className="space-y-4">
@@ -6354,7 +7247,7 @@ export default function AddInstitutionModal({
               />
             </div>
 
-            <div className="max-h-48 overflow-y-auto rounded-2xl border border-slate-100 bg-slate-50/50 custom-calendar-scroll">
+            <div className="max-h-48 overflow-y-auto rounded-2xl border border-slate-100 bg-slate-50/50 custom-scrollbar">
               {filteredManagers.length > 0 ? (
                 filteredManagers.map((m: any) => (
                   <div
@@ -6642,7 +7535,7 @@ export default function AddPlacementModal({
 
         <form
           onSubmit={handleSubmit}
-          className="flex-1 overflow-y-auto p-8 space-y-8 custom-calendar-scroll"
+          className="flex-1 overflow-y-auto p-8 space-y-8 custom-scrollbar"
         >
           {/* בחירת סוג גננת (Tabs) */}
           <div className="space-y-4">
@@ -7328,7 +8221,7 @@ export default function AddUserModal({ isOpen, onClose, onSuccess }: any) {
 
         <form
           onSubmit={handleSubmit}
-          className="flex-1 overflow-y-auto p-8 space-y-8 custom-calendar-scroll"
+          className="flex-1 overflow-y-auto p-8 space-y-8 custom-scrollbar"
         >
           {/* תפקידים */}
           <div className="space-y-4">
@@ -8062,7 +8955,7 @@ export default function EditInstitutionModal({
 
         <form
           onSubmit={handleSubmit}
-          className="p-8 space-y-8 overflow-y-auto custom-calendar-scroll"
+          className="p-8 space-y-8 overflow-y-auto custom-scrollbar"
         >
           {/* פרטי המוסד */}
           <section className="space-y-4">
@@ -8536,7 +9429,7 @@ export default function EditUserModal({
 
         <form
           onSubmit={handleUpdate}
-          className="flex-1 overflow-y-auto p-8 space-y-8 custom-calendar-scroll"
+          className="flex-1 overflow-y-auto p-8 space-y-8 custom-scrollbar"
         >
           {/* פרטים אישיים */}
           <section className="space-y-4">
@@ -9083,7 +9976,7 @@ export default function InstructorPlacementsModal({
         </div>
 
         {/* Content */}
-        <div className="p-6 overflow-y-auto space-y-4 custom-calendar-scroll bg-slate-50/50">
+        <div className="p-6 overflow-y-auto space-y-4 custom-scrollbar bg-slate-50/50">
           {managers.length === 0 ? (
             <div className="text-center py-16 bg-white rounded-[2rem] border-2 border-dashed border-slate-100">
               <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-4">
@@ -9275,6 +10168,148 @@ export default function ManagerNavbar() {
               התנתקות
             </button>
           </div>
+        </div>
+      </div>
+    </nav>
+  );
+}
+==============================
+FILE: src/components\NavBars\RotationNavbar.tsx
+==============================
+"use client";
+import { useEffect, useState } from "react";
+import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
+import { Calendar, LogOut, LayoutDashboard } from "lucide-react";
+import NotificationBell from "../NotificationBell";
+
+export default function RotationNavbar() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const [userRoles, setUserRoles] = useState<string[]>([]);
+
+  useEffect(() => {
+    fetch("/api/auth/me")
+      .then(res => res.json())
+      .then(data => setUserRoles(data.roles || []));
+  }, []);
+
+  const handleLogout = async () => {
+    if (!confirm("להתנתק מהמערכת?")) return;
+    await fetch("/api/auth/logout", { method: "POST" });
+    router.push("/login");
+    router.refresh();
+  };
+
+  const isActive = (path: string) => pathname === path;
+
+  return (
+    <nav className="bg-white shadow-sm border-b border-slate-200 sticky top-0 z-40">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="flex justify-between h-16 items-center">
+          
+          <div className="flex items-center gap-8">
+            {/* Logo */}
+            <div className="flex items-center gap-3">
+              <div className="bg-indigo-600 text-white p-2 rounded-xl font-bold shadow-md shadow-indigo-100">FitIn</div>
+              <span className="text-lg font-extrabold text-slate-800 hidden md:block">צוות רוטציה</span>
+            </div>
+
+            {/* Navigation Links */}
+            <div className="flex items-center gap-2">
+              <Link 
+                href="/rotation" 
+                className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all ${
+                  isActive("/rotation") 
+                    ? "bg-indigo-50 text-indigo-600" 
+                    : "text-slate-500 hover:bg-slate-50"
+                }`}
+              >
+                <Calendar size={18} />
+                <span>הלו"ז שלי</span>
+              </Link>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-4">
+            {/* Notifications */}
+            <NotificationBell />
+
+            {/* Logout Button */}
+            <button 
+              onClick={handleLogout} 
+              className="flex items-center gap-2 text-sm font-bold text-red-500 hover:bg-red-50 px-4 py-2 rounded-xl transition-colors border border-transparent hover:border-red-100"
+            >
+              <LogOut size={18} />
+              <span className="hidden sm:inline">התנתקות</span>
+            </button>
+          </div>
+
+        </div>
+      </div>
+    </nav>
+  );
+}
+==============================
+FILE: src/components\NavBars\SubstituteNavbar.tsx
+==============================
+"use client";
+import { useEffect, useState } from "react";
+import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
+import { Briefcase, LogOut } from "lucide-react";
+import NotificationBell from "../NotificationBell";
+
+export default function SubstituteNavbar() {
+  const router = useRouter();
+  const pathname = usePathname();
+
+  const handleLogout = async () => {
+    if (!confirm("להתנתק מהמערכת?")) return;
+    await fetch("/api/auth/logout", { method: "POST" });
+    router.push("/login");
+    router.refresh();
+  };
+
+  const isActive = (path: string) => pathname === path;
+
+  return (
+    <nav className="bg-white shadow-sm border-b border-slate-200 sticky top-0 z-40">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="flex justify-between h-16 items-center">
+          
+          <div className="flex items-center gap-8">
+            <div className="flex items-center gap-3">
+              <div className="bg-indigo-600 text-white p-2 rounded-xl font-bold shadow-md shadow-indigo-100">FitIn</div>
+              <span className="text-lg font-extrabold text-slate-800 hidden md:block">צוות מחליף</span>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <Link 
+                href="/substitute" 
+                className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all ${
+                  isActive("/substitute") 
+                    ? "bg-indigo-50 text-indigo-600" 
+                    : "text-slate-500 hover:bg-slate-50"
+                }`}
+              >
+                <Briefcase size={18} />
+                <span>מרכז שיבוצים</span>
+              </Link>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-4">
+            <NotificationBell />
+            <button 
+              onClick={handleLogout} 
+              className="flex items-center gap-2 text-sm font-bold text-red-500 hover:bg-red-50 px-4 py-2 rounded-xl transition-colors"
+            >
+              <LogOut size={18} />
+              <span className="hidden sm:inline">התנתקות</span>
+            </button>
+          </div>
+
         </div>
       </div>
     </nav>
@@ -9721,7 +10756,7 @@ export default function PlacementModal({
         </div>
 
         {/* List */}
-        <div className="flex-1 overflow-y-auto px-6 pb-8 space-y-2 mt-4 custom-calendar-scroll">
+        <div className="flex-1 overflow-y-auto px-6 pb-8 space-y-2 mt-4 custom-scrollbar">
           {loading ? (
             <LoadingScreen message="בודק זמינות מחליפות..." />
           ) : filteredSubstitutes.length === 0 ? (
@@ -9850,7 +10885,7 @@ export default function ReassignRotationModal({
         </button>
         </div>
 
-        <div className="p-6 flex-1 overflow-y-auto space-y-6 custom-calendar-scroll">
+        <div className="p-6 flex-1 overflow-y-auto space-y-6 custom-scrollbar">
           {brokenRotations.map((br: any) => {
             const dayNames: any = {
               SUNDAY: "ראשון",
@@ -10878,7 +11913,7 @@ export default function CustomDropdown({
 
       {isOpen && (
         <div className="absolute z-[110] mt-2 right-0 w-full bg-white border border-slate-200 rounded-[2rem] shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200">
-          <div className="p-2 max-h-60 overflow-y-auto custom-calendar-scroll">
+          <div className="p-2 max-h-60 overflow-y-auto custom-scrollbar">
             {filteredOptions.length > 0 ? (
               filteredOptions.map((opt) => (
                 <button
@@ -11238,31 +12273,29 @@ export async function middleware(request: NextRequest) {
   if (!session) {
     if (pathname.startsWith('/supervisor') || 
         pathname.startsWith('/instructor') || 
-        pathname.startsWith('/manager')) {
+        pathname.startsWith('/manager') ||
+        pathname.startsWith('/rotation') ||
+        pathname.startsWith('/substitute')) { 
       return NextResponse.redirect(new URL('/login', request.url));
     }
     return NextResponse.next();
   }
 
-  // 2. פענוח הטוקן
   let payload;
   try {
     payload = await decrypt(session);
   } catch (e) {
-    // טוקן לא תקין או פג תוקף
     const res = NextResponse.redirect(new URL('/login', request.url));
     res.cookies.delete('session');
     return res;
   }
 
-  // 3. אם הוא מחובר ומנסה להיכנס ללוגין
+  // 3. ניתוב אוטומטי אם כבר מחוברים ומנסים להיכנס ללוגין
   if (pathname === '/login') {
-    if (payload.roles.includes('SUPERVISOR')) return NextResponse.redirect(new URL('/supervisor', request.url));
-    if (payload.roles.includes('INSTRUCTOR')) return NextResponse.redirect(new URL('/instructor', request.url));
-    if (payload.roles.includes('MANAGER')) return NextResponse.redirect(new URL('/manager', request.url));
+    return NextResponse.redirect(new URL(getHomePath(payload.roles), request.url));
   }
 
-  // 4. הגנת נתיבים לפי תפקידים (Role Based Access Control)
+  // 4. הגנת נתיבים לפי תפקידים (RBAC)
   if (pathname.startsWith('/supervisor') && !payload.roles.includes('SUPERVISOR')) {
     return NextResponse.redirect(new URL(getHomePath(payload.roles), request.url));
   }
@@ -11272,20 +12305,35 @@ export async function middleware(request: NextRequest) {
   if (pathname.startsWith('/manager') && !payload.roles.includes('MANAGER')) {
     return NextResponse.redirect(new URL(getHomePath(payload.roles), request.url));
   }
+  if (pathname.startsWith('/rotation') && !payload.roles.includes('ROTATION')) {
+    return NextResponse.redirect(new URL(getHomePath(payload.roles), request.url));
+  }
+  // <--- הוספת הגנה לנתיב מחליפה:
+  if (pathname.startsWith('/substitute') && !payload.roles.includes('SUBSTITUTE')) {
+    return NextResponse.redirect(new URL(getHomePath(payload.roles), request.url));
+  }
 
   return NextResponse.next();
 }
 
-// פונקציית עזר למציאת הבית של המשתמש
 function getHomePath(roles: string[]) {
     if (roles.includes('SUPERVISOR')) return '/supervisor';
     if (roles.includes('INSTRUCTOR')) return '/instructor';
     if (roles.includes('MANAGER')) return '/manager';
+    if (roles.includes('ROTATION')) return '/rotation';
+    if (roles.includes('SUBSTITUTE')) return '/substitute'; 
     return '/';
 }
 
 export const config = {
-  matcher: ['/supervisor/:path*', '/instructor/:path*', '/manager/:path*', '/login'],
+  matcher: [
+    '/supervisor/:path*', 
+    '/instructor/:path*', 
+    '/manager/:path*', 
+    '/rotation/:path*', 
+    '/substitute/:path*', 
+    '/login'
+  ],
 };
 ==============================
 FILE: src/services\authService.ts
@@ -11408,8 +12456,21 @@ export async function db_createInstitution(data: {
   instructorId: string;
   mainManagerId: string;
 }) {
+  // בדיקה שכל ה-IDs קיימים לפני השליחה
+  if (!data.supervisorId || !data.instructorId || !data.mainManagerId) {
+    throw new Error("חסר מידע קריטי: מפקחת, מדריכה או גננת אם לא הוגדרו כראוי.");
+  }
+
   return await prisma.institution.create({
-    data
+    data: {
+      name: data.name,
+      address: data.address,
+      institutionNumber: data.institutionNumber,
+      // שימוש ב-connect מבטיח שפריזמה תקשר את האובייקטים נכון
+      supervisor: { connect: { id: data.supervisorId } },
+      instructor: { connect: { id: data.instructorId } },
+      mainManager: { connect: { id: data.mainManagerId } },
+    }
   });
 }
 
@@ -11830,7 +12891,7 @@ export async function db_createPlacement(data: any) {
         notifyIds,
         "הזדמנות להחלפה",
         formatMessage({
-          prefix: "גננת יקרה",
+          prefix: "גננת  מחליפה יקרה",
           statusText: "יש לך הזדמנות להחליף",
           gardenName: institution.name,
           address: institution.address,
@@ -12072,7 +13133,7 @@ export async function db_assignSubstitute(
   await db_createNotification({
     userId: substituteId,
     title: "שיבוץ חדש עבורך",
-    message: `גננת יקרה, שובצת להחליף את ${mainName} בגן ${updatedPlacement.institution.name} בתאריך ${dateStr}.`,
+    message: `גננת מחליפה יקרה, שובצת להחליף את ${mainName} בגן ${updatedPlacement.institution.name} בתאריך ${dateStr}.`,
     type: "STATUS_UPDATE",
   });
 

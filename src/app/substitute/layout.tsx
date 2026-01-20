@@ -8,7 +8,7 @@ export default function SubstituteLayout({
   return (
     <div className="min-h-screen bg-[#F8FAFC]" dir="rtl">
       <SubstituteNavbar /> 
-      <main className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8  max-h-[90vh] overflow-y-hidden ">
+      <main className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8">
         {children}
       </main>
     </div>

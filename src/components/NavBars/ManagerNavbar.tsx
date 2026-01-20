@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { LayoutDashboard, LogOut, GraduationCap } from "lucide-react"; // אייקון הדרכה
+import { LayoutDashboard, LogOut, GraduationCap, UserCircle } from "lucide-react"; // אייקון הדרכה
 import NotificationBell from "../NotificationBell";
 
 export default function ManagerNavbar() {
@@ -13,8 +13,8 @@ export default function ManagerNavbar() {
 
   useEffect(() => {
     fetch("/api/auth/me")
-      .then(res => res.json())
-      .then(data => setUserRoles(data.roles || []));
+      .then((res) => res.json())
+      .then((data) => setUserRoles(data.roles || []));
   }, []);
 
   const handleLogout = async () => {
@@ -32,29 +32,53 @@ export default function ManagerNavbar() {
         <div className="flex justify-between h-16 items-center">
           <div className="flex items-center gap-8">
             <div className="flex items-center gap-3">
-              <div className="bg-indigo-600 text-white p-2 rounded-xl font-bold">FitIn</div>
-              <span className="text-lg font-extrabold text-slate-800">מרכז ניהול גן</span>
+              <div className="bg-indigo-600 text-white p-2 rounded-xl font-bold">
+                FitIn
+              </div>
+              <span className="text-lg font-extrabold text-slate-800">
+                מרכז ניהול גן
+              </span>
             </div>
 
             <div className="flex items-center gap-2">
-                <Link href="/manager" className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all ${isActive("/manager") ? "bg-indigo-50 text-indigo-600" : "text-slate-500 hover:bg-slate-50"}`}>
+              <Link
+                href="/manager"
+                className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all ${isActive("/manager") ? "bg-indigo-50 text-indigo-600" : "text-slate-500 hover:bg-slate-50"}`}
+              >
                 <LayoutDashboard size={18} />
                 <span>הגן שלי</span>
-                </Link>
+              </Link>
 
-                {/* --- הוספת כפתור חזרה להדרכה --- */}
-                {userRoles.includes("INSTRUCTOR") && (
-                    <Link href="/instructor" className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold text-purple-600 hover:bg-purple-50 transition-all">
-                        <GraduationCap size={18} />
-                        <span>ממשק הדרכה</span>
-                    </Link>
-                )}
+              {userRoles.includes("INSTRUCTOR") && (
+                <Link
+                  href="/instructor"
+                  className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold text-purple-600 hover:bg-purple-50 transition-all"
+                >
+                  <GraduationCap size={18} />
+                  <span>ממשק הדרכה</span>
+                </Link>
+              )}
+
+              <Link
+                href="/manager/profile"
+                className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all ${
+                  isActive("/manager/profile")
+                    ? "bg-blue-50 text-blue-600"
+                    : "text-slate-500 hover:bg-slate-50"
+                }`}
+              >
+                <UserCircle size={18} />
+                <span>איזור אישי</span>
+              </Link>
             </div>
           </div>
 
           <div className="flex items-center gap-4">
             <NotificationBell />
-            <button onClick={handleLogout} className="text-sm font-bold text-red-500 hover:bg-red-50 px-4 py-2 rounded-xl flex items-center gap-2">
+            <button
+              onClick={handleLogout}
+              className="text-sm font-bold text-red-500 hover:bg-red-50 px-4 py-2 rounded-xl flex items-center gap-2"
+            >
               <LogOut size={18} />
               התנתקות
             </button>

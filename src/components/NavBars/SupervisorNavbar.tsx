@@ -8,6 +8,7 @@ import {
   LogOut,
   PieChartIcon,
   BarChart3,
+  UserCircle,
 } from "lucide-react";
 import NotificationBell from "../NotificationBell";
 export default function SupervisorNavbar() {
@@ -85,10 +86,21 @@ export default function SupervisorNavbar() {
                 <BarChart3 size={18} />
                 <span>סטטיסטיקה</span>
               </Link>
+              <Link
+                href="/supervisor/profile"
+                className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all ${
+                  isActive("/supervisor/profile")
+                    ? "bg-blue-50 text-blue-600"
+                    : "text-slate-500 hover:bg-slate-50"
+                }`}
+              >
+                <UserCircle size={18} />
+                <span>איזור אישי</span>
+              </Link>
             </div>
           </div>
           <div className="flex items-center gap-4">
-            <NotificationBell /> 
+            <NotificationBell />
             <button
               onClick={handleLogout}
               className="flex items-center gap-2 text-sm font-bold text-red-500 hover:bg-red-50 px-4 py-2 rounded-xl transition-all border border-transparent hover:border-red-100"
@@ -97,7 +109,6 @@ export default function SupervisorNavbar() {
               <span className="hidden sm:inline">התנתקות</span>
             </button>
           </div>
-
         </div>
       </div>
     </nav>

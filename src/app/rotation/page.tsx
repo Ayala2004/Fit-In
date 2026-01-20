@@ -11,7 +11,7 @@ import {
   Plus,
   ChevronLeft,
   Building2,
-  RefreshCcwDot
+  RefreshCcwDot,
 } from "lucide-react";
 import LoadingScreen from "@/components/ui/LoadingScreen";
 import CustomDatePicker from "@/components/ui/CustomDatePicker";
@@ -105,6 +105,7 @@ export default function RotationDashboard() {
     const todayAct = data?.placements?.find(
       (p: any) => new Date(p.date).toDateString() === today.toDateString(),
     );
+    
 
     // 2. חיפוש גן קבוע בלו"ז
     const fixed = data?.fixedSchedule?.find((s: any) => s.day === dayNameEn);
@@ -119,7 +120,7 @@ export default function RotationDashboard() {
         icon: <AlertCircle size={32} />,
       };
     }
-
+    console.log("todayAct:", todayAct);
     // מקרה ב': אני רשומה כמחליפה (מישהו ביקש ממני להגיע, או החלפה פנימית)
     if (todayAct && todayAct.substituteId === user?.id) {
       return {
@@ -213,18 +214,6 @@ export default function RotationDashboard() {
               </div>
             </div>
           </div>
-
-          {/* כפתור מהיר / תג סטטוס */}
-          <div className="bg-white/50 backdrop-blur-sm px-6 py-4 rounded-3xl border border-black/5 flex items-center gap-3">
-            <div
-              className={`w-2.5 h-2.5 rounded-full animate-pulse ${
-                status.type === "ABSENT" ? "bg-red-500" : "bg-emerald-500"
-              }`}
-            />
-            <span className="font-black text-sm uppercase">
-              {status.type === "ABSENT" ? "לא בעבודה" : "פעילה במערכת"}
-            </span>
-          </div>
         </div>
 
         {/* עיטור רקע עדין */}
@@ -284,7 +273,7 @@ export default function RotationDashboard() {
         {/* עדכונים ושינויים */}
         <div className="space-y-6">
           <h2 className="text-xl font-black text-slate-800 flex items-center gap-2">
-            <RefreshCcwDot  size={22} className="text-slate-400" />
+            <RefreshCcwDot size={22} className="text-slate-400" />
             שינויים ועדכונים
           </h2>
 

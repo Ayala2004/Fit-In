@@ -1,17 +1,9 @@
 "use client";
 import { useEffect, useState } from "react";
 import {
-  Briefcase,
   MapPin,
   Calendar as CalendarIcon,
-  User,
-  Star,
-  CheckCircle2,
-  ChevronLeft,
   Info,
-  Clock,
-  Building2,
-  RefreshCcwDot,
   CalendarCheck,
 } from "lucide-react";
 import LoadingScreen from "@/components/ui/LoadingScreen";
@@ -61,7 +53,7 @@ export default function SubstituteDashboard() {
   if (loading) return <LoadingScreen message="מחפש עבורך הזדמנויות החלפה..." />;
 
   return (
-<div className="space-y-10 animate-in fade-in duration-500 pb-20">
+<div className="space-y-10 animate-in fade-in duration-500 pb-20 max-h-[80vh] overflow-y-hidden">
   {/* Header */}
   <div className="flex flex-col gap-2">
     <h1 className="text-3xl font-black text-slate-900">מרכז שיבוצים</h1>

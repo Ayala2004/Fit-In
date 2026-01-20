@@ -44,7 +44,6 @@ export async function middleware(request: NextRequest) {
   if (pathname.startsWith('/rotation') && !payload.roles.includes('ROTATION')) {
     return NextResponse.redirect(new URL(getHomePath(payload.roles), request.url));
   }
-  // <--- הוספת הגנה לנתיב מחליפה:
   if (pathname.startsWith('/substitute') && !payload.roles.includes('SUBSTITUTE')) {
     return NextResponse.redirect(new URL(getHomePath(payload.roles), request.url));
   }
