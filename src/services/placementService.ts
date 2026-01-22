@@ -222,7 +222,17 @@ const getDayEnum = (date: Date): Day => {
 
 export async function db_createPlacement(data: any) {
   const targetDate = startOfDay(new Date(data.date));
+ const existingPlacementForTeacher = await prisma.placement.findFirst({
+    where: {
+      mainTeacherId: data.mainTeacherId,
+      date: targetDate,
+      status: { not: "CANCELLED" } // אם הדיווח הקודם בוטל, מותר לדווח שוב
+    }
+  });
 
+  if (existingPlacementForTeacher) {
+    throw new Error("כבר קיים דיווח במערכת על שם גננת זו בתאריך שנבחר.");
+  }
   // 1. יצירת הרשומה
   const newPlacement = await prisma.placement.create({
     data: {
@@ -235,7 +245,7 @@ export async function db_createPlacement(data: any) {
     },
     include: {
       institution: true,
-      mainTeacher: { select: { firstName: true, lastName: true } },
+      mainTeacher: { select: { firstName: true, lastName: true, phoneNumber: true } },
       substitute: { select: { firstName: true, lastName: true } },
     },
   });

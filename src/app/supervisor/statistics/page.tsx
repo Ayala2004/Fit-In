@@ -1,7 +1,16 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
-import { format, subMonths, subYears, startOfMonth } from "date-fns";
+import {
+  format,
+  subMonths,
+  subYears,
+  startOfMonth,
+  addDays,
+  isAfter,
+  isBefore,
+  startOfDay,
+} from "date-fns";
 import { BarChart3, Calendar, User, Info } from "lucide-react";
 import EditUserModal from "@/components/EditModals/EditUserModal";
 import LoadingScreen from "@/components/ui/LoadingScreen";
@@ -16,12 +25,12 @@ export default function StatisticsPage() {
 
   // פילטרים
   const [startDate, setStartDate] = useState(
-    format(startOfMonth(new Date()), "yyyy-MM-dd")
+    format(startOfMonth(new Date()), "yyyy-MM-dd"),
   );
   const [endDate, setEndDate] = useState(format(new Date(), "yyyy-MM-dd"));
   const [selectedUserId, setSelectedUserId] = useState("");
   const [activeShortcut, setActiveShortcut] = useState<"month" | "year" | null>(
-    "month"
+    "month",
   );
 
   const [isDetailsOpen, setIsDetailsOpen] = useState(false);
@@ -59,12 +68,12 @@ export default function StatisticsPage() {
   // זיהוי תפקיד המשתמשת הנבחרת
   const selectedUser = useMemo(
     () => users.find((u) => u.id === selectedUserId),
-    [selectedUserId, users]
+    [selectedUserId, users],
   );
 
   const isManager = selectedUser?.roles.includes("MANAGER");
   const isSubstitute = selectedUser?.roles.some((r: string) =>
-    ["SUBSTITUTE", "ROTATION"].includes(r)
+    ["SUBSTITUTE", "ROTATION"].includes(r),
   );
 
   // פונקציה להגדרת קיצור דרך
@@ -77,11 +86,38 @@ export default function StatisticsPage() {
     setActiveShortcut(type);
   };
 
-  // פונקציה לשינוי ידני של תאריך (מבטל את הדגשת הקיצור)
+  const normalize = (d: string) => startOfDay(new Date(d + "T00:00:00"));
+
   const handleDateChange = (type: "start" | "end", val: string) => {
-    if (type === "start") setStartDate(val);
-    else setEndDate(val);
     setActiveShortcut(null);
+
+    const selectedDate = normalize(val);
+    const currentStart = normalize(startDate);
+    const currentEnd = normalize(endDate);
+
+    if (type === "start") {
+      setStartDate(val);
+
+      if (selectedDate >= currentEnd) {
+        alert(
+          "שימי לב: תאריך ההתחלה חייב להיות לפני תאריך הסיום, לכן התאריכים שונו בהתאם.",
+        );
+
+        const nextDay = format(addDays(selectedDate, 1), "yyyy-MM-dd");
+        setEndDate(nextDay);
+      }
+    } else {
+      if (selectedDate <= currentStart) {
+        alert(
+          "שימי לב: תאריך הסיום חייב להיות לפחות יום אחד אחרי תאריך ההתחלה, לכן התאריכים שונו בהתאם.",
+        );
+
+        const forcedDate = format(addDays(currentStart, 1), "yyyy-MM-dd");
+        setEndDate(forcedDate);
+      } else {
+        setEndDate(val);
+      }
+    }
   };
 
   return (
@@ -116,12 +152,14 @@ export default function StatisticsPage() {
               label="תאריך התחלה"
               value={startDate}
               onChange={(val) => handleDateChange("start", val)}
+              allowAllDates={true}
             />
 
             <CustomDatePicker
               label="תאריך סיום"
               value={endDate}
               onChange={(val) => handleDateChange("end", val)}
+              allowAllDates={true}
             />
           </div>
         </div>

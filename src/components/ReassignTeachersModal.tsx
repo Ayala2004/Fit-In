@@ -1,14 +1,7 @@
 "use client";
 import { useState } from "react";
-import {
-  X,
-  Users,
-  GraduationCap,
-  CheckCircle,
-  AlertTriangle,
-  Loader2,
-} from "lucide-react";
-import LoadingScreen from "./ui/LoadingScreen";
+import { X, CheckCircle, AlertTriangle, Loader2 } from "lucide-react";
+import CustomDropdown from "./ui/CustomDropdown"; // ייבוא הקומפוננטה
 
 export default function ReassignTeachersModal({
   isOpen,
@@ -17,7 +10,7 @@ export default function ReassignTeachersModal({
   onComplete,
   isForced = false,
   onClose,
-  excludedId,
+  excludedId, // זה ה-ID של המדריכה שאנחנו משביתים
   onCancelDisabling,
 }: any) {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -45,12 +38,9 @@ export default function ReassignTeachersModal({
         body: JSON.stringify({ managerIds: selectedIds, newInstructorId }),
       });
       if (res.ok) {
-        const remaining = teachers.filter(
-          (t: any) => !selectedIds.includes(t.id)
-        );
+        const remaining = teachers.filter((t: any) => !selectedIds.includes(t.id));
         if (remaining.length === 0) onComplete();
         else {
-          // אם נשארו עוד, נעדכן את הרשימה (שיבוץ חלקי)
           onComplete(remaining);
           setSelectedIds([]);
           setNewInstructorId("");
@@ -65,19 +55,18 @@ export default function ReassignTeachersModal({
 
   if (!isOpen) return null;
 
+  // סינון המדריכה המושבתת מרשימת האפשרויות
+  const availableInstructors = instructors
+    .filter((i: any) => i.isWorking === true && i.id !== excludedId)
+    .map((i: any) => ({
+      id: i.id,
+      label: `${i.firstName} ${i.lastName}`,
+    }));
+
   return (
     <div className="fixed inset-0 z-[200] bg-slate-900/80 backdrop-blur-md flex items-center justify-center p-4">
       <div className="bg-white w-full max-w-2xl rounded-[2.5rem] shadow-2xl overflow-hidden flex flex-col max-h-[90vh] relative">
-        {/* כפתור סגירה - מופיע רק אם זה לא מצב כפוי */}
-        {!isForced && (
-          <button
-            onClick={onClose}
-            className="absolute top-5 left-5 text-white/80 hover:text-white bg-black/20 hover:bg-black/30 rounded-full p-2 transition z-10"
-          >
-            <X size={24} />
-          </button>
-        )}
-
+        
         {/* Header */}
         <div className="p-8 bg-gray-800 text-white shrink-0">
           <h2 className="text-2xl font-black flex items-center gap-3">
@@ -87,15 +76,11 @@ export default function ReassignTeachersModal({
             המדריכה הקודמת אינה פעילה. חובה להעביר את הגננות למדריכה חדשה.
           </p>
         </div>
-        <div className="p-6 flex-1 overflow-y-auto space-y-6">
+
+        <div className="p-6 flex-1 overflow-y-auto space-y-6 custom-scrollbar">
           <div className="flex justify-between items-center bg-slate-50 p-4 rounded-2xl">
-            <button
-              onClick={toggleSelectAll}
-              className="text-sm font-black text-indigo-600 hover:underline"
-            >
-              {selectedIds.length === teachers.length
-                ? "ביטול בחירת הכל"
-                : "בחר הכל"}
+            <button onClick={toggleSelectAll} className="text-sm font-black text-indigo-600 hover:underline">
+              {selectedIds.length === teachers.length ? "ביטול בחירת הכל" : "בחר הכל"}
             </button>
             <span className="text-xs font-bold text-slate-500">
               נבחרו {selectedIds.length} מתוך {teachers.length} גננות
@@ -108,65 +93,48 @@ export default function ReassignTeachersModal({
                 key={t.id}
                 onClick={() => toggleSelect(t.id)}
                 className={`p-4 rounded-2xl border-2 cursor-pointer transition-all flex items-center gap-3 ${
-                  selectedIds.includes(t.id)
-                    ? "border-indigo-600 bg-indigo-50"
-                    : "border-slate-100 bg-white"
+                  selectedIds.includes(t.id) ? "border-indigo-600 bg-indigo-50" : "border-slate-100 bg-white"
                 }`}
               >
-                <div
-                  className={`w-5 h-5 rounded-md border-2 flex items-center justify-center ${
-                    selectedIds.includes(t.id)
-                      ? "bg-indigo-600 border-indigo-600"
-                      : "border-slate-300"
-                  }`}
-                >
-                  {selectedIds.includes(t.id) && (
-                    <CheckCircle size={14} className="text-white" />
-                  )}
+                <div className={`w-5 h-5 rounded-md border-2 flex items-center justify-center ${
+                    selectedIds.includes(t.id) ? "bg-indigo-600 border-indigo-600" : "border-slate-300"
+                }`}>
+                  {selectedIds.includes(t.id) && <CheckCircle size={14} className="text-white" />}
                 </div>
-                <span className="font-bold text-slate-700">
-                  {t.firstName} {t.lastName}
-                </span>
+                <span className="font-bold text-slate-700">{t.firstName} {t.lastName}</span>
               </div>
             ))}
           </div>
 
+          {/* שימוש ב-CustomDropdown החדש */}
           <div className="space-y-3 pt-4 border-t">
-            <label className="text-sm font-black text-slate-700 block">
-              עבור הנבחרות, בחרי מדריכה חדשה:
-            </label>
-            <select
-              className="input-standard bg-slate-50"
+            <CustomDropdown
+              label="עבור הנבחרות, בחרי מדריכה חדשה:"
+              placeholder="בחרי מדריכה פעילה..."
               value={newInstructorId}
-              onChange={(e) => setNewInstructorId(e.target.value)}
-            >
-              <option value="">-- בחרי מדריכה פעילה --</option>
-              {instructors
-                .filter((i: any) => i.isWorking === true && i.id !== excludedId) // סינון כפול
-                .map((i: any) => (
-                  <option key={i.id} value={i.id}>
-                    {i.firstName} {i.lastName}
-                  </option>
-                ))}
-            </select>
+              options={availableInstructors}
+              onChange={(val) => setNewInstructorId(val)}
+            />
           </div>
         </div>
+
         <div className="p-6 bg-slate-50 flex gap-4">
           <button
             onClick={handleReassign}
             disabled={loading || selectedIds.length === 0 || !newInstructorId}
-            className="flex-1 py-4 bg-indigo-600 text-white rounded-2xl font-black shadow-lg disabled:bg-slate-300"
+            className="flex-[2] py-4 bg-indigo-600 text-white rounded-2xl font-black shadow-lg disabled:bg-slate-300"
           >
-            {loading ? "שומר..." : "בצע שיבוץ מחדש"}
+            {loading ? <Loader2 className="animate-spin mx-auto" /> : "בצע שיבוץ מחדש"}
           </button>
-          {isForced && (
-            <button
-              onClick={onCancelDisabling}
-              className="flex-1 py-4 bg-white border-2 border-slate-200 text-slate-600 rounded-2xl font-black hover:bg-slate-50 transition-all"
-            >
-              בטל השבתה
-            </button>
-          )}
+          
+          {/* כפתור בטל השבתה */}
+          <button
+            onClick={onCancelDisabling}
+            type="button"
+            className="flex-1 py-4 bg-white border-2 border-slate-200 text-slate-600 rounded-2xl font-black hover:bg-slate-50 transition-all"
+          >
+            בטל השבתה
+          </button>
         </div>
       </div>
     </div>

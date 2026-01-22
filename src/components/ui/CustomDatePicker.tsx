@@ -21,6 +21,7 @@ interface Props {
   value: string | null;
   onChange: (val: string) => void;
   allowFutureDates?: boolean;
+  allowAllDates?: boolean;
 }
 
 export default function CustomDatePicker({
@@ -28,13 +29,14 @@ export default function CustomDatePicker({
   value,
   onChange,
   allowFutureDates = false,
+  allowAllDates = false,
 }: Props) {
   const [isOpen, setIsOpen] = useState(false);
   const [viewDate, setViewDate] = useState(
-    value ? new Date(value) : new Date()
+    value ? new Date(value) : new Date(),
   );
   const [inputValue, setInputValue] = useState(
-    value ? format(new Date(value), "dd/MM/yyyy") : ""
+    value ? format(new Date(value), "dd/MM/yyyy") : "",
   );
   const [error, setError] = useState("");
 
@@ -56,6 +58,17 @@ export default function CustomDatePicker({
     };
   }, [isOpen]);
 
+  useEffect(() => {
+    if (value) {
+      const date = new Date(value);
+      if (!isNaN(date.getTime())) {
+        setViewDate(date);
+        setInputValue(format(date, "dd/MM/yyyy"));
+      }
+    } else {
+      setInputValue("");
+    }
+  }, [value]);
   const days = eachDayOfInterval({
     start: startOfMonth(viewDate),
     end: endOfMonth(viewDate),
@@ -63,11 +76,14 @@ export default function CustomDatePicker({
   const today = startOfDay(new Date());
 
   const isDateDisabled = (date: Date) => {
+    // אם הכל מותר - שום דבר לא מושבת
+    if (allowAllDates) return false;
+
     if (allowFutureDates) {
-      // אסור עבר
+      // מצב שבו מותר רק עתיד (למשל דיווח היעדרות) - אסור עבר
       return isAfter(today, date);
     } else {
-      // אסור עתיד
+      // ברירת מחדל: מותר רק עבר (למשל תאריך לידה) - אסור עתיד
       return isAfter(date, today);
     }
   };
@@ -90,21 +106,18 @@ export default function CustomDatePicker({
   const validateAndCorrectDate = (
     dayStr: string,
     monthStr: string,
-    yearStr: string
+    yearStr: string,
   ) => {
-    // המרה למספרים
     let day = parseInt(dayStr, 10);
     let month = parseInt(monthStr, 10);
     let year = parseInt(yearStr, 10);
 
-    // בדיקות בסיסיות
     if (isNaN(day) || isNaN(month) || isNaN(year)) {
       return null;
     }
 
     let errorMessage = "";
 
-    // תיקון חודש (1-12)
     if (month < 1) {
       month = 1;
       errorMessage = "החודש תוקן ל-1 (ינואר)";
@@ -114,12 +127,7 @@ export default function CustomDatePicker({
       errorMessage = "החודש תוקן ל-12 (דצמבר)";
     }
 
-    // תיקון שנה (אם הוקלדו 2 ספרות)
-    if (year < 100) {
-      year = 2000 + year;
-    }
-
-    // בדיקת תקינות שנה (1900-2099)
+    if (year < 100) year = 2000 + year;
     if (year < 1900) {
       year = 1900;
       errorMessage = "השנה תוקנה ל-1900";
@@ -129,7 +137,6 @@ export default function CustomDatePicker({
       errorMessage = "השנה תוקנה ל-2099";
     }
 
-    // תיקון יום לפי מספר הימים המקסימלי בחודש
     const maxDay = getDaysInMonth(month, year);
     if (day < 1) {
       day = 1;
@@ -137,37 +144,16 @@ export default function CustomDatePicker({
     }
     if (day > maxDay) {
       day = maxDay;
-      const monthNames = [
-        "ינואר",
-        "פברואר",
-        "מרץ",
-        "אפריל",
-        "מאי",
-        "יוני",
-        "יולי",
-        "אוגוסט",
-        "ספטמבר",
-        "אוקטובר",
-        "נובמבר",
-        "דצמבר",
-      ];
-      if (month === 2 && !isLeapYear(year)) {
-        errorMessage = `${
-          monthNames[month - 1]
-        } ${year} אינו שנה מעוברת - היום תוקן ל-${maxDay}`;
-      } else {
-        errorMessage = `ל${
-          monthNames[month - 1]
-        } יש רק ${maxDay} ימים - היום תוקן ל-${maxDay}`;
-      }
+      errorMessage = `היום תוקן ל-${maxDay}`;
     }
 
-    // יצירת אובייקט תאריך
     const date = new Date(year, month - 1, day);
-
-    // בדיקה שהתאריך לא אחרי היום או לפני היום בהתאם ל allowFutureDates
-
     const today = startOfDay(new Date());
+
+    // אם הכל מותר - אין צורך בתיקוני מגבלות
+    if (allowAllDates) {
+      return { date, error: errorMessage };
+    }
 
     if (allowFutureDates && isAfter(today, date)) {
       errorMessage = "לא ניתן לבחור תאריך עבר - התאריך תוקן להיום";
@@ -182,73 +168,55 @@ export default function CustomDatePicker({
     return { date, error: errorMessage };
   };
 
-  // טיפול בשינוי קלט
+
   const handleInputChange = (raw: string) => {
-    // הסרת כל התווים מלבד ספרות
-    let digitsOnly = raw.replace(/\D/g, "");
+  let digitsOnly = raw.replace(/\D/g, "");
+  if (digitsOnly.length > 8) digitsOnly = digitsOnly.slice(0, 8);
 
-    // הגבלה ל-8 ספרות (ddmmyyyy)
-    if (digitsOnly.length > 8) {
-      digitsOnly = digitsOnly.slice(0, 8);
-    }
-
-    // בניית הפורמט עם סלאשים
-    let formatted = "";
-    if (digitsOnly.length > 0) {
-      formatted = digitsOnly.slice(0, 2); // יום
-      if (digitsOnly.length > 2) {
-        formatted += "/" + digitsOnly.slice(2, 4); // חודש
-        if (digitsOnly.length > 4) {
-          formatted += "/" + digitsOnly.slice(4, 8); // שנה
-        }
+  let formatted = "";
+  if (digitsOnly.length > 0) {
+    formatted = digitsOnly.slice(0, 2);
+    if (digitsOnly.length > 2) {
+      formatted += "/" + digitsOnly.slice(2, 4);
+      if (digitsOnly.length > 4) {
+        formatted += "/" + digitsOnly.slice(4, 8);
       }
     }
+  }
 
-    setInputValue(formatted);
+  // 👈 עדכון זמני בלבד בזמן הקלדה
+  setInputValue(formatted);
 
-    // ניסיון לפרסר את התאריך רק אם יש תאריך מלא
-    if (digitsOnly.length === 8) {
-      const dayStr = digitsOnly.slice(0, 2);
-      const monthStr = digitsOnly.slice(2, 4);
-      const yearStr = digitsOnly.slice(4, 8);
+  if (digitsOnly.length === 8) {
+    const dayStr = digitsOnly.slice(0, 2);
+    const monthStr = digitsOnly.slice(2, 4);
+    const yearStr = digitsOnly.slice(4, 8);
 
-      const result = validateAndCorrectDate(dayStr, monthStr, yearStr);
+    const result = validateAndCorrectDate(dayStr, monthStr, yearStr);
 
-      if (result) {
-        const correctedFormatted = format(result.date, "dd/MM/yyyy");
-        setInputValue(correctedFormatted);
-        onChange(format(result.date, "yyyy-MM-dd"));
-        setViewDate(result.date);
-        setError(result.error);
-      } else {
-        setError("תאריך לא תקין");
-      }
+    if (result) {
+      onChange(format(result.date, "yyyy-MM-dd"));
+      setError(result.error);
     } else {
-      setError("");
+      setError("תאריך לא תקין");
     }
-  };
+  } else {
+    setError("");
+  }
+};
 
-  // טיפול בבחירה מהלוח שנה
+  
+
   const handleSelect = (date: Date) => {
-    const today = startOfDay(new Date());
-
-    // אם התאריך בעתיד, השתמש בתאריך של היום
-    const selectedDate = isAfter(date, today) ? today : date;
-
     if (isDateDisabled(date)) return;
 
-    setInputValue(format(date, "dd/MM/yyyy"));
     onChange(format(date, "yyyy-MM-dd"));
-    setViewDate(date);
     setIsOpen(false);
     setError("");
   };
 
-  // הוספת אוטומטית של סלאשים תוך כדי הקלדה
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     const key = e.key;
-
-    // מניעת הוספת תווים לא חוקיים
     if (
       !/[\d/]/.test(key) &&
       !["Backspace", "Delete", "ArrowLeft", "ArrowRight", "Tab"].includes(key)
@@ -258,14 +226,12 @@ export default function CustomDatePicker({
     }
   };
 
-  // Rendering
   return (
     <div className="space-y-2 relative">
       <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mr-1">
         {label}
       </label>
 
-      {/* Input */}
       <div className="relative">
         <input
           type="text"
@@ -279,8 +245,6 @@ export default function CustomDatePicker({
             error ? "border-amber-400 focus:ring-amber-500" : "border-slate-100"
           }`}
         />
-
-        {/* Calendar button */}
         <button
           type="button"
           onClick={() => setIsOpen(!isOpen)}
@@ -290,19 +254,15 @@ export default function CustomDatePicker({
         </button>
       </div>
 
-      {/* Error message */}
       {error && (
         <p className="text-amber-600 text-[10px] font-bold mt-1 animate-in slide-in-from-top-1 duration-200 bg-amber-50 px-3 py-2 rounded-lg border border-amber-200">
           ⚠️ {error}
         </p>
       )}
 
-      {/* Modal */}
       {isOpen && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/50 animate-in fade-in duration-200">
-          {/* Modal Content */}
           <div className="relative bg-white rounded-[2rem] shadow-2xl w-full max-w-md animate-in zoom-in-95 duration-200">
-            {/* Close button */}
             <button
               type="button"
               onClick={() => setIsOpen(false)}
@@ -311,14 +271,12 @@ export default function CustomDatePicker({
               <X size={20} className="text-slate-600" />
             </button>
 
-            {/* Header */}
             <div className="p-6 border-b border-slate-100">
               <h3 className="text-lg font-black text-slate-800 text-center">
                 {label}
               </h3>
             </div>
 
-            {/* Input inside modal */}
             <div className="p-6 border-b border-slate-100">
               <input
                 type="text"
@@ -334,41 +292,29 @@ export default function CustomDatePicker({
                     : "border-slate-100"
                 }`}
               />
-
-              {/* Error message in modal */}
-              {error && (
-                <p className="text-amber-600 text-[10px] font-bold mt-3 animate-in slide-in-from-top-1 duration-200 bg-amber-50 px-3 py-2 rounded-lg border border-amber-200 text-center">
-                  ⚠️ {error}
-                </p>
-              )}
             </div>
 
-            {/* Calendar */}
             <div className="p-6">
-              {/* Header עם ניווט חודשים */}
               <div className="flex justify-between items-center mb-6">
                 <button
                   type="button"
                   onClick={() => setViewDate(subMonths(viewDate, 1))}
-                  className="p-2 hover:bg-slate-100 rounded-full transition-colors"
+                  className="p-2 hover:bg-slate-100 rounded-full"
                 >
                   <ChevronRight size={18} className="text-slate-600" />
                 </button>
-
                 <span className="font-black text-slate-800 text-base">
                   {format(viewDate, "MMMM yyyy", { locale: he })}
                 </span>
-
                 <button
                   type="button"
                   onClick={() => setViewDate(addMonths(viewDate, 1))}
-                  className="p-2 hover:bg-slate-100 rounded-full transition-colors"
+                  className="p-2 hover:bg-slate-100 rounded-full"
                 >
                   <ChevronLeft size={18} className="text-slate-600" />
                 </button>
               </div>
 
-              {/* Weekdays */}
               <div className="grid grid-cols-7 gap-1 text-center mb-3">
                 {["א", "ב", "ג", "ד", "ה", "ו", "ש"].map((d) => (
                   <span
@@ -380,17 +326,15 @@ export default function CustomDatePicker({
                 ))}
               </div>
 
-              {/* Days */}
               <div className="grid grid-cols-7 gap-1 min-h-[240px]">
                 {Array.from({ length: startOfMonth(viewDate).getDay() }).map(
                   (_, i) => (
                     <div key={`empty-${i}`} />
-                  )
+                  ),
                 )}
 
                 {days.map((day) => {
-                  const today = startOfDay(new Date());
-                  const isToday = isSameDay(day, today);
+                  const isDayToday = isSameDay(day, today);
                   const isDisabled = isDateDisabled(day);
                   const isSelected =
                     inputValue &&
@@ -406,10 +350,10 @@ export default function CustomDatePicker({
                         isSelected
                           ? "bg-indigo-600 text-white shadow-lg shadow-indigo-200"
                           : isDisabled
-                          ? "text-slate-300 cursor-not-allowed"
-                          : isToday
-                          ? "bg-indigo-100 text-indigo-700 hover:bg-indigo-200"
-                          : "hover:bg-indigo-50 text-slate-600"
+                            ? "text-slate-300 cursor-not-allowed"
+                            : isDayToday
+                              ? "bg-indigo-100 text-indigo-700 hover:bg-indigo-200"
+                              : "hover:bg-indigo-50 text-slate-600"
                       }`}
                     >
                       {format(day, "d")}
@@ -418,7 +362,6 @@ export default function CustomDatePicker({
                 })}
               </div>
 
-              {/* Select button */}
               <button
                 type="button"
                 onClick={() => {
@@ -429,7 +372,6 @@ export default function CustomDatePicker({
                     }
                   }
                 }}
-                disabled={!inputValue || error !== ""}
                 className="w-full mt-6 py-3 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl transition-colors shadow-lg shadow-indigo-200 disabled:bg-slate-300 disabled:cursor-not-allowed disabled:shadow-none"
               >
                 בחר

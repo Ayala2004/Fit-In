@@ -698,6 +698,93 @@ export async function PATCH() {
   }
 }
 ==============================
+FILE: src/app\api\profile\change-password\route.ts
+==============================
+import { NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { getSession } from "@/lib/auth";
+import bcrypt from "bcrypt";
+
+export async function POST(req: Request) {
+  const session = await getSession();
+  if (!session) return NextResponse.json({ message: "לא מורשה" }, { status: 401 });
+
+  try {
+    const { currentPassword, newPassword } = await req.json();
+
+    const user = await prisma.user.findUnique({ where: { id: session.id } });
+    if (!user) return NextResponse.json({ message: "משתמש לא נמצא" }, { status: 404 });
+
+    const isMatch = await bcrypt.compare(currentPassword, user.password);
+    if (!isMatch) {
+      return NextResponse.json({ message: "הסיסמה הנוכחית שגויה" }, { status: 400 });
+    }
+
+    const hashedNewPassword = await bcrypt.hash(newPassword, 10);
+    await prisma.user.update({
+      where: { id: session.id },
+      data: { password: hashedNewPassword }
+    });
+
+    return NextResponse.json({ message: "הסיסמה עודכנה בהצלחה" });
+  } catch (error) {
+    return NextResponse.json({ message: "שגיאה בעדכון הסיסמה" }, { status: 500 });
+  }
+}
+==============================
+FILE: src/app\api\profile\route.ts
+==============================
+import { NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { getSession } from "@/lib/auth";
+import { decrypt } from "@/utils/crypto";
+
+export async function GET() {
+  const session = await getSession();
+  if (!session) return NextResponse.json({ message: "לא מורשה" }, { status: 401 });
+
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: session.id },
+      include: {
+        supervisor: { select: { firstName: true, lastName: true, phoneNumber: true } },
+        instructor: { select: { firstName: true, lastName: true, phoneNumber: true } },
+        managedInstitutions: { select: { name: true, address: true } },
+      }
+    });
+
+    if (!user) return NextResponse.json({ message: "משתמש לא נמצא" }, { status: 404 });
+
+    // הסרת הסיסמה ופענוח תעודת זהות
+    const { password, ...safeUser } = user;
+    return NextResponse.json({
+      ...safeUser,
+      idNumber: user.idNumber ? decrypt(user.idNumber) : "לא הוזן",
+    });
+  } catch (error) {
+    return NextResponse.json({ message: "שגיאת שרת" }, { status: 500 });
+  }
+}
+
+export async function PATCH(req: Request) {
+  const session = await getSession();
+  if (!session) return NextResponse.json({ message: "לא מורשה" }, { status: 401 });
+
+  try {
+    const body = await req.json();
+    const { firstName, lastName, phoneNumber, address } = body;
+
+    const updated = await prisma.user.update({
+      where: { id: session.id },
+      data: { firstName, lastName, phoneNumber, address }
+    });
+
+    return NextResponse.json(updated);
+  } catch (error) {
+    return NextResponse.json({ message: "שגיאה בעדכון הפרטים" }, { status: 500 });
+  }
+}
+==============================
 FILE: src/app\api\rotation\dashboard\route.ts
 ==============================
 import { NextResponse } from 'next/server';
@@ -734,7 +821,7 @@ export async function GET() {
         date: { gte: startOfDay(new Date()) }
       },
       include: {
-        institution: { select: { name: true } },
+        institution: { select: { name: true, address: true } },
         mainTeacher: { select: { firstName: true, lastName: true } },
         substitute: { select: { firstName: true, lastName: true } }
       },
@@ -3191,6 +3278,14 @@ export default function InstructorDashboard() {
 }
 
 ==============================
+FILE: src/app\instructor\profile\page.tsx
+==============================
+import PersonalProfileView from "@/components/PersonalProfileView";
+
+export default function ProfilePage() {
+  return <PersonalProfileView />;
+}
+==============================
 FILE: src/app\instructor\staff\page.tsx
 ==============================
 "use client";
@@ -3857,6 +3952,14 @@ export default function ManagerDashboard() {
 }
 
 ==============================
+FILE: src/app\manager\profile\page.tsx
+==============================
+import PersonalProfileView from "@/components/PersonalProfileView";
+
+export default function ProfilePage() {
+  return <PersonalProfileView />;
+}
+==============================
 FILE: src/app\not-found.tsx
 ==============================
 "use client";
@@ -4126,7 +4229,7 @@ import {
   Plus,
   ChevronLeft,
   Building2,
-  RefreshCcwDot
+  RefreshCcwDot,
 } from "lucide-react";
 import LoadingScreen from "@/components/ui/LoadingScreen";
 import CustomDatePicker from "@/components/ui/CustomDatePicker";
@@ -4220,6 +4323,7 @@ export default function RotationDashboard() {
     const todayAct = data?.placements?.find(
       (p: any) => new Date(p.date).toDateString() === today.toDateString(),
     );
+    
 
     // 2. חיפוש גן קבוע בלו"ז
     const fixed = data?.fixedSchedule?.find((s: any) => s.day === dayNameEn);
@@ -4234,7 +4338,7 @@ export default function RotationDashboard() {
         icon: <AlertCircle size={32} />,
       };
     }
-
+    console.log("todayAct:", todayAct);
     // מקרה ב': אני רשומה כמחליפה (מישהו ביקש ממני להגיע, או החלפה פנימית)
     if (todayAct && todayAct.substituteId === user?.id) {
       return {
@@ -4328,18 +4432,6 @@ export default function RotationDashboard() {
               </div>
             </div>
           </div>
-
-          {/* כפתור מהיר / תג סטטוס */}
-          <div className="bg-white/50 backdrop-blur-sm px-6 py-4 rounded-3xl border border-black/5 flex items-center gap-3">
-            <div
-              className={`w-2.5 h-2.5 rounded-full animate-pulse ${
-                status.type === "ABSENT" ? "bg-red-500" : "bg-emerald-500"
-              }`}
-            />
-            <span className="font-black text-sm uppercase">
-              {status.type === "ABSENT" ? "לא בעבודה" : "פעילה במערכת"}
-            </span>
-          </div>
         </div>
 
         {/* עיטור רקע עדין */}
@@ -4399,7 +4491,7 @@ export default function RotationDashboard() {
         {/* עדכונים ושינויים */}
         <div className="space-y-6">
           <h2 className="text-xl font-black text-slate-800 flex items-center gap-2">
-            <RefreshCcwDot  size={22} className="text-slate-400" />
+            <RefreshCcwDot size={22} className="text-slate-400" />
             שינויים ועדכונים
           </h2>
 
@@ -4471,6 +4563,14 @@ export default function RotationDashboard() {
 }
 
 ==============================
+FILE: src/app\rotation\profile\page.tsx
+==============================
+import PersonalProfileView from "@/components/PersonalProfileView";
+
+export default function ProfilePage() {
+  return <PersonalProfileView />;
+}
+==============================
 FILE: src/app\substitute\layout.tsx
 ==============================
 import SubstituteNavbar from "@/components/NavBars/SubstituteNavbar";
@@ -4483,7 +4583,7 @@ export default function SubstituteLayout({
   return (
     <div className="min-h-screen bg-[#F8FAFC]" dir="rtl">
       <SubstituteNavbar /> 
-      <main className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8  max-h-[90vh] overflow-y-hidden ">
+      <main className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8">
         {children}
       </main>
     </div>
@@ -4495,17 +4595,9 @@ FILE: src/app\substitute\page.tsx
 "use client";
 import { useEffect, useState } from "react";
 import {
-  Briefcase,
   MapPin,
   Calendar as CalendarIcon,
-  User,
-  Star,
-  CheckCircle2,
-  ChevronLeft,
   Info,
-  Clock,
-  Building2,
-  RefreshCcwDot,
   CalendarCheck,
 } from "lucide-react";
 import LoadingScreen from "@/components/ui/LoadingScreen";
@@ -4555,7 +4647,7 @@ export default function SubstituteDashboard() {
   if (loading) return <LoadingScreen message="מחפש עבורך הזדמנויות החלפה..." />;
 
   return (
-<div className="space-y-10 animate-in fade-in duration-500 pb-20">
+<div className="space-y-10 animate-in fade-in duration-500 pb-20 max-h-[80vh] overflow-y-hidden">
   {/* Header */}
   <div className="flex flex-col gap-2">
     <h1 className="text-3xl font-black text-slate-900">מרכז שיבוצים</h1>
@@ -4695,6 +4787,14 @@ export default function SubstituteDashboard() {
   );
 }
 
+==============================
+FILE: src/app\substitute\profile\page.tsx
+==============================
+import PersonalProfileView from "@/components/PersonalProfileView";
+
+export default function ProfilePage() {
+  return <PersonalProfileView />;
+}
 ==============================
 FILE: src/app\supervisor\calendar\page.tsx
 ==============================
@@ -6543,6 +6643,14 @@ export default function DistrictManagementPage() {
   );
 }
 
+==============================
+FILE: src/app\supervisor\profile\page.tsx
+==============================
+import PersonalProfileView from "@/components/PersonalProfileView";
+
+export default function ProfilePage() {
+  return <PersonalProfileView />;
+}
 ==============================
 FILE: src/app\supervisor\statistics\page.tsx
 ==============================
@@ -10036,7 +10144,14 @@ FILE: src/components\NavBars\InstructorNavbar.tsx
 import { useEffect, useState } from "react"; // הוספת useState/useEffect לשליפת תפקידים
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { LayoutDashboard, Calendar, LogOut, Users, Home } from "lucide-react"; // הוספנו אייקון Home
+import {
+  LayoutDashboard,
+  Calendar,
+  LogOut,
+  Users,
+  Home,
+  UserCircle,
+} from "lucide-react"; // הוספנו אייקון Home
 import NotificationBell from "../NotificationBell";
 
 export default function InstructorNavbar() {
@@ -10046,8 +10161,8 @@ export default function InstructorNavbar() {
 
   useEffect(() => {
     fetch("/api/auth/me")
-      .then(res => res.json())
-      .then(data => setUserRoles(data.roles || []));
+      .then((res) => res.json())
+      .then((data) => setUserRoles(data.roles || []));
   }, []);
 
   const handleLogout = async () => {
@@ -10065,36 +10180,71 @@ export default function InstructorNavbar() {
         <div className="flex justify-between h-16 items-center">
           <div className="flex items-center gap-6">
             <div className="flex items-center gap-3">
-              <div className="bg-indigo-600 text-white p-2 rounded-xl font-bold shadow-md">FitIn</div>
-              <span className="text-lg font-extrabold text-slate-800 hidden md:block">מרכז הדרכה</span>
+              <div className="bg-indigo-600 text-white p-2 rounded-xl font-bold shadow-md">
+                FitIn
+              </div>
+              <span className="text-lg font-extrabold text-slate-800 hidden md:block">
+                מרכז הדרכה
+              </span>
             </div>
 
             <div className="flex items-center gap-2">
               {/* כפתורי המדריכה הרגילים */}
-              <Link href="/instructor" className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all ${isActive("/instructor") ? "bg-indigo-50 text-indigo-600" : "text-slate-500 hover:bg-slate-50"}`}>
+              <Link
+                href="/instructor"
+                className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all ${isActive("/instructor") ? "bg-indigo-50 text-indigo-600" : "text-slate-500 hover:bg-slate-50"}`}
+              >
                 <LayoutDashboard size={18} />
                 <span>הגנים שלי</span>
               </Link>
-              
-              <Link href="/instructor/calendar" className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all ${isActive("/instructor/calendar") ? "bg-indigo-50 text-indigo-600" : "text-slate-500 hover:bg-slate-50"}`}>
+
+              <Link
+                href="/instructor/calendar"
+                className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all ${isActive("/instructor/calendar") ? "bg-indigo-50 text-indigo-600" : "text-slate-500 hover:bg-slate-50"}`}
+              >
                 <Calendar size={18} />
                 <span>לוח שיבוצים</span>
               </Link>
 
-
-              {/* --- ההוספה עבור גננת אם --- */}
               {userRoles.includes("MANAGER") && (
-                <Link href="/manager" className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all text-purple-600 hover:bg-purple-50  ${isActive("/manager") ? "text-purple-600 hover:bg-purple-50 " : "text-purple-600 hover:bg-purple-50 "}`}>
-                  <Home size={18} className={isActive("/manager") ? "text-purple-600 hover:bg-purple-50 " : "text-purple-600 hover:bg-purple-50 "} />
-                  <span className="text-purple-600 hover:bg-purple-50 ">הגן שלי (ניהול אישי)</span>
+                <Link
+                  href="/manager"
+                  className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all text-purple-600 hover:bg-purple-50  ${isActive("/manager") ? "text-purple-600 hover:bg-purple-50 " : "text-purple-600 hover:bg-purple-50 "}`}
+                >
+                  <Home
+                    size={18}
+                    className={
+                      isActive("/manager")
+                        ? "text-purple-600 hover:bg-purple-50 "
+                        : "text-purple-600 hover:bg-purple-50 "
+                    }
+                  />
+                  <span className="text-purple-600 hover:bg-purple-50 ">
+                    הגן שלי (ניהול אישי)
+                  </span>
                 </Link>
               )}
+
+              <Link
+                href="/instructor/profile"
+                className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all ${
+                  isActive("/instructor/profile")
+                    ? "bg-blue-50 text-blue-600"
+                    : "text-slate-500 hover:bg-slate-50"
+                }`}
+              >
+                <UserCircle size={18} />
+                <span>איזור אישי</span>
+              </Link>
             </div>
           </div>
 
           <div className="flex items-center gap-4">
             <NotificationBell />
-            <button onClick={handleLogout} className="flex items-center gap-2 text-sm font-bold text-red-500 hover:bg-red-50 px-4 py-2 rounded-xl">
+            <button
+              onClick={handleLogout}
+              className="flex items-center gap-2 text-sm font-bold text-red-500 hover:bg-red-50 px-4 py-2 rounded-xl"
+            >
               <LogOut size={18} />
               <span className="hidden sm:inline">התנתקות</span>
             </button>
@@ -10104,6 +10254,7 @@ export default function InstructorNavbar() {
     </nav>
   );
 }
+
 ==============================
 FILE: src/components\NavBars\ManagerNavbar.tsx
 ==============================
@@ -10112,7 +10263,7 @@ FILE: src/components\NavBars\ManagerNavbar.tsx
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { LayoutDashboard, LogOut, GraduationCap } from "lucide-react"; // אייקון הדרכה
+import { LayoutDashboard, LogOut, GraduationCap, UserCircle } from "lucide-react"; // אייקון הדרכה
 import NotificationBell from "../NotificationBell";
 
 export default function ManagerNavbar() {
@@ -10122,8 +10273,8 @@ export default function ManagerNavbar() {
 
   useEffect(() => {
     fetch("/api/auth/me")
-      .then(res => res.json())
-      .then(data => setUserRoles(data.roles || []));
+      .then((res) => res.json())
+      .then((data) => setUserRoles(data.roles || []));
   }, []);
 
   const handleLogout = async () => {
@@ -10141,29 +10292,53 @@ export default function ManagerNavbar() {
         <div className="flex justify-between h-16 items-center">
           <div className="flex items-center gap-8">
             <div className="flex items-center gap-3">
-              <div className="bg-indigo-600 text-white p-2 rounded-xl font-bold">FitIn</div>
-              <span className="text-lg font-extrabold text-slate-800">מרכז ניהול גן</span>
+              <div className="bg-indigo-600 text-white p-2 rounded-xl font-bold">
+                FitIn
+              </div>
+              <span className="text-lg font-extrabold text-slate-800">
+                מרכז ניהול גן
+              </span>
             </div>
 
             <div className="flex items-center gap-2">
-                <Link href="/manager" className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all ${isActive("/manager") ? "bg-indigo-50 text-indigo-600" : "text-slate-500 hover:bg-slate-50"}`}>
+              <Link
+                href="/manager"
+                className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all ${isActive("/manager") ? "bg-indigo-50 text-indigo-600" : "text-slate-500 hover:bg-slate-50"}`}
+              >
                 <LayoutDashboard size={18} />
                 <span>הגן שלי</span>
-                </Link>
+              </Link>
 
-                {/* --- הוספת כפתור חזרה להדרכה --- */}
-                {userRoles.includes("INSTRUCTOR") && (
-                    <Link href="/instructor" className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold text-purple-600 hover:bg-purple-50 transition-all">
-                        <GraduationCap size={18} />
-                        <span>ממשק הדרכה</span>
-                    </Link>
-                )}
+              {userRoles.includes("INSTRUCTOR") && (
+                <Link
+                  href="/instructor"
+                  className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold text-purple-600 hover:bg-purple-50 transition-all"
+                >
+                  <GraduationCap size={18} />
+                  <span>ממשק הדרכה</span>
+                </Link>
+              )}
+
+              <Link
+                href="/manager/profile"
+                className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all ${
+                  isActive("/manager/profile")
+                    ? "bg-blue-50 text-blue-600"
+                    : "text-slate-500 hover:bg-slate-50"
+                }`}
+              >
+                <UserCircle size={18} />
+                <span>איזור אישי</span>
+              </Link>
             </div>
           </div>
 
           <div className="flex items-center gap-4">
             <NotificationBell />
-            <button onClick={handleLogout} className="text-sm font-bold text-red-500 hover:bg-red-50 px-4 py-2 rounded-xl flex items-center gap-2">
+            <button
+              onClick={handleLogout}
+              className="text-sm font-bold text-red-500 hover:bg-red-50 px-4 py-2 rounded-xl flex items-center gap-2"
+            >
               <LogOut size={18} />
               התנתקות
             </button>
@@ -10173,6 +10348,7 @@ export default function ManagerNavbar() {
     </nav>
   );
 }
+
 ==============================
 FILE: src/components\NavBars\RotationNavbar.tsx
 ==============================
@@ -10180,7 +10356,7 @@ FILE: src/components\NavBars\RotationNavbar.tsx
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Calendar, LogOut, LayoutDashboard } from "lucide-react";
+import { Calendar, LogOut, LayoutDashboard, UserCircle } from "lucide-react";
 import NotificationBell from "../NotificationBell";
 
 export default function RotationNavbar() {
@@ -10190,8 +10366,8 @@ export default function RotationNavbar() {
 
   useEffect(() => {
     fetch("/api/auth/me")
-      .then(res => res.json())
-      .then(data => setUserRoles(data.roles || []));
+      .then((res) => res.json())
+      .then((data) => setUserRoles(data.roles || []));
   }, []);
 
   const handleLogout = async () => {
@@ -10207,26 +10383,40 @@ export default function RotationNavbar() {
     <nav className="bg-white shadow-sm border-b border-slate-200 sticky top-0 z-40">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between h-16 items-center">
-          
           <div className="flex items-center gap-8">
             {/* Logo */}
             <div className="flex items-center gap-3">
-              <div className="bg-indigo-600 text-white p-2 rounded-xl font-bold shadow-md shadow-indigo-100">FitIn</div>
-              <span className="text-lg font-extrabold text-slate-800 hidden md:block">צוות רוטציה</span>
+              <div className="bg-indigo-600 text-white p-2 rounded-xl font-bold shadow-md shadow-indigo-100">
+                FitIn
+              </div>
+              <span className="text-lg font-extrabold text-slate-800 hidden md:block">
+                צוות רוטציה
+              </span>
             </div>
 
             {/* Navigation Links */}
             <div className="flex items-center gap-2">
-              <Link 
-                href="/rotation" 
+              <Link
+                href="/rotation"
                 className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all ${
-                  isActive("/rotation") 
-                    ? "bg-indigo-50 text-indigo-600" 
+                  isActive("/rotation")
+                    ? "bg-indigo-50 text-indigo-600"
                     : "text-slate-500 hover:bg-slate-50"
                 }`}
               >
                 <Calendar size={18} />
                 <span>הלו"ז שלי</span>
+              </Link>
+              <Link
+                href="/rotation/profile"
+                className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all ${
+                  isActive("/rotation/profile")
+                    ? "bg-blue-50 text-blue-600"
+                    : "text-slate-500 hover:bg-slate-50"
+                }`}
+              >
+                <UserCircle size={18} />
+                <span>איזור אישי</span>
               </Link>
             </div>
           </div>
@@ -10236,20 +10426,20 @@ export default function RotationNavbar() {
             <NotificationBell />
 
             {/* Logout Button */}
-            <button 
-              onClick={handleLogout} 
+            <button
+              onClick={handleLogout}
               className="flex items-center gap-2 text-sm font-bold text-red-500 hover:bg-red-50 px-4 py-2 rounded-xl transition-colors border border-transparent hover:border-red-100"
             >
               <LogOut size={18} />
               <span className="hidden sm:inline">התנתקות</span>
             </button>
           </div>
-
         </div>
       </div>
     </nav>
   );
 }
+
 ==============================
 FILE: src/components\NavBars\SubstituteNavbar.tsx
 ==============================
@@ -10257,7 +10447,7 @@ FILE: src/components\NavBars\SubstituteNavbar.tsx
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Briefcase, LogOut } from "lucide-react";
+import { Briefcase, LogOut, UserCircle } from "lucide-react";
 import NotificationBell from "../NotificationBell";
 
 export default function SubstituteNavbar() {
@@ -10277,44 +10467,58 @@ export default function SubstituteNavbar() {
     <nav className="bg-white shadow-sm border-b border-slate-200 sticky top-0 z-40">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between h-16 items-center">
-          
           <div className="flex items-center gap-8">
             <div className="flex items-center gap-3">
-              <div className="bg-indigo-600 text-white p-2 rounded-xl font-bold shadow-md shadow-indigo-100">FitIn</div>
-              <span className="text-lg font-extrabold text-slate-800 hidden md:block">צוות מחליף</span>
+              <div className="bg-indigo-600 text-white p-2 rounded-xl font-bold shadow-md shadow-indigo-100">
+                FitIn
+              </div>
+              <span className="text-lg font-extrabold text-slate-800 hidden md:block">
+                צוות מחליף
+              </span>
             </div>
 
             <div className="flex items-center gap-2">
-              <Link 
-                href="/substitute" 
+              <Link
+                href="/substitute"
                 className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all ${
-                  isActive("/substitute") 
-                    ? "bg-indigo-50 text-indigo-600" 
+                  isActive("/substitute")
+                    ? "bg-indigo-50 text-indigo-600"
                     : "text-slate-500 hover:bg-slate-50"
                 }`}
               >
                 <Briefcase size={18} />
                 <span>מרכז שיבוצים</span>
               </Link>
+              <Link
+                href="/substitute/profile"
+                className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all ${
+                  isActive("/substitute/profile")
+                    ? "bg-blue-50 text-blue-600"
+                    : "text-slate-500 hover:bg-slate-50"
+                }`}
+              >
+                <UserCircle size={18} />
+                <span>איזור אישי</span>
+              </Link>
             </div>
           </div>
 
           <div className="flex items-center gap-4">
             <NotificationBell />
-            <button 
-              onClick={handleLogout} 
+            <button
+              onClick={handleLogout}
               className="flex items-center gap-2 text-sm font-bold text-red-500 hover:bg-red-50 px-4 py-2 rounded-xl transition-colors"
             >
               <LogOut size={18} />
               <span className="hidden sm:inline">התנתקות</span>
             </button>
           </div>
-
         </div>
       </div>
     </nav>
   );
 }
+
 ==============================
 FILE: src/components\NavBars\SupervisorNavbar.tsx
 ==============================
@@ -10328,6 +10532,7 @@ import {
   LogOut,
   PieChartIcon,
   BarChart3,
+  UserCircle,
 } from "lucide-react";
 import NotificationBell from "../NotificationBell";
 export default function SupervisorNavbar() {
@@ -10405,10 +10610,21 @@ export default function SupervisorNavbar() {
                 <BarChart3 size={18} />
                 <span>סטטיסטיקה</span>
               </Link>
+              <Link
+                href="/supervisor/profile"
+                className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all ${
+                  isActive("/supervisor/profile")
+                    ? "bg-blue-50 text-blue-600"
+                    : "text-slate-500 hover:bg-slate-50"
+                }`}
+              >
+                <UserCircle size={18} />
+                <span>איזור אישי</span>
+              </Link>
             </div>
           </div>
           <div className="flex items-center gap-4">
-            <NotificationBell /> 
+            <NotificationBell />
             <button
               onClick={handleLogout}
               className="flex items-center gap-2 text-sm font-bold text-red-500 hover:bg-red-50 px-4 py-2 rounded-xl transition-all border border-transparent hover:border-red-100"
@@ -10417,7 +10633,6 @@ export default function SupervisorNavbar() {
               <span className="hidden sm:inline">התנתקות</span>
             </button>
           </div>
-
         </div>
       </div>
     </nav>
@@ -10590,6 +10805,362 @@ export default function NotificationsList() {
             </div>
           ))
         )}
+      </div>
+    </div>
+  );
+}
+
+==============================
+FILE: src/components\PersonalProfileView.tsx
+==============================
+"use client";
+import { useState, useEffect } from "react";
+import {
+  User,
+  Lock,
+  Phone,
+  Mail,
+  MapPin,
+  Shield,
+  Save,
+  Key,
+  UserCircle,
+  CreditCard,
+  Calendar,
+  BriefcaseBusiness,
+} from "lucide-react";
+import LoadingScreen from "@/components/ui/LoadingScreen";
+
+export default function PersonalProfileView() {
+  const [user, setUser] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState<"INFO" | "SECURITY">("INFO");
+  const [saving, setSaving] = useState(false);
+  const [formData, setFormData] = useState({
+    firstName: "",
+    lastName: "",
+    phoneNumber: "",
+    address: "",
+  });
+  const [passwords, setPasswords] = useState({
+    current: "",
+    new: "",
+    confirm: "",
+  });
+
+  useEffect(() => {
+    fetch("/api/profile")
+      .then((res) => res.json())
+      .then((data) => {
+        setUser(data);
+        setFormData({
+          firstName: data.firstName,
+          lastName: data.lastName,
+          phoneNumber: data.phoneNumber,
+          address: data.address || "",
+        });
+        setLoading(false);
+      });
+  }, []);
+
+  const handleUpdateInfo = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      const res = await fetch("/api/profile", {
+        method: "PATCH",
+        body: JSON.stringify(formData),
+        headers: { "Content-Type": "application/json" },
+      });
+      if (res.ok) alert("הפרטים עודכנו בהצלחה ✨");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (passwords.new !== passwords.confirm)
+      return alert("הסיסמאות החדשות לא תואמות");
+    setSaving(true);
+    const res = await fetch("/api/profile/change-password", {
+      method: "POST",
+      body: JSON.stringify({
+        currentPassword: passwords.current,
+        newPassword: passwords.new,
+      }),
+      headers: { "Content-Type": "application/json" },
+    });
+    const data = await res.json();
+    alert(data.message);
+    if (res.ok) setPasswords({ current: "", new: "", confirm: "" });
+    setSaving(false);
+  };
+
+  if (loading) return <LoadingScreen message="טוען פרופיל אישי..." />;
+
+  return (
+    <div className="min-h-screen bg-slate-50 p-4 md:p-8" dir="rtl">
+      <div className="max-w-200 mx-auto space-y-6">
+        {/* Header Card */}
+        <div className="bg-white rounded-[2.5rem] p-8 shadow-sm border border-slate-100 flex flex-col md:flex-row items-center gap-6 relative overflow-hidden">
+          <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/5 rounded-full -mr-16 -mt-16" />
+          <div className="w-24 h-24 bg-indigo-600 rounded-3xl flex items-center justify-center text-white text-3xl font-black shadow-xl shadow-indigo-100 relative z-10">
+            {user.firstName[0]}
+          </div>
+          <div className="text-center md:text-right relative z-10">
+            <h1 className="text-3xl font-black text-slate-800">
+              {user.firstName} {user.lastName}
+            </h1>
+            <p className="text-slate-500 font-bold flex items-center justify-center md:justify-start gap-2 mt-1">
+              <BriefcaseBusiness size={16} className="text-indigo-500" />
+              {user.roles.includes("SUPERVISOR")
+                ? "מפקחת"
+                : user.roles.includes("INSTRUCTOR")
+                  ? user.roles.includes("MANAGER")
+                    ? "מדריכה וגננת אם"
+                    : "מדריכה"
+                  : user.roles.includes("MANAGER")
+                    ? "גננת אם"
+                    : user.roles.includes("SUBSTITUTE")
+                      ? "מחליפה"
+                      : user.roles.includes("ROTATION")
+                        ? "גננת משלימה"
+                        : "צוות הוראה"}
+            </p>
+          </div>
+        </div>
+
+        {/* Tabs */}
+        <div className="bg-white rounded-[2.5rem] border border-slate-100 shadow-sm overflow-hidden">
+          <div className="flex border-b border-slate-200">
+            <button
+              onClick={() => setActiveTab("INFO")}
+              className={`flex-1 py-3 font-black text-sm transition-all ${
+                activeTab === "INFO"
+                  ? "border-b-4 border-indigo-600 text-indigo-600"
+                  : "text-slate-500 hover:text-slate-700"
+              }`}
+            >
+              פרטים אישיים
+            </button>
+            <button
+              onClick={() => setActiveTab("SECURITY")}
+              className={`flex-1 py-3 font-black text-sm transition-all ${
+                activeTab === "SECURITY"
+                  ? "border-b-4 border-indigo-600 text-indigo-600"
+                  : "text-slate-500 hover:text-slate-700"
+              }`}
+            >
+              אבטחה וסיסמה
+            </button>
+          </div>
+
+          {/* Main Content */}
+          <div className="p-8 space-y-6">
+            {activeTab === "INFO" && (
+              <>
+                <form onSubmit={handleUpdateInfo} className="space-y-6">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-1">
+                      <label className="text-xs font-black text-slate-400 uppercase">
+                        שם פרטי
+                      </label>
+                      <input
+                        value={formData.firstName}
+                        onChange={(e) =>
+                          setFormData({
+                            ...formData,
+                            firstName: e.target.value,
+                          })
+                        }
+                        className="w-full p-3.5 bg-slate-50 border-none rounded-2xl font-bold text-slate-700 focus:ring-2 focus:ring-indigo-500"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-xs font-black text-slate-400 uppercase">
+                        שם משפחה
+                      </label>
+                      <input
+                        value={formData.lastName}
+                        onChange={(e) =>
+                          setFormData({ ...formData, lastName: e.target.value })
+                        }
+                        className="w-full p-3.5 bg-slate-50 border-none rounded-2xl font-bold text-slate-700 focus:ring-2 focus:ring-indigo-500"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-xs font-black text-slate-400 uppercase">
+                      טלפון ליצירת קשר
+                    </label>
+                    <div className="relative">
+                      <input
+                        value={formData.phoneNumber}
+                        onChange={(e) =>
+                          setFormData({
+                            ...formData,
+                            phoneNumber: e.target.value,
+                          })
+                        }
+                        className="w-full p-3.5 bg-slate-50 border-none rounded-2xl font-bold text-slate-700 pr-10"
+                      />
+                      <Phone
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-300"
+                        size={18}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-xs font-black text-slate-400 uppercase">
+                      כתובת מגורים
+                    </label>
+                    <div className="relative">
+                      <input
+                        value={formData.address}
+                        onChange={(e) =>
+                          setFormData({ ...formData, address: e.target.value })
+                        }
+                        className="w-full p-3.5 bg-slate-50 border-none rounded-2xl font-bold text-slate-700 pr-10"
+                        placeholder="עיר, רחוב ומספר"
+                      />
+                      <MapPin
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-300"
+                        size={18}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Employment Details (Read Only) */}
+                  <div className="pt-6 border-t border-slate-100 space-y-4 flex flex-col">
+                    <div className="flex flex-col">
+                      <h3 className="text-sm font-black text-slate-400 uppercase tracking-widest">
+                        מידע ארגוני
+                      </h3>
+                      <span className="text-[10px] text-slate-400 font-semibold">
+                        לא ניתן לשינוי, במידת הצורך פני למפקחת
+                      </span>
+                    </div>
+                    <div
+                      className={`grid grid-cols-1 ${user.instructor ? "md:grid-cols-3" : "md:grid-cols-2"}  gap-4`}
+                    >
+                      <div className="p-4 bg-slate-50 rounded-2xl cursor-not-allowed">
+                        <p className="text-[10px] font-bold text-slate-400">
+                          תעודת זהות
+                        </p>
+                        <p className="font-black text-slate-400">
+                          {user.idNumber}
+                        </p>
+                      </div>
+                      <div className="p-4 bg-slate-50 rounded-2xl cursor-not-allowed">
+                        <p className="text-[10px] font-bold text-slate-400">
+                          אימייל מערכת
+                        </p>
+                        <p className="font-black text-slate-400">
+                          {user.email}
+                        </p>
+                      </div>
+                      {user.instructor && (
+                        <div className="p-4 bg-slate-50 rounded-2xl cursor-not-allowed">
+                          <p className="text-[10px] font-bold text-slate-400">
+                            מדריכה מלווה
+                          </p>
+                          <p className="font-black text-slate-400">
+                            {user.instructor.firstName}{" "}
+                            {user.instructor.lastName}
+                          </p>
+                        </div>
+                      )}
+                     
+                    </div>
+                  </div>
+
+                  {/* Save Button */}
+                  <button
+                    type="submit"
+                    disabled={saving}
+                    className="w-full py-4 bg-slate-800 text-white rounded-2xl font-black shadow-lg hover:bg-slate-900 transition-all flex items-center justify-center gap-2 mt-6"
+                  >
+                    {saving ? (
+                      "שומר..."
+                    ) : (
+                      <>
+                        <Save size={18} /> שמירת שינויים
+                      </>
+                    )}
+                  </button>
+                </form>
+              </>
+            )}
+
+            {activeTab === "SECURITY" && (
+              <form onSubmit={handleChangePassword} className="space-y-6">
+                <div className="space-y-1">
+                  <label className="text-xs font-black text-slate-400 uppercase">
+                    סיסמה נוכחית
+                  </label>
+                  <input
+                    type="password"
+                    required
+                    value={passwords.current}
+                    onChange={(e) =>
+                      setPasswords({ ...passwords, current: e.target.value })
+                    }
+                    className="w-full p-3.5 bg-slate-50 border-none rounded-2xl font-bold focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+                <div className="h-px bg-slate-100 my-4" />
+                <div className="space-y-1">
+                  <label className="text-xs font-black text-slate-400 uppercase">
+                    סיסמה חדשה
+                  </label>
+                  <input
+                    type="password"
+                    required
+                    value={passwords.new}
+                    onChange={(e) =>
+                      setPasswords({ ...passwords, new: e.target.value })
+                    }
+                    className="w-full p-3.5 bg-slate-50 border-none rounded-2xl font-bold focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-black text-slate-400 uppercase">
+                    אימות סיסמה חדשה
+                  </label>
+                  <input
+                    type="password"
+                    required
+                    value={passwords.confirm}
+                    onChange={(e) =>
+                      setPasswords({ ...passwords, confirm: e.target.value })
+                    }
+                    className="w-full p-3.5 bg-slate-50 border-none rounded-2xl font-bold focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={saving}
+                  className="w-full py-4 bg-slate-800 text-white rounded-2xl font-black shadow-lg hover:bg-slate-900 transition-all flex items-center justify-center gap-2 mt-6"
+                >
+                  {saving ? "מעדכן..." : "עדכון סיסמה"}
+                </button>
+
+                <div className="mt-8 p-4 bg-amber-50 rounded-2xl border border-amber-100 flex gap-3">
+                  <Lock className="text-amber-500 shrink-0" size={20} />
+                  <p className="text-xs text-amber-800 font-bold leading-relaxed">
+                    שימי לב: לאחר שינוי הסיסמה תצטרכי להשתמש בסיסמה החדשה בכל
+                    כניסה עתידית למערכת. מומלץ לבחור סיסמה חזקה המשלבת אותיות
+                    ומספרים.
+                  </p>
+                </div>
+              </form>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -12308,7 +12879,6 @@ export async function middleware(request: NextRequest) {
   if (pathname.startsWith('/rotation') && !payload.roles.includes('ROTATION')) {
     return NextResponse.redirect(new URL(getHomePath(payload.roles), request.url));
   }
-  // <--- הוספת הגנה לנתיב מחליפה:
   if (pathname.startsWith('/substitute') && !payload.roles.includes('SUBSTITUTE')) {
     return NextResponse.redirect(new URL(getHomePath(payload.roles), request.url));
   }

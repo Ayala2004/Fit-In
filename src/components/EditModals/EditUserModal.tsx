@@ -209,8 +209,12 @@ export default function EditUserModal({
         onUpdateSuccess();
         onClose(); // סוגרים את הכל
       }
+       else {
+      const err = await res.json();
+      alert(err.message || "שגיאה בביטול ההשבתה");
+    }
     } catch (err) {
-      alert("שגיאה בביטול ההשבתה");
+      alert("שגיאת תקשורת");
     } finally {
       setLoading(false);
     }
@@ -614,7 +618,7 @@ export default function EditUserModal({
             isOpen={showReassignModal}
             teachers={orphanedTeachers}
             instructors={instructors}
-            excludedId={lastDisabledId} // <-- שליחת ה-ID להחרגה
+            excludedId={user.id} 
             isForced={true}
             onCancelDisabling={handleCancelDisabling}
             onComplete={(remaining?: any) => {
