@@ -268,13 +268,6 @@ export default function StatisticsPage() {
               </h2>
             </div>
           </div>
-
-          {/* User Specific */}
-          {stats.userSpecific && (
-            <div className="border-sky-600 p-10 rounded-[3rem] text-gray-800 relative overflow-hidden shadow-xl shadow-indigo-100">
-              {/* ... אותו קוד של הכרטיס האישי בדיוק כמו קודם ... */}
-            </div>
-          )}
         </>
       )}
       {isDetailsOpen && selectedUser && (
