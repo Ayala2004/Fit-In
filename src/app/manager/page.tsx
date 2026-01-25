@@ -1,6 +1,7 @@
-// src/app/manager/page.tsx
 "use client";
-import { useEffect, useState } from "react";
+import { useState, useMemo } from "react";
+import useSWR from "swr"; // ייבוא SWR
+import { fetcher } from "@/utils/fetcher";
 import {
   MapPin,
   CheckCircle2,
@@ -9,56 +10,40 @@ import {
   Phone,
   Calendar,
   Building2,
-  Sparkles,
   AlertCircle,
   User,
-  MessageCircle,
 } from "lucide-react";
 import LoadingScreen from "@/components/ui/LoadingScreen";
 import ManagerReportModal from "@/components/AddModals/ManagerReportModal";
 
 export default function ManagerDashboard() {
-  const [data, setData] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
-  const [user, setUser] = useState<any>(null);
   const [isReportModalOpen, setIsReportModalOpen] = useState(false);
 
-  const loadDashboard = async () => {
-    try {
-      setLoading(true);
-      const [dbRes, userRes] = await Promise.all([
-        fetch("/api/manager/dashboard"),
-        fetch("/api/auth/me"),
-      ]);
+  // 1. טעינת נתוני משתמש (SWR)
+  const { data: user } = useSWR("/api/auth/me", fetcher);
 
-      if (dbRes.ok && userRes.ok) {
-        const dbData = await dbRes.json();
-        const userData = await userRes.json();
-        setData(dbData);
-        setUser(userData);
-      }
-    } catch (e) {
-      console.error("Failed to load dashboard:", e);
-    } finally {
-      setLoading(false);
-    }
-  };
+  // 2. טעינת דאשבורד גננת אם בזמן אמת (5 שניות)
+  const { 
+    data, 
+    error, 
+    isLoading, 
+    mutate 
+  } = useSWR("/api/manager/dashboard", fetcher, {
+    refreshInterval: 5000,
+  });
 
-  useEffect(() => {
-    loadDashboard();
-  }, []);
+  // חישובים מבוססי נתונים (שימוש ב-useMemo לביצועים)
+  const todaysPlacement = useMemo(() => {
+    return data?.placements?.find(
+      (p: any) => new Date(p.date).toDateString() === new Date().toDateString()
+    );
+  }, [data]);
 
-  if (loading) return <LoadingScreen message="טוען את נתוני הגן שלך..." />;
-  if (!data)
-    return <div className="p-10 text-center">שגיאה בטעינת הנתונים</div>;
-
-  const todaysPlacement = data.placements?.find(
-    (p: any) => new Date(p.date).toDateString() === new Date().toDateString()
-  );
-
-  const upcomingPlacements = data.placements.filter(
-    (p: any) => new Date(p.date).toDateString() !== new Date().toDateString()
-  );
+  const upcomingPlacements = useMemo(() => {
+    return data?.placements?.filter(
+      (p: any) => new Date(p.date).toDateString() !== new Date().toDateString()
+    ) || [];
+  }, [data]);
 
   const dayMap: any = {
     SUNDAY: "ראשון",
@@ -69,6 +54,11 @@ export default function ManagerDashboard() {
     FRIDAY: "שישי",
   };
 
+  // מצב טעינה ראשוני
+  if (isLoading && !data) return <LoadingScreen message="טוען את נתוני הגן שלך..." />;
+  
+  // טיפול בשגיאה
+  if (error || (!data && !isLoading)) return <div className="p-10 text-center text-red-500 font-bold">שגיאה בטעינת הנתונים.</div>;
   return (
     <div className="min-h-screen space-y-8 animate-in fade-in duration-500">
       {/* Header */}
@@ -289,7 +279,7 @@ export default function ManagerDashboard() {
       <ManagerReportModal
         isOpen={isReportModalOpen}
         onClose={() => setIsReportModalOpen(false)}
-        onSuccess={loadDashboard}
+         onSuccess={() => mutate()}
         user={user}
         existingPlacements={data?.placements || []} // <-- הוספת הפרופס הזה
       />

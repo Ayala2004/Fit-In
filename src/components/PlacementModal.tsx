@@ -1,6 +1,8 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useMemo } from "react";
+import useSWR from "swr";
+import { fetcher } from "@/utils/fetcher";
 import { X, Search, UserCheck, Loader2, AlertCircle, Home } from "lucide-react";
 import { format } from "date-fns";
 import { he } from "date-fns/locale";
@@ -19,33 +21,29 @@ export default function PlacementModal({
   onClose,
   onSuccess,
 }: PlacementModalProps) {
-  const [substitutes, setSubstitutes] = useState<any[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
-  const [loading, setLoading] = useState(true);
   const [isProcessing, setIsProcessing] = useState(false);
 
-  useEffect(() => {
-    if (isOpen && placement?.date) {
-      setLoading(true);
-      const dateParam = encodeURIComponent(
-        new Date(placement.date).toISOString(),
-      );
+  // --- שימוש ב-SWR לטעינת מחליפות בזמן אמת ---
+  const dateParam = placement?.date
+    ? encodeURIComponent(new Date(placement.date).toISOString())
+    : null;
 
-      // הוספת absentTeacherId לכתובת ה-API
-      fetch(
-        `/api/supervisor/substitutes?date=${dateParam}&absentTeacherId=${placement.mainTeacherId}`,
-      )
-        .then((res) => res.json())
-        .then((data) => {
-          setSubstitutes(Array.isArray(data) ? data : []);
-          setLoading(false);
-        })
-        .catch((err) => {
-          console.error("טעינת מחליפות נכשלה:", err);
-          setLoading(false);
-        });
-    }
-  }, [isOpen, placement]);
+  const {
+    data: substitutes = [],
+    isLoading,
+    mutate,
+  } = useSWR(
+    isOpen && dateParam
+      ? `/api/supervisor/substitutes?date=${dateParam}`
+      : null,
+    fetcher,
+    {
+      refreshInterval: 5000, // רענון רשימת הזמינות כל 5 שניות
+      revalidateOnFocus: true,
+    },
+  );
+
   // פונקציה לעדכון סטטוס (שיבוץ או סגירה)
   const updatePlacement = async (subId: string | null, status: string) => {
     setIsProcessing(true);
@@ -61,6 +59,8 @@ export default function PlacementModal({
       });
 
       if (response.ok) {
+        // רענון ה-Cache של המחליפות (אופציונלי כי המודאל נסגר, אבל טוב ליתר ביטחון)
+        mutate();
         onSuccess?.();
         onClose();
       } else {
@@ -84,13 +84,16 @@ export default function PlacementModal({
     }
   };
 
-  if (!isOpen) return null;
+  // סינון רשימת המחליפות (מתבצע על הנתונים שחזרו מה-SWR)
+  const filteredSubstitutes = useMemo(() => {
+    return substitutes.filter(
+      (s: any) =>
+        s.label?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        s.phoneNumber?.includes(searchQuery),
+    );
+  }, [substitutes, searchQuery]);
 
-  const filteredSubstitutes = substitutes.filter(
-    (s) =>
-      `${s.firstName} ${s.lastName}`.includes(searchQuery) ||
-      s.phoneNumber?.includes(searchQuery),
-  );
+  if (!isOpen) return null;
 
   return (
     <div
@@ -158,8 +161,8 @@ export default function PlacementModal({
         </div>
 
         {/* List */}
-        <div className="flex-1 overflow-y-auto px-6 pb-8 space-y-2 mt-4 custom-scrollbar">
-          {loading ? (
+        <div className="flex-1 overflow-y-auto px-6 pb-8 space-y-2 mt-4 custom-calendar-scroll">
+          {isLoading ? (
             <LoadingScreen message="בודק זמינות מחליפות..." />
           ) : filteredSubstitutes.length === 0 ? (
             <div className="text-center py-12 px-6 bg-slate-50 rounded-[2rem] border-2 border-dashed border-slate-200">
@@ -172,7 +175,7 @@ export default function PlacementModal({
               </p>
             </div>
           ) : (
-            filteredSubstitutes.map((sub) => (
+            filteredSubstitutes.map((sub: any) => (
               <div
                 key={sub.id}
                 className="flex items-center justify-between p-4 bg-white rounded-2xl border border-slate-100 hover:border-indigo-200 hover:bg-indigo-50/30 transition-all group shadow-sm"

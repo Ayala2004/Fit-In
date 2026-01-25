@@ -1687,8 +1687,12 @@ export async function GET(request: Request) {
   try {
     const session = await getSession();
     // אפשור למדריכה ומפקחת
-    if (!session || (!session.roles.includes("SUPERVISOR") && !session.roles.includes("INSTRUCTOR"))) {
-        return NextResponse.json({ message: "לא מורשה" }, { status: 401 });
+    if (
+      !session ||
+      (!session.roles.includes("SUPERVISOR") &&
+        !session.roles.includes("INSTRUCTOR"))
+    ) {
+      return NextResponse.json({ message: "לא מורשה" }, { status: 401 });
     }
     const { searchParams } = new URL(request.url);
     const dateParam = searchParams.get("date");
@@ -1716,6 +1720,10 @@ export async function GET(request: Request) {
     const busyIds = busyInPlacements
       .map((p) => p.substituteId)
       .filter(Boolean) as string[];
+    // שהגננת שביקשה החלפה לא תופיע באפשרויות למילוי מקום
+    if (absentTeacherId) {
+      busyIds.push(absentTeacherId);
+    }
 
     // 2. שליפת כל המחליפות והרוטציות
     const subs = await prisma.user.findMany({
@@ -1750,7 +1758,7 @@ export async function GET(request: Request) {
           id: fixedRot.managerId,
           firstName: fixedRot.manager.firstName,
           lastName: fixedRot.manager.lastName,
-          label: `(גננת אם) ${fixedRot.manager.firstName} ${fixedRot.manager.lastName}`,
+          label: `${fixedRot.manager.firstName} ${fixedRot.manager.lastName} (גננת אם)`,
           phoneNumber: fixedRot.manager.phoneNumber,
           isDayOff: false,
           isFixedRotationToday: false,
@@ -2541,11 +2549,15 @@ export default function InstructorCalendar() {
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
 
-  const fetchAvailableSubstitutes = async (date: Date) => {
+  const fetchAvailableSubstitutes = async (
+    date: Date,
+    absentTeacherId?: string,
+  ) => {
     setLoadingSubs(true);
     try {
       const dateParam = encodeURIComponent(date.toISOString());
-      const res = await fetch(`/api/supervisor/substitutes?date=${dateParam}`);
+      const url = `/api/supervisor/substitutes?date=${dateParam}${absentTeacherId ? `&absentTeacherId=${absentTeacherId}` : ""}`;
+      const res = await fetch(url);
       if (res.ok) {
         const data = await res.json();
         setAvailableSubs(data);
@@ -2556,6 +2568,16 @@ export default function InstructorCalendar() {
       setLoadingSubs(false);
     }
   };
+
+  useEffect(() => {
+    if (editingPlacement) {
+      fetchAvailableSubstitutes(
+        new Date(editingPlacement.date),
+        editingPlacement.mainTeacherId,
+      );
+      setSearchQuery("");
+    }
+  }, [editingPlacement]);
 
   const filteredAvailableSubs = useMemo(() => {
     return availableSubs.filter((sub: any) => {
@@ -2588,7 +2610,7 @@ export default function InstructorCalendar() {
       const res = await fetch(
         `/api/calendar?month=${
           currentDate.getMonth() + 1
-        }&year=${currentDate.getFullYear()}`
+        }&year=${currentDate.getFullYear()}`,
       );
       const data = await res.json();
       setPlacements(data);
@@ -2603,13 +2625,6 @@ export default function InstructorCalendar() {
   useEffect(() => {
     fetchData();
   }, [fetchData]);
-
-  useEffect(() => {
-    if (editingPlacement) {
-      fetchAvailableSubstitutes(new Date(editingPlacement.date));
-      setSearchQuery("");
-    }
-  }, [editingPlacement]);
 
   const handleDelete = async (id: string) => {
     if (!confirm("למחוק את הדיווח לצמיתות?")) return;
@@ -2758,38 +2773,38 @@ export default function InstructorCalendar() {
           </div>
         </div>
 
-          {/* Calendar Grid */}
-          <div className="bg-white rounded-[2.5rem] shadow-xl border border-slate-200 overflow-hidden">
-            <div className="grid grid-cols-7 bg-slate-50/50 border-b border-slate-200">
-              {["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת"].map(
-                (d) => (
-                  <div
-                    key={d}
-                    className="p-4 text-center font-bold text-slate-400 text-xs uppercase tracking-widest"
-                  >
-                    {d}
-                  </div>
-                )
-              )}
-            </div>
+        {/* Calendar Grid */}
+        <div className="bg-white rounded-[2.5rem] shadow-xl border border-slate-200 overflow-hidden">
+          <div className="grid grid-cols-7 bg-slate-50/50 border-b border-slate-200">
+            {["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת"].map(
+              (d) => (
+                <div
+                  key={d}
+                  className="p-4 text-center font-bold text-slate-400 text-xs uppercase tracking-widest"
+                >
+                  {d}
+                </div>
+              ),
+            )}
+          </div>
 
-            <div className="grid grid-cols-7">
-              {days.map((day, index) => {
-                if (!day) {
-                  return (
-                    <div
-                      key={`empty-${index}`}
-                      className="min-h-[150px] border-l border-b border-slate-50"
-                    />
-                  );
-                }
+          <div className="grid grid-cols-7">
+            {days.map((day, index) => {
+              if (!day) {
+                return (
+                  <div
+                    key={`empty-${index}`}
+                    className="min-h-[150px] border-l border-b border-slate-50"
+                  />
+                );
+              }
 
               const isSaturday = day.getDay() === 6;
               const isToday = isSameDay(day, new Date());
-               const isPast = day < startOfDay(new Date()) && !isToday;
+              const isPast = day < startOfDay(new Date()) && !isToday;
               const dayPlacements = Array.isArray(placements)
                 ? placements.filter((p: any) =>
-                    isSameDay(new Date(p.date), day)
+                    isSameDay(new Date(p.date), day),
                   )
                 : [];
 
@@ -2810,15 +2825,19 @@ export default function InstructorCalendar() {
                     >
                       {format(day, "d")}
                     </span>
-                   {!isSaturday && (!isPast || user?.roles.includes("SUPERVISOR")) && (
-                      <button 
-                        onClick={() => { setSelectedDate(day); setIsAddModalOpen(true); }} 
-                        className="p-1 text-slate-400 hover:bg-indigo-600 hover:text-white rounded-md transition-all group/btn" 
-                        title="הוספת דיווח"
-                      >
-                        <Plus size={14} strokeWidth={3} />
-                      </button>
-                    )}
+                    {!isSaturday &&
+                      (!isPast || user?.roles.includes("SUPERVISOR")) && (
+                        <button
+                          onClick={() => {
+                            setSelectedDate(day);
+                            setIsAddModalOpen(true);
+                          }}
+                          className="p-1 text-slate-400 hover:bg-indigo-600 hover:text-white rounded-md transition-all group/btn"
+                          title="הוספת דיווח"
+                        >
+                          <Plus size={14} strokeWidth={3} />
+                        </button>
+                      )}
                   </div>
 
                   {isSaturday ? (
@@ -2850,17 +2869,17 @@ export default function InstructorCalendar() {
                                   p.status === "OPEN"
                                     ? "bg-amber-500 animate-pulse"
                                     : p.status === "CANCELLED"
-                                    ? "bg-red-500"
-                                    : "bg-emerald-500"
+                                      ? "bg-red-500"
+                                      : "bg-emerald-500"
                                 }`}
                               />
                               {p.status === "OPEN"
                                 ? "ממתין"
                                 : p.status === "CANCELLED"
-                                ? "סגור"
-                                : p.substitute
-                                ? `${p.substitute.firstName} ${p.substitute.lastName[0]}.`
-                                : "משובץ"}
+                                  ? "סגור"
+                                  : p.substitute
+                                    ? `${p.substitute.firstName} ${p.substitute.lastName[0]}.`
+                                    : "משובץ"}
                             </div>
 
                             <button
@@ -5113,7 +5132,7 @@ export default function SupervisorCalendar() {
                       יום מנוחה
                     </div>
                   ) : (
-                    <div className="flex-1 space-y-2 overflow-y-auto overflow-x-hidden custom-scrollbar">
+                    <div className="flex-1 space-y-2 overflow-y-auto overflow-x-hidden custom-calendar-scroll">
                       {" "}
                       {dayPlacements.map((p: any) => {
                         const colorClass = getPlacementColor(p); // חישוב הצבע
@@ -8867,6 +8886,59 @@ const validateSelection = (dateStr: string, labelForError: string) => {
 }
 
 ==============================
+FILE: src/components\CalendarBoard.tsx
+==============================
+import useSWR from 'swr';
+import { fetcher } from '@/utils/fetcher';
+
+// הגדרת טיפוס הנתונים לפי ה-Schema שלך (Placement)
+interface Placement {
+  id: string;
+  date: string;
+  status: 'OPEN' | 'ASSIGNED' | 'CANCELLED';
+  substituteId?: string;
+  manager: { name: string; kindergartenName: string };
+}
+
+export default function CalendarBoard() {
+  // 1. קריאה ל-API שיצרת (נניח שזה הנתיב)
+  const { data, error, isLoading } = useSWR<Placement[]>('/api/placements', fetcher, {
+    refreshInterval: 5000, // כאן קורה הקסם של ה-5 שניות
+  });
+
+  if (error) return <div className="p-4 text-red-500">שגיאה בטעינת לוח השיבוצים</div>;
+  if (isLoading) return <div className="p-4">טוען נתונים בזמן אמת...</div>;
+
+  return (
+    <div className="p-6">
+      <h2 className="text-2xl font-bold mb-4">לוח שיבוצים חי</h2>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {data?.map((placement) => (
+          <div 
+            key={placement.id} 
+            className={`p-4 rounded-2xl border transition-all duration-500 ${
+              placement.status === 'ASSIGNED' 
+                ? 'bg-green-50 border-green-200' 
+                : 'bg-white border-slate-200 shadow-sm'
+            }`}
+          >
+            <h3 className="font-bold">{placement.manager.kindergartenName}</h3>
+            <p className="text-sm text-slate-600">תאריך: {new Date(placement.date).toLocaleDateString('he-IL')}</p>
+            
+            <div className="mt-2">
+              {placement.status === 'OPEN' ? (
+                <span className="text-orange-500 font-medium animate-pulse">🔎 מחפשים מחליפה...</span>
+              ) : (
+                <span className="text-green-600 font-medium">✅ שובצה מחליפה</span>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+==============================
 FILE: src/components\EditModals\EditInstitutionModal.tsx
 ==============================
 "use client";
@@ -11318,7 +11390,7 @@ export default function PlacementModal({
         </div>
 
         {/* List */}
-        <div className="flex-1 overflow-y-auto px-6 pb-8 space-y-2 mt-4 custom-scrollbar">
+        <div className="flex-1 overflow-y-auto px-6 pb-8 space-y-2 mt-4 custom-calendar-scroll">
           {loading ? (
             <LoadingScreen message="בודק זמינות מחליפות..." />
           ) : filteredSubstitutes.length === 0 ? (
@@ -14018,6 +14090,10 @@ export const isToday = (date: Date | string) => {
          d.getMonth() === today.getMonth() &&
          d.getFullYear() === today.getFullYear();
 };
+==============================
+FILE: src/utils\fetcher.ts
+==============================
+export const fetcher = (url: string) => fetch(url).then((res) => res.json());
 ==============================
 FILE: src/utils\validations.ts
 ==============================

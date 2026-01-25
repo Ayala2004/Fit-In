@@ -1,5 +1,7 @@
 "use client";
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useMemo } from "react";
+import useSWR from "swr"; // ייבוא SWR
+import { fetcher } from "@/utils/fetcher"; // fetcher מ-GET
 import {
   format,
   startOfMonth,
@@ -23,119 +25,70 @@ import {
 } from "lucide-react";
 import AddPlacementModal from "@/components/AddModals/AddPlacementModal";
 
+// Fetcher מיוחד לשיטת ה-POST שבה לוח השנה משתמש
+const postFetcher = async ([url, body]: [string, any]) => {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return res.json();
+};
+
 export default function SupervisorCalendar() {
   const [currentDate, setCurrentDate] = useState(new Date());
-  const [placements, setPlacements] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [user, setUser] = useState<any>(null);
-
-  // States למודאל עריכה ומחליפות
-  const [editingPlacement, setEditingPlacement] = useState<any>(null);
-  const [availableSubs, setAvailableSubs] = useState([]);
-  const [loadingSubs, setLoadingSubs] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
-
-  // States למודאל הוספה
+  const [editingPlacement, setEditingPlacement] = useState<any>(null);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
 
-  // פונקציה להבאת מחליפות פנויות לתאריך ספציפי
-  const fetchAvailableSubstitutes = async (
-    date: Date,
-    absentTeacherId?: string,
-  ) => {
-    setLoadingSubs(true);
-    try {
-      const dateParam = encodeURIComponent(date.toISOString());
-      // הוספת הפרמטר לכתובת ה-URL
-      let url = `/api/supervisor/substitutes?date=${dateParam}`;
-      if (absentTeacherId) {
-        url += `&absentTeacherId=${absentTeacherId}`;
-      }
+  // 1. טעינת פרטי המשתמש (SWR)
+  const { data: user } = useSWR("/api/auth/me", fetcher);
 
-      const res = await fetch(url);
-      if (res.ok) {
-        const data = await res.json();
-        setAvailableSubs(data);
-      }
-    } catch (err) {
-      console.error("Error fetching subs:", err);
-    } finally {
-      setLoadingSubs(false);
-    }
-  };
-
-  // סינון רשימת המחליפות לפי חיפוש
-  const filteredAvailableSubs = useMemo(() => {
-    return availableSubs.filter((sub: any) => {
-      const fullName = `${sub.firstName} ${sub.lastName}`.toLowerCase();
-      return (
-        fullName.includes(searchQuery.toLowerCase()) ||
-        sub.phoneNumber?.includes(searchQuery)
-      );
-    });
-  }, [availableSubs, searchQuery]);
-
-  // טעינת פרטי המשתמש המחובר בטעינה ראשונית
-  useEffect(() => {
-    const initPage = async () => {
-      try {
-        const userRes = await fetch("/api/auth/me");
-        if (userRes.ok) {
-          const userData = await userRes.json();
-          setUser(userData);
-        }
-      } catch (err) {
-        console.error("Initialization error:", err);
-      }
-    };
-    initPage();
-  }, []);
-
-  // טעינת נתוני לוח השנה
-  const fetchData = useCallback(async () => {
-    if (!user?.id) return;
-
-    setLoading(true);
-    try {
-      const res = await fetch("/api/test", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+  // 2. טעינת נתוני לוח השנה (SWR עם Polling כל 5 שניות)
+  const calendarKey = user?.id
+    ? [
+        "/api/test",
+        {
           type: "getCalendarData",
           data: {
             month: currentDate.getMonth() + 1,
             year: currentDate.getFullYear(),
             supervisorId: user.id,
           },
-        }),
-      });
+        },
+      ]
+    : null;
 
-      const data = await res.json();
-      setPlacements(data);
-    } catch (err) {
-      console.error("Fetch error:", err);
-      setPlacements([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [currentDate, user]);
+  const {
+    data: placements = [],
+    mutate: mutateCalendar,
+    isLoading: loadingCalendar,
+  } = useSWR(calendarKey, postFetcher, { refreshInterval: 5000 });
 
-  useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+  // 3. טעינת מחליפות פנויות (SWR - מתרחש רק כש-editingPlacement פתוח)
+  const subsKey = editingPlacement?.date
+    ? `/api/supervisor/substitutes?date=${encodeURIComponent(new Date(editingPlacement.date).toISOString())}`
+    : null;
 
-  // בכל פעם שנפתח מודאל עריכה - נטען מחליפות רלוונטיות לתאריך הדיווח
-  useEffect(() => {
-    if (editingPlacement) {
-      // שליחת ה-mainTeacherId (הגננת שדיווחה על היעדרות) ל-API
-      fetchAvailableSubstitutes(
-        new Date(editingPlacement.date),
-        editingPlacement.mainTeacherId,
+  const { data: availableSubs = [], isLoading: loadingSubs } = useSWR(
+    subsKey,
+    fetcher,
+    {
+      refreshInterval: 5000,
+    },
+  );
+
+  // סינון רשימת המחליפות לפי חיפוש
+  const filteredAvailableSubs = useMemo(() => {
+    return availableSubs.filter((sub: any) => {
+      const label = sub.label?.toLowerCase() || "";
+      const phone = sub.phoneNumber || "";
+      return (
+        label.includes(searchQuery.toLowerCase()) || phone.includes(searchQuery)
       );
-      setSearchQuery("");
-    }
-  }, [editingPlacement]);
+    });
+  }, [availableSubs, searchQuery]);
 
   const handleDelete = async (id: string) => {
     if (!confirm("למחוק את הדיווח לצמיתות?")) return;
@@ -145,7 +98,7 @@ export default function SupervisorCalendar() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id }),
       });
-      if (res.ok) setPlacements((prev) => prev.filter((p: any) => p.id !== id));
+      if (res.ok) mutateCalendar();
     } catch (err) {
       alert("שגיאה במחיקה");
     }
@@ -174,13 +127,14 @@ export default function SupervisorCalendar() {
 
       if (res.ok) {
         setEditingPlacement(null);
-        fetchData();
+        mutateCalendar(); // עדכון מיידי של הלוח
       }
     } catch (err) {
       alert("שגיאה בעדכון");
     }
   };
 
+  // לוגיקת בניית ימי החודש
   const firstDayOfMonth = startOfMonth(currentDate);
   const startWeekDay = firstDayOfMonth.getDay();
   const realDays = eachDayOfInterval({
@@ -191,7 +145,6 @@ export default function SupervisorCalendar() {
   const days = [...paddingDays, ...realDays];
 
   const getPlacementColor = (p: any) => {
-    // 1. צבעי סטטוס (ממתין / סגור)
     if (p.status === "OPEN")
       return "bg-amber-50 border-amber-200 text-amber-700";
     if (p.status === "CANCELLED")
@@ -200,41 +153,24 @@ export default function SupervisorCalendar() {
     const subId = p.substituteId ? String(p.substituteId) : null;
     const absentId = String(p.mainTeacherId);
     const gardenManagerId = String(p.institution?.mainManagerId);
-
-    // רשימת כל ה-IDs של גננות הרוטציה הקבועות של הגן הזה (מכל הימים)
     const gardenRotationIds = (
       p.institution?.mainManager?.fixedRotationsAsManager || []
     ).map((r: any) => String(r.rotationTeacherId));
 
-    // זיהוי מי חסרה
-    const isOfficialRotationAbsent = gardenRotationIds.includes(absentId);
-    const isGardenManagerAbsent = absentId === gardenManagerId;
-
-    // --- מקרה א': גננת רוטציה חסרה ---
-    if (isOfficialRotationAbsent) {
-      // אם מנהלת הגן (גננת האם) היא זו שהגיעה להחליף
-      if (subId === gardenManagerId) {
+    if (gardenRotationIds.includes(absentId)) {
+      if (subId === gardenManagerId)
         return "bg-indigo-200 border-indigo-400 text-indigo-900 shadow-sm";
-      }
-      // אם מחליפה אחרת (חיצונית) הגיעה
       return "bg-purple-200 border-purple-400 text-purple-900 shadow-sm";
     }
-
-    // --- מקרה ב': גננת אם חסרה ---
-    if (isGardenManagerAbsent) {
-      // אם אחת מגננות הרוטציה הקבועות של הגן הגיעה להחליף
-      if (subId && gardenRotationIds.includes(subId)) {
+    if (absentId === gardenManagerId) {
+      if (subId && gardenRotationIds.includes(subId))
         return "bg-slate-300 border-slate-400 text-slate-900 shadow-sm";
-      }
-      // אם גננת מחליפה חיצונית הגיעה (לבן)
       return "bg-white border-slate-200 text-slate-700";
     }
-
-    // ברירת מחדל לכל מקרה אחר
     return "bg-white border-slate-100 text-slate-700";
   };
 
-  if (!user && loading) {
+  if (!user && loadingCalendar) {
     return (
       <div className="flex h-screen items-center justify-center bg-slate-50">
         <Loader2 className="animate-spin text-indigo-600" size={48} />
@@ -370,7 +306,7 @@ export default function SupervisorCalendar() {
                       יום מנוחה
                     </div>
                   ) : (
-                    <div className="flex-1 space-y-2 overflow-y-auto overflow-x-hidden custom-scrollbar">
+                    <div className="flex-1 space-y-2 overflow-y-auto overflow-x-hidden custom-calendar-scroll">
                       {" "}
                       {dayPlacements.map((p: any) => {
                         const colorClass = getPlacementColor(p); // חישוב הצבע
@@ -553,7 +489,7 @@ export default function SupervisorCalendar() {
           isOpen={isAddModalOpen}
           date={selectedDate}
           onClose={() => setIsAddModalOpen(false)}
-          refreshData={fetchData}
+          refreshData={mutateCalendar}
           user={user}
         />
       )}

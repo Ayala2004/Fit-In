@@ -1,5 +1,7 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import useSWR from "swr";
+import { fetcher } from "@/utils/fetcher";
 import { AlertCircle, Clock, Phone, ChevronLeft } from "lucide-react";
 import LoadingScreen from "@/components/ui/LoadingScreen";
 import PlacementModal from "@/components/PlacementModal";
@@ -8,40 +10,25 @@ import RecentActivityModal from "@/components/RecentActivityModal";
 import { useRecentActivityHistory } from "@/hooks/useRecentActivityHistory";
 
 export default function InstructorDashboard() {
-  const [data, setData] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
-  const [user, setUser] = useState<any>(null);
-
-  const history = useRecentActivityHistory("/api/instructor/history");
-
-  // Modals
   const [selectedPlacement, setSelectedPlacement] = useState<any>(null);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
 
-  const loadDashboard = async () => {
-    try {
-      const [dbRes, userRes] = await Promise.all([
-        fetch("/api/instructor/dashboard"),
-        fetch("/api/auth/me"),
-      ]);
-      const dbData = await dbRes.json();
-      const userData = await userRes.json();
+  // 1. טעינת נתוני משתמש (SWR)
+  const { data: user } = useSWR("/api/auth/me", fetcher);
 
-      setData(dbData);
-      setUser(userData);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
-    }
-  };
+  // 2. טעינת דאשבורד מדריכה בזמן אמת (5 שניות)
+  const {
+    data,
+    isLoading,
+    mutate: mutateDashboard,
+  } = useSWR("/api/instructor/dashboard", fetcher, {
+    refreshInterval: 5000,
+  });
 
-  useEffect(() => {
-    loadDashboard();
-  }, []);
+  const history = useRecentActivityHistory("/api/instructor/history");
 
-  if (loading) return <LoadingScreen message="טוען את הגנים שלך..." />;
-
+  if (isLoading && !data)
+    return <LoadingScreen message="טוען את הגנים שלך..." />;
   return (
     <div className="space-y-8">
       {/* Header */}
@@ -134,8 +121,8 @@ export default function InstructorDashboard() {
                     {act.status === "CANCELLED"
                       ? `הגן ${act.institution.name} נסגר `
                       : act.substitute
-                      ? `שובצה ${act.substitute.firstName} לגן ${act.institution.name}`
-                      : `דווחה היעדרות בגן ${act.institution.name}`}
+                        ? `שובצה ${act.substitute.firstName} לגן ${act.institution.name}`
+                        : `דווחה היעדרות בגן ${act.institution.name}`}
                   </p>
                 </div>
               ))}
@@ -170,7 +157,7 @@ export default function InstructorDashboard() {
           isOpen={!!selectedPlacement}
           placement={selectedPlacement}
           onClose={() => setSelectedPlacement(null)}
-          onSuccess={loadDashboard}
+          onSuccess={mutateDashboard} // רענון הדאשבורד לאחר פעולה במודאל
         />
       )}
 
@@ -179,7 +166,7 @@ export default function InstructorDashboard() {
           isOpen={isAddModalOpen}
           date={new Date()}
           onClose={() => setIsAddModalOpen(false)}
-          refreshData={loadDashboard}
+          refreshData={mutateDashboard} // רענון הדאשבורד לאחר הוספה
           user={user}
         />
       )}

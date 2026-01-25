@@ -1,5 +1,6 @@
 "use client";
-import { useEffect, useState } from "react";
+import useSWR from "swr"; // ייבוא SWR
+import { fetcher } from "@/utils/fetcher";
 import {
   MapPin,
   Calendar as CalendarIcon,
@@ -9,35 +10,29 @@ import {
 import LoadingScreen from "@/components/ui/LoadingScreen";
 
 export default function SubstituteDashboard() {
-  const [data, setData] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
-
-  const loadData = async () => {
-    try {
-      const res = await fetch("/api/substitute/dashboard");
-      if (res.ok) setData(await res.json());
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    loadData();
-  }, []);
+  // 1. טעינת נתוני המחליפה בזמן אמת (כל 5 שניות)
+  const { 
+    data, 
+    error, 
+    isLoading, 
+    mutate 
+  } = useSWR("/api/substitute/dashboard", fetcher, {
+    refreshInterval: 5000, // סנכרון חי כל 5 שניות
+  });
 
   const handleAssign = async (placementId: string) => {
     if (!confirm("האם את בטוחה שברצונך להשתבץ לגן זה?")) return;
+    
     try {
       const res = await fetch("/api/substitute/assign", {
         method: "POST",
         body: JSON.stringify({ placementId }),
         headers: { "Content-Type": "application/json" },
       });
+
       if (res.ok) {
         alert("השיבוץ בוצע בהצלחה! הודעה נשלחה לגננת האם ולמפקחת.");
-        loadData();
+        mutate(); // עדכון מיידי של הרשימות
       } else {
         const err = await res.json();
         alert(err.message);
@@ -50,7 +45,11 @@ export default function SubstituteDashboard() {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
-  if (loading) return <LoadingScreen message="מחפש עבורך הזדמנויות החלפה..." />;
+  // מצב טעינה ראשוני
+  if (isLoading && !data) return <LoadingScreen message="מחפש עבורך הזדמנויות החלפה..." />;
+
+  // טיפול בשגיאה
+  if (error) return <div className="p-10 text-center text-red-500 font-bold">שגיאה בטעינת מרכז השיבוצים.</div>;
 
   return (
 <div className="space-y-10 animate-in fade-in duration-500 pb-20 max-h-[80vh] overflow-y-hidden">

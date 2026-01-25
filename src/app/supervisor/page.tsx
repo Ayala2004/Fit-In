@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import useSWR from "swr"; // ייבוא SWR
+import { fetcher } from "@/utils/fetcher"; // שימוש ב-fetcher הקיים שלך
 import { format, addDays, isSameDay } from "date-fns";
 import { he } from "date-fns/locale";
 import {
@@ -18,29 +20,22 @@ import LoadingScreen from "@/components/ui/LoadingScreen";
 import { useRecentActivityHistory } from "@/hooks/useRecentActivityHistory";
 
 export default function SupervisorDashboardPage() {
-  const [dashboardData, setDashboardData] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
+  // --- שימוש ב-SWR במקום useState/useEffect ---
+  const {
+    data: dashboardData,
+    error,
+    isLoading,
+    mutate, // פונקציה לרענון ידני לאחר פעולה
+  } = useSWR("/api/supervisor/dashboard", fetcher, {
+    refreshInterval: 5000, // רענון אוטומטי כל 5 שניות (זמן אמת)
+    revalidateOnFocus: true, // רענון כשחוזרים לטאב של הדפדפן
+  });
+
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedPlacement, setSelectedPlacement] = useState<any>(null);
 
+  // היסטוריה (נשאר כרגע עם ה-Hook הקיים, אך הוא יציג נתונים מעודכנים)
   const history = useRecentActivityHistory("/api/supervisor/history");
-
-  const loadData = async () => {
-    try {
-      const res = await fetch("/api/supervisor/dashboard");
-      const data = await res.json();
-      setDashboardData(data);
-      setLoading(false);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    loadData();
-  }, []);
 
   // הפונקציה לסגירת הגן
   const handleCloseGarden = async (placementId: string) => {
@@ -54,7 +49,8 @@ export default function SupervisorDashboardPage() {
       });
 
       if (res.ok) {
-        loadData(); // רענון הנתונים בלוח הבקרה
+        // רענון אופטימי - גורם ל-SWR למשוך נתונים חדשים מיד
+        mutate();
       } else {
         alert("שגיאה בסגירת הגן");
       }
@@ -63,27 +59,35 @@ export default function SupervisorDashboardPage() {
     }
   };
 
-  if (loading) return <LoadingScreen />;
-
+  // פונקציית עזר לחישוב ימים לתצוגה
   const buildSixDisplayDays = (start: Date) => {
     const days: Date[] = [];
     let d = new Date(start);
-
     while (days.length < 6) {
       if (d.getDay() !== 6) {
         days.push(new Date(d));
       }
       d = addDays(d, 1);
     }
-
     return days;
   };
 
   const displayDaysWithoutSaturday = buildSixDisplayDays(new Date());
 
+  // מצב טעינה ראשוני
+  if (isLoading && !dashboardData)
+    return <LoadingScreen message="טוען נתונים בזמן אמת..." />;
+
+  // טיפול בשגיאה
+  if (error)
+    return (
+      <div className="p-10 text-center text-red-500 font-bold">
+        שגיאה בטעינת הנתונים. וודאי שאת מחוברת למערכת.
+      </div>
+    );
+
   return (
     <div className="space-y-8 animate-in fade-in duration-700">
-
       {/* Header */}
       <header className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
         <div>
@@ -356,8 +360,8 @@ export default function SupervisorDashboardPage() {
                         {act.status === "CANCELLED"
                           ? `הגן ${act.institution.name} נסגר `
                           : act.substitute
-                          ? `שובצה ${act.substitute.firstName} לגן ${act.institution.name}`
-                          : `דווחה היעדרות בגן ${act.institution.name}`}
+                            ? `שובצה ${act.substitute.firstName} לגן ${act.institution.name}`
+                            : `דווחה היעדרות בגן ${act.institution.name}`}
                       </p>
                     </div>
                   ))}
@@ -393,7 +397,9 @@ export default function SupervisorDashboardPage() {
           isOpen={isModalOpen}
           placement={selectedPlacement}
           onClose={() => setIsModalOpen(false)}
-          onSuccess={loadData}
+          onSuccess={() => {
+            mutate(); 
+          }}
         />
       )}
 

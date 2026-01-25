@@ -1,5 +1,7 @@
 "use client";
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useMemo } from "react";
+import useSWR from "swr"; // הווספת SWR
+import { fetcher } from "@/utils/fetcher";
 import {
   format,
   startOfMonth,
@@ -26,47 +28,38 @@ import AddPlacementModal from "@/components/AddModals/AddPlacementModal";
 
 export default function InstructorCalendar() {
   const [currentDate, setCurrentDate] = useState(new Date());
-  const [placements, setPlacements] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [user, setUser] = useState<any>(null);
-
-  const [editingPlacement, setEditingPlacement] = useState<any>(null);
-  const [availableSubs, setAvailableSubs] = useState([]);
-  const [loadingSubs, setLoadingSubs] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
-
+  const [editingPlacement, setEditingPlacement] = useState<any>(null);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
 
-  const fetchAvailableSubstitutes = async (
-    date: Date,
-    absentTeacherId?: string,
-  ) => {
-    setLoadingSubs(true);
-    try {
-      const dateParam = encodeURIComponent(date.toISOString());
-      const url = `/api/supervisor/substitutes?date=${dateParam}${absentTeacherId ? `&absentTeacherId=${absentTeacherId}` : ""}`;
-      const res = await fetch(url);
-      if (res.ok) {
-        const data = await res.json();
-        setAvailableSubs(data);
-      }
-    } catch (err) {
-      console.error("Error fetching subs:", err);
-    } finally {
-      setLoadingSubs(false);
-    }
-  };
+  // 1. טעינת פרטי המדריכה המחוברת
+  const { data: user } = useSWR("/api/auth/me", fetcher);
 
-  useEffect(() => {
-    if (editingPlacement) {
-      fetchAvailableSubstitutes(
-        new Date(editingPlacement.date),
-        editingPlacement.mainTeacherId,
-      );
-      setSearchQuery("");
-    }
-  }, [editingPlacement]);
+  // 2. טעינת נתוני לוח השנה בזמן אמת (כל 5 שניות)
+  const calendarUrl = `/api/calendar?month=${currentDate.getMonth() + 1}&year=${currentDate.getFullYear()}`;
+  const {
+    data: placements = [],
+    mutate: mutateCalendar,
+    isLoading: loadingCalendar,
+  } = useSWR(
+    calendarUrl,
+    fetcher,
+    { refreshInterval: 5000 }, // כאן קורה הסנכרון מול המפקחת!
+  );
+
+  // 3. טעינת מחליפות פנויות (מופעל רק כשפותחים עריכה)
+  const subsKey = editingPlacement
+    ? `/api/supervisor/substitutes?date=${encodeURIComponent(new Date(editingPlacement.date).toISOString())}&absentTeacherId=${editingPlacement.mainTeacherId}`
+    : null;
+
+  const { data: availableSubs = [], isLoading: loadingSubs } = useSWR(
+    subsKey,
+    fetcher,
+    {
+      refreshInterval: 5000,
+    },
+  );
 
   const filteredAvailableSubs = useMemo(() => {
     return availableSubs.filter((sub: any) => {
@@ -78,43 +71,6 @@ export default function InstructorCalendar() {
     });
   }, [availableSubs, searchQuery]);
 
-  useEffect(() => {
-    const initPage = async () => {
-      try {
-        const userRes = await fetch("/api/auth/me");
-        if (userRes.ok) {
-          const userData = await userRes.json();
-          setUser(userData);
-        }
-      } catch (err) {
-        console.error("Initialization error:", err);
-      }
-    };
-    initPage();
-  }, []);
-
-  const fetchData = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await fetch(
-        `/api/calendar?month=${
-          currentDate.getMonth() + 1
-        }&year=${currentDate.getFullYear()}`,
-      );
-      const data = await res.json();
-      setPlacements(data);
-    } catch (err) {
-      console.error("Fetch error:", err);
-      setPlacements([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [currentDate]);
-
-  useEffect(() => {
-    fetchData();
-  }, [fetchData]);
-
   const handleDelete = async (id: string) => {
     if (!confirm("למחוק את הדיווח לצמיתות?")) return;
     try {
@@ -123,7 +79,7 @@ export default function InstructorCalendar() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id }),
       });
-      if (res.ok) setPlacements((prev) => prev.filter((p: any) => p.id !== id));
+      if (res.ok) mutateCalendar();
       else alert("אין לך הרשאה למחוק דיווח זה");
     } catch (err) {
       alert("שגיאה במחיקה");
@@ -152,7 +108,7 @@ export default function InstructorCalendar() {
 
       if (res.ok) {
         setEditingPlacement(null);
-        fetchData();
+        mutateCalendar();
       }
     } catch (err) {
       alert("שגיאה בעדכון");
@@ -185,8 +141,6 @@ export default function InstructorCalendar() {
     return "bg-white border-slate-100 text-slate-700";
   };
 
-  const isMyPlacement = (p: any) => p.mainTeacher?.instructorId === user?.id;
-
   const firstDayOfMonth = startOfMonth(currentDate);
   const startWeekDay = firstDayOfMonth.getDay();
   const realDays = eachDayOfInterval({
@@ -196,7 +150,7 @@ export default function InstructorCalendar() {
   const paddingDays = Array.from({ length: startWeekDay }, () => null);
   const days = [...paddingDays, ...realDays];
 
-  if (!user && loading) {
+  if (!user && loadingCalendar) {
     return (
       <div className="flex h-screen items-center justify-center bg-slate-50">
         <Loader2 className="animate-spin text-indigo-600" size={48} />
@@ -515,7 +469,7 @@ export default function InstructorCalendar() {
           isOpen={isAddModalOpen}
           date={selectedDate}
           onClose={() => setIsAddModalOpen(false)}
-          refreshData={fetchData}
+          refreshData={mutateCalendar}
           user={user}
         />
       )}
