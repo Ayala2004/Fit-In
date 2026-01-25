@@ -40,11 +40,20 @@ export default function SupervisorCalendar() {
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
 
   // פונקציה להבאת מחליפות פנויות לתאריך ספציפי
-  const fetchAvailableSubstitutes = async (date: Date) => {
+  const fetchAvailableSubstitutes = async (
+    date: Date,
+    absentTeacherId?: string,
+  ) => {
     setLoadingSubs(true);
     try {
       const dateParam = encodeURIComponent(date.toISOString());
-      const res = await fetch(`/api/supervisor/substitutes?date=${dateParam}`);
+      // הוספת הפרמטר לכתובת ה-URL
+      let url = `/api/supervisor/substitutes?date=${dateParam}`;
+      if (absentTeacherId) {
+        url += `&absentTeacherId=${absentTeacherId}`;
+      }
+
+      const res = await fetch(url);
       if (res.ok) {
         const data = await res.json();
         setAvailableSubs(data);
@@ -119,7 +128,11 @@ export default function SupervisorCalendar() {
   // בכל פעם שנפתח מודאל עריכה - נטען מחליפות רלוונטיות לתאריך הדיווח
   useEffect(() => {
     if (editingPlacement) {
-      fetchAvailableSubstitutes(new Date(editingPlacement.date));
+      // שליחת ה-mainTeacherId (הגננת שדיווחה על היעדרות) ל-API
+      fetchAvailableSubstitutes(
+        new Date(editingPlacement.date),
+        editingPlacement.mainTeacherId,
+      );
       setSearchQuery("");
     }
   }, [editingPlacement]);
@@ -298,7 +311,7 @@ export default function SupervisorCalendar() {
                 >
                   {d}
                 </div>
-              )
+              ),
             )}
           </div>
 
@@ -317,7 +330,7 @@ export default function SupervisorCalendar() {
               const isToday = isSameDay(day, new Date());
               const dayPlacements = Array.isArray(placements)
                 ? placements.filter((p: any) =>
-                    isSameDay(new Date(p.date), day)
+                    isSameDay(new Date(p.date), day),
                   )
                 : [];
 
@@ -382,17 +395,17 @@ export default function SupervisorCalendar() {
                                   p.status === "OPEN"
                                     ? "bg-amber-500 animate-pulse"
                                     : p.status === "CANCELLED"
-                                    ? "bg-red-500"
-                                    : "bg-emerald-500"
+                                      ? "bg-red-500"
+                                      : "bg-emerald-500"
                                 }`}
                               />
                               {p.status === "OPEN"
                                 ? "ממתין"
                                 : p.status === "CANCELLED"
-                                ? "סגור"
-                                : p.substitute
-                                ? `${p.substitute.firstName} ${p.substitute.lastName[0]}.`
-                                : "משובץ"}
+                                  ? "סגור"
+                                  : p.substitute
+                                    ? `${p.substitute.firstName} ${p.substitute.lastName[0]}.`
+                                    : "משובץ"}
                             </div>
 
                             <button

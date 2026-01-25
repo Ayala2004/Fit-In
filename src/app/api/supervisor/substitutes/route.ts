@@ -9,8 +9,12 @@ export async function GET(request: Request) {
   try {
     const session = await getSession();
     // אפשור למדריכה ומפקחת
-    if (!session || (!session.roles.includes("SUPERVISOR") && !session.roles.includes("INSTRUCTOR"))) {
-        return NextResponse.json({ message: "לא מורשה" }, { status: 401 });
+    if (
+      !session ||
+      (!session.roles.includes("SUPERVISOR") &&
+        !session.roles.includes("INSTRUCTOR"))
+    ) {
+      return NextResponse.json({ message: "לא מורשה" }, { status: 401 });
     }
     const { searchParams } = new URL(request.url);
     const dateParam = searchParams.get("date");
@@ -38,6 +42,10 @@ export async function GET(request: Request) {
     const busyIds = busyInPlacements
       .map((p) => p.substituteId)
       .filter(Boolean) as string[];
+    // שהגננת שביקשה החלפה לא תופיע באפשרויות למילוי מקום
+    if (absentTeacherId) {
+      busyIds.push(absentTeacherId);
+    }
 
     // 2. שליפת כל המחליפות והרוטציות
     const subs = await prisma.user.findMany({
@@ -72,7 +80,7 @@ export async function GET(request: Request) {
           id: fixedRot.managerId,
           firstName: fixedRot.manager.firstName,
           lastName: fixedRot.manager.lastName,
-          label: `(גננת אם) ${fixedRot.manager.firstName} ${fixedRot.manager.lastName}`,
+          label: `${fixedRot.manager.firstName} ${fixedRot.manager.lastName} (גננת אם)`,
           phoneNumber: fixedRot.manager.phoneNumber,
           isDayOff: false,
           isFixedRotationToday: false,

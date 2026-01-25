@@ -28,10 +28,13 @@ export default function PlacementModal({
     if (isOpen && placement?.date) {
       setLoading(true);
       const dateParam = encodeURIComponent(
-        new Date(placement.date).toISOString()
+        new Date(placement.date).toISOString(),
       );
 
-      fetch(`/api/supervisor/substitutes?date=${dateParam}`)
+      // הוספת absentTeacherId לכתובת ה-API
+      fetch(
+        `/api/supervisor/substitutes?date=${dateParam}&absentTeacherId=${placement.mainTeacherId}`,
+      )
         .then((res) => res.json())
         .then((data) => {
           setSubstitutes(Array.isArray(data) ? data : []);
@@ -43,7 +46,6 @@ export default function PlacementModal({
         });
     }
   }, [isOpen, placement]);
-
   // פונקציה לעדכון סטטוס (שיבוץ או סגירה)
   const updatePlacement = async (subId: string | null, status: string) => {
     setIsProcessing(true);
@@ -75,7 +77,7 @@ export default function PlacementModal({
   const handleCloseGarden = () => {
     if (
       confirm(
-        `האם את בטוחה שברצונך לסגור את גן ${placement.institution?.name} לתאריך זה?`
+        `האם את בטוחה שברצונך לסגור את גן ${placement.institution?.name} לתאריך זה?`,
       )
     ) {
       updatePlacement(null, "CANCELLED");
@@ -87,7 +89,7 @@ export default function PlacementModal({
   const filteredSubstitutes = substitutes.filter(
     (s) =>
       `${s.firstName} ${s.lastName}`.includes(searchQuery) ||
-      s.phoneNumber?.includes(searchQuery)
+      s.phoneNumber?.includes(searchQuery),
   );
 
   return (
@@ -180,9 +182,7 @@ export default function PlacementModal({
                     {sub?.label[0]}
                   </div>
                   <div>
-                    <p className="font-black text-slate-800">
-                      {sub.label}
-                    </p>
+                    <p className="font-black text-slate-800">{sub.label}</p>
                     <p className="text-xs text-slate-400 font-medium">
                       {sub.phoneNumber}
                     </p>

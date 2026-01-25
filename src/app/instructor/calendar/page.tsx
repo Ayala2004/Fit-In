@@ -38,11 +38,15 @@ export default function InstructorCalendar() {
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
 
-  const fetchAvailableSubstitutes = async (date: Date) => {
+  const fetchAvailableSubstitutes = async (
+    date: Date,
+    absentTeacherId?: string,
+  ) => {
     setLoadingSubs(true);
     try {
       const dateParam = encodeURIComponent(date.toISOString());
-      const res = await fetch(`/api/supervisor/substitutes?date=${dateParam}`);
+      const url = `/api/supervisor/substitutes?date=${dateParam}${absentTeacherId ? `&absentTeacherId=${absentTeacherId}` : ""}`;
+      const res = await fetch(url);
       if (res.ok) {
         const data = await res.json();
         setAvailableSubs(data);
@@ -53,6 +57,16 @@ export default function InstructorCalendar() {
       setLoadingSubs(false);
     }
   };
+
+  useEffect(() => {
+    if (editingPlacement) {
+      fetchAvailableSubstitutes(
+        new Date(editingPlacement.date),
+        editingPlacement.mainTeacherId,
+      );
+      setSearchQuery("");
+    }
+  }, [editingPlacement]);
 
   const filteredAvailableSubs = useMemo(() => {
     return availableSubs.filter((sub: any) => {
@@ -85,7 +99,7 @@ export default function InstructorCalendar() {
       const res = await fetch(
         `/api/calendar?month=${
           currentDate.getMonth() + 1
-        }&year=${currentDate.getFullYear()}`
+        }&year=${currentDate.getFullYear()}`,
       );
       const data = await res.json();
       setPlacements(data);
@@ -100,13 +114,6 @@ export default function InstructorCalendar() {
   useEffect(() => {
     fetchData();
   }, [fetchData]);
-
-  useEffect(() => {
-    if (editingPlacement) {
-      fetchAvailableSubstitutes(new Date(editingPlacement.date));
-      setSearchQuery("");
-    }
-  }, [editingPlacement]);
 
   const handleDelete = async (id: string) => {
     if (!confirm("למחוק את הדיווח לצמיתות?")) return;
@@ -255,38 +262,38 @@ export default function InstructorCalendar() {
           </div>
         </div>
 
-          {/* Calendar Grid */}
-          <div className="bg-white rounded-[2.5rem] shadow-xl border border-slate-200 overflow-hidden">
-            <div className="grid grid-cols-7 bg-slate-50/50 border-b border-slate-200">
-              {["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת"].map(
-                (d) => (
-                  <div
-                    key={d}
-                    className="p-4 text-center font-bold text-slate-400 text-xs uppercase tracking-widest"
-                  >
-                    {d}
-                  </div>
-                )
-              )}
-            </div>
+        {/* Calendar Grid */}
+        <div className="bg-white rounded-[2.5rem] shadow-xl border border-slate-200 overflow-hidden">
+          <div className="grid grid-cols-7 bg-slate-50/50 border-b border-slate-200">
+            {["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת"].map(
+              (d) => (
+                <div
+                  key={d}
+                  className="p-4 text-center font-bold text-slate-400 text-xs uppercase tracking-widest"
+                >
+                  {d}
+                </div>
+              ),
+            )}
+          </div>
 
-            <div className="grid grid-cols-7">
-              {days.map((day, index) => {
-                if (!day) {
-                  return (
-                    <div
-                      key={`empty-${index}`}
-                      className="min-h-[150px] border-l border-b border-slate-50"
-                    />
-                  );
-                }
+          <div className="grid grid-cols-7">
+            {days.map((day, index) => {
+              if (!day) {
+                return (
+                  <div
+                    key={`empty-${index}`}
+                    className="min-h-[150px] border-l border-b border-slate-50"
+                  />
+                );
+              }
 
               const isSaturday = day.getDay() === 6;
               const isToday = isSameDay(day, new Date());
-               const isPast = day < startOfDay(new Date()) && !isToday;
+              const isPast = day < startOfDay(new Date()) && !isToday;
               const dayPlacements = Array.isArray(placements)
                 ? placements.filter((p: any) =>
-                    isSameDay(new Date(p.date), day)
+                    isSameDay(new Date(p.date), day),
                   )
                 : [];
 
@@ -307,15 +314,19 @@ export default function InstructorCalendar() {
                     >
                       {format(day, "d")}
                     </span>
-                   {!isSaturday && (!isPast || user?.roles.includes("SUPERVISOR")) && (
-                      <button 
-                        onClick={() => { setSelectedDate(day); setIsAddModalOpen(true); }} 
-                        className="p-1 text-slate-400 hover:bg-indigo-600 hover:text-white rounded-md transition-all group/btn" 
-                        title="הוספת דיווח"
-                      >
-                        <Plus size={14} strokeWidth={3} />
-                      </button>
-                    )}
+                    {!isSaturday &&
+                      (!isPast || user?.roles.includes("SUPERVISOR")) && (
+                        <button
+                          onClick={() => {
+                            setSelectedDate(day);
+                            setIsAddModalOpen(true);
+                          }}
+                          className="p-1 text-slate-400 hover:bg-indigo-600 hover:text-white rounded-md transition-all group/btn"
+                          title="הוספת דיווח"
+                        >
+                          <Plus size={14} strokeWidth={3} />
+                        </button>
+                      )}
                   </div>
 
                   {isSaturday ? (
@@ -347,17 +358,17 @@ export default function InstructorCalendar() {
                                   p.status === "OPEN"
                                     ? "bg-amber-500 animate-pulse"
                                     : p.status === "CANCELLED"
-                                    ? "bg-red-500"
-                                    : "bg-emerald-500"
+                                      ? "bg-red-500"
+                                      : "bg-emerald-500"
                                 }`}
                               />
                               {p.status === "OPEN"
                                 ? "ממתין"
                                 : p.status === "CANCELLED"
-                                ? "סגור"
-                                : p.substitute
-                                ? `${p.substitute.firstName} ${p.substitute.lastName[0]}.`
-                                : "משובץ"}
+                                  ? "סגור"
+                                  : p.substitute
+                                    ? `${p.substitute.firstName} ${p.substitute.lastName[0]}.`
+                                    : "משובץ"}
                             </div>
 
                             <button
