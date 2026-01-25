@@ -1603,7 +1603,7 @@ export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const start = searchParams.get('start');
   const end = searchParams.get('end');
-  const userId = searchParams.get('userId');
+  const userId = searchParams.get('userId'); // ה-ID של המשתמשת שנבחרה
   const includeInternal = searchParams.get('includeInternal') === 'true';
 
   try {
@@ -1629,48 +1629,48 @@ export async function GET(req: Request) {
 
     const isInternalSwap = (p: any) => {
       if (!p.substituteId) return false;
-
       const subId = String(p.substituteId);
       const absentTeacherId = String(p.mainTeacherId);
       const gardenManagerId = String(p.institution.mainManagerId);
-      
-      // רשימת כל ה-IDs של גננות הרוטציה הקבועות של הגן הזה (מכל הימים)
       const gardenRotationIds = (p.institution.mainManager?.fixedRotationsAsManager || [])
         .map((r: any) => String(r.rotationTeacherId));
 
-      // מקרה א': גננת אם חסרה והוחלפה ע"י אחת מגננות הרוטציה שלה
-      if (absentTeacherId === gardenManagerId) {
-        if (gardenRotationIds.includes(subId)) return true;
-      }
-
-      // מקרה ב': אחת מגננות הרוטציה הקבועות חסרה והוחלפה ע"י גננת האם
-      if (gardenRotationIds.includes(absentTeacherId)) {
-        if (subId === gardenManagerId) return true;
-      }
-
+      if (absentTeacherId === gardenManagerId && gardenRotationIds.includes(subId)) return true;
+      if (gardenRotationIds.includes(absentTeacherId) && subId === gardenManagerId) return true;
       return false;
     };
 
-    // סינון לפי בחירת המשתמש
-    const displayPlacements = includeInternal 
+    // 1. סינון ראשוני: הכללה/החרגה של החלפות פנימיות
+    let filteredPlacements = includeInternal 
       ? allPlacements 
       : allPlacements.filter(p => !isInternalSwap(p));
 
+    // --- התיקון הקריטי כאן ---
+    // 2. סינון לפי משתמשת ספציפית (אם נבחרה)
+    if (userId && userId !== "") {
+      filteredPlacements = filteredPlacements.filter(p => 
+        p.mainTeacherId === userId || p.substituteId === userId
+      );
+    }
+
+    // 3. חישוב הסטטיסטיקה על הרשימה המסוננת סופית
     const stats = {
-      total: displayPlacements.length,
-      assigned: displayPlacements.filter(p => p.status === 'ASSIGNED').length,
-      cancelled: displayPlacements.filter(p => p.status === 'CANCELLED').length,
-      open: displayPlacements.filter(p => p.status === 'OPEN').length,
+      total: filteredPlacements.length,
+      assigned: filteredPlacements.filter(p => p.status === 'ASSIGNED').length,
+      cancelled: filteredPlacements.filter(p => p.status === 'CANCELLED').length,
+      open: filteredPlacements.filter(p => p.status === 'OPEN').length,
+      
+      // נתונים ספציפיים לתצוגה מורחבת (אם רוצים להפריד בין "הייתה חסרה" ל"החליפה")
       userSpecific: userId ? {
-        asMain: displayPlacements.filter(p => p.mainTeacherId === userId).length,
-        asSub: displayPlacements.filter(p => p.substituteId === userId).length,
+        asMain: filteredPlacements.filter(p => p.mainTeacherId === userId).length,
+        asSub: filteredPlacements.filter(p => p.substituteId === userId).length,
       } : null
     };
 
     return NextResponse.json(stats);
   } catch (error) {
     console.error("Stats Error:", error);
-    return NextResponse.json({ message: "שגיאה" }, { status: 500 });
+    return NextResponse.json({ message: "שגיאה בחישוב הנתונים" }, { status: 500 });
   }
 }
 ==============================
@@ -1873,31 +1873,36 @@ export async function PATCH(
     const { id } = await params;
     const body = await req.json();
 
+    // 1. שליפת המשתמש הנוכחי מה-DB כבסיס להשוואה ומניעת קריסות
+    const currentUser = await prisma.user.findUnique({
+      where: { id },
+      include: { subordinatesIns: true }, 
+    });
+
+    if (!currentUser) {
+      return NextResponse.json({ message: "משתמש לא נמצא" }, { status: 404 });
+    }
+
+    // קביעת התפקידים שיהיו למשתמש לאחר העדכון (חדשים מהבקשה או הקיימים ב-DB)
+    const effectiveRoles = body.roles || currentUser.roles;
+    const isNowWorking = body.isWorking !== undefined ? body.isWorking : currentUser.isWorking;
+
     // בדיקת "המדריכה האחרונה"
     if (
-      body.isWorking === false ||
+      isNowWorking === false ||
       (body.roles && !body.roles.includes("INSTRUCTOR"))
     ) {
-      // האם המשתמשת הזו היא מדריכה כרגע?
-      const currentUser = await prisma.user.findUnique({
-        where: { id },
-        include: { subordinatesIns: true }, // גננות שמשויכות אליה
-      });
-
-      if (currentUser?.roles.includes("INSTRUCTOR")) {
-        // כמה מדריכות פעילות אחרות נשארו למפקחת הזו?
+      if (currentUser.roles.includes("INSTRUCTOR")) {
         const activeInstructorsCount = await prisma.user.count({
           where: {
             supervisorId: session.id,
             roles: { has: "INSTRUCTOR" },
             isWorking: true,
-            id: { not: id }, // לא לספור את זו שאנחנו עורכים
+            id: { not: id },
           },
         });
 
-        // אם אין מדריכות אחרות אבל יש גננות במחוז
         if (activeInstructorsCount === 0) {
-          // נבדוק אם יש בכלל גננות במחוז (של המפקחת הזו)
           const totalManagersInDistrict = await prisma.user.count({
             where: { supervisorId: session.id, roles: { has: "MANAGER" } },
           });
@@ -1915,50 +1920,27 @@ export async function PATCH(
       }
     }
 
-    // 1. פירוק השדות - אנחנו מוציאים כל מה שהוא לא שדה פשוט ב-User
-    const {
-      rotationData,
-      idNumber,
-      instructorId,
-      instructor,
-      supervisor,
-      mainManagedInstitutions,
-      managedInstitutions,
-      instructedInstitutions,
-      placementsAsMain,
-      placementsAsSub,
-      notifications,
-      fixedRotationsAsManager,
-      fixedRotationsAsRotation,
-      _count,
-      id: _id, // מוודאים שלא מעדכנים את ה-ID עצמו
-      ...restOfFields
-    } = body;
+    // 2. הכנת אובייקט הנתונים לעדכון (רק שדות שנשלחו ב-body)
+    const updateData: any = {};
+    
+    if (body.firstName !== undefined) updateData.firstName = body.firstName;
+    if (body.lastName !== undefined) updateData.lastName = body.lastName;
+    if (body.email !== undefined) updateData.email = body.email;
+    if (body.phoneNumber !== undefined) updateData.phoneNumber = body.phoneNumber;
+    if (body.roles !== undefined) updateData.roles = body.roles;
+    if (body.workDays !== undefined) updateData.workDays = body.workDays;
+    if (body.isWorking !== undefined) updateData.isWorking = body.isWorking;
 
-    // 2. הכנת אובייקט הנתונים לעדכון (רק שדות פשוטים)
-    const updateData: any = {
-      firstName: restOfFields.firstName,
-      lastName: restOfFields.lastName,
-      email: restOfFields.email,
-      phoneNumber: restOfFields.phoneNumber,
-      roles: restOfFields.roles,
-      workDays: restOfFields.workDays,
-      isWorking: restOfFields.isWorking,
-    };
-    if (instructorId !== undefined) {
-      // אם שלחו מחרוזת ריקה או REMOVE - נמחק את השיוך (null)
-      // אחרת - נשים את ה-ID ששלחו
-      updateData.instructorId = (instructorId === "" || instructorId === "REMOVE") ? null : instructorId;
+    if (body.instructorId !== undefined) {
+      updateData.instructorId = (body.instructorId === "" || body.instructorId === "REMOVE") ? null : body.instructorId;
     }
 
-    // עדכון תאריך לידה אם קיים
-    if (restOfFields.dateOfBirth) {
-      updateData.dateOfBirth = new Date(restOfFields.dateOfBirth);
+    if (body.dateOfBirth) {
+      updateData.dateOfBirth = new Date(body.dateOfBirth);
     }
 
-    // הצפנת ת"ז אם נשלחה חדשה
-    if (idNumber && idNumber.length > 5) {
-      updateData.idNumber = encrypt(idNumber);
+    if (body.idNumber && body.idNumber.length > 5) {
+      updateData.idNumber = encrypt(body.idNumber);
     }
 
     // 3. ביצוע העדכון בטבלת User
@@ -1966,19 +1948,17 @@ export async function PATCH(
       where: { id: id },
       data: updateData,
     });
-    if (
-      updatedUser.isWorking === false &&
-      updatedUser.roles.includes("MANAGER")
-    ) {
+
+    // 4. טיפול ברוטציות במידה והגננת הושבתה
+    if (updatedUser.isWorking === false && updatedUser.roles.includes("MANAGER")) {
       await prisma.fixedRotation.deleteMany({
         where: { managerId: id },
       });
     }
-    // אם היא נשארה פעילה אבל נשלחו נתוני רוטציה חדשים (הקוד הקיים שלך)
-    else if (updatedUser.roles.includes("MANAGER") && rotationData) {
-      // 1. שליפת כל גננות הרוטציה שמופיעות בבקשה
-      const teacherIds = Object.values(rotationData).filter(
-        (id) => id && id !== "REMOVE" && id !== ""
+    // אם היא נשארה פעילה אבל נשלחו נתוני רוטציה חדשים
+    else if (updatedUser.roles.includes("MANAGER") && body.rotationData) {
+      const teacherIds = Object.values(body.rotationData).filter(
+        (tid) => tid && tid !== "REMOVE" && tid !== ""
       ) as string[];
 
       const rotationTeachers = await prisma.user.findMany({
@@ -1986,18 +1966,11 @@ export async function PATCH(
         select: { id: true, workDays: true, firstName: true },
       });
 
-      // 2. בניית מערך השיבוצים - רק בזיכרון (Memory) בינתיים
       const rotationsToCreate = [];
-
-      for (const [day, teacherId] of Object.entries(rotationData)) {
+      for (const [day, teacherId] of Object.entries(body.rotationData)) {
         if (!teacherId || teacherId === "REMOVE" || teacherId === "") continue;
-
         const teacher = rotationTeachers.find((t) => t.id === teacherId);
-
-        if (teacher && !teacher.workDays.includes(day as any)) {
-          console.error(`Error: ${teacher.firstName} does not work on ${day}`);
-          continue;
-        }
+        if (teacher && !teacher.workDays.includes(day as any)) continue;
 
         rotationsToCreate.push({
           managerId: id,
@@ -2006,54 +1979,39 @@ export async function PATCH(
         });
       }
 
-      // א. מוחקים את כל הרוטציות הקודמות של הגננת הזו
       await prisma.fixedRotation.deleteMany({ where: { managerId: id } });
-      // ב. יוצרים את כל החדשות בבת אחת (רק אם יש כאלו)
       if (rotationsToCreate.length > 0) {
-        await prisma.fixedRotation.createMany({
-          data: rotationsToCreate,
-        });
+        await prisma.fixedRotation.createMany({ data: rotationsToCreate });
       }
     }
-    // בדיקה: האם המשתמשת המעודכנת הפכה ללא פעילה או איבדה תפקיד מדריכה?
 
-    const wasInstructor =
-      body.roles?.includes("INSTRUCTOR") || body.roles.includes("INSTRUCTOR");
-    const isNoLongerActiveInstructor =
-      wasInstructor &&
-      (updatedUser.isWorking === false ||
-        !updatedUser.roles.includes("INSTRUCTOR"));
-    // אם היא כבר לא מדריכה פעילה, נבדוק אם יש גננות שמשויכות אליה
+    // 5. בדיקה אם נוצרו "גננות יתומות" (אם המדריכה הפכה ללא פעילה)
+    const wasActiveInstructor = currentUser.isWorking && currentUser.roles.includes("INSTRUCTOR");
+    const isNowActiveInstructor = updatedUser.isWorking && updatedUser.roles.includes("INSTRUCTOR");
+    
     let orphanedManagers: any[] = [];
-
-    // רק אם היא באמת הפסיקה להיות מדריכה, נחפש מי נשאר יתום תחתיה
-    if (isNoLongerActiveInstructor) {
+    if (wasActiveInstructor && !isNowActiveInstructor) {
       orphanedManagers = await prisma.user.findMany({
         where: {
           instructorId: id,
           isWorking: true,
-          id: { not: id }, // לא לכלול את עצמה
-          NOT: {
-            roles: { has: "INSTRUCTOR" },
-          }, // גננות שהן לא מדריכות בעצמן
+          id: { not: id },
+          NOT: { roles: { has: "INSTRUCTOR" } },
         },
         select: { id: true, firstName: true, lastName: true },
       });
     }
 
-    const isRotationTeacher = updatedUser.roles.includes("ROTATION");
+    // 6. בדיקת שבירת רוטציות (אם גננת רוטציה שינתה ימי עבודה)
     let brokenRotations: any[] = [];
-
-    if (isRotationTeacher) {
-      // 2. נמצא את כל השיבוצים הקבועים שבהם היא רשומה,
-      // אבל הם בימים שבהם היא כבר לא עובדת (או שהיא הושבתה לגמרי)
+    if (updatedUser.roles.includes("ROTATION")) {
       brokenRotations = await prisma.fixedRotation.findMany({
         where: {
           rotationTeacherId: id,
           OR: [
-            { manager: { isWorking: false } }, // הגנה נוספת
-            { day: { notIn: updatedUser.workDays } }, // היום כבר לא בלו"ז שלה
-            { rotationTeacher: { isWorking: false } }, // היא הושבתה
+            { manager: { isWorking: false } },
+            { day: { notIn: updatedUser.workDays } },
+            { rotationTeacher: { isWorking: false } },
           ],
         },
         include: {
@@ -2061,7 +2019,6 @@ export async function PATCH(
         },
       });
 
-      // 3. מחיקת השיבוצים השבורים מה-DB (כי הם כבר לא חוקיים)
       if (brokenRotations.length > 0) {
         await prisma.fixedRotation.deleteMany({
           where: { id: { in: brokenRotations.map((br) => br.id) } },
@@ -2073,10 +2030,10 @@ export async function PATCH(
       user: updatedUser,
       needsReassignment: orphanedManagers.length > 0,
       orphanedManagers: orphanedManagers,
-      // הנתון החדש:
       needsRotationMigration: brokenRotations.length > 0,
       brokenRotations: brokenRotations,
     });
+
   } catch (error: any) {
     console.error("Prisma Update Error Details:", error);
     return NextResponse.json(
@@ -2085,7 +2042,6 @@ export async function PATCH(
     );
   }
 }
-
 ==============================
 FILE: src/app\api\supervisor\users-stats\route.ts
 ==============================
@@ -2522,8 +2478,8 @@ body {
 .group:hover .tooltip-add-models {
   @apply opacity-100 scale-100;
 }
-/* 
-.custom-scrollbar {
+/* custom-scrollbar 
+.{
   scrollbar-width: thin; 
   scrollbar-color: rgba(0,0,0,0.2) transparent; 
 }
@@ -3894,7 +3850,7 @@ export default function ManagerDashboard() {
             <Clock size={20} className="text-slate-400" />
             דיווחים עתידיים
           </h2>
-          <div className="space-y-3 max-h-[50vh] overflow-y-auto">
+          <div className="space-y-3 max-h-[50vh] overflow-y-auto custom-scrollbar">
             {upcomingPlacements.map((p: any) => (
               <div
                 key={p.id}
@@ -6657,7 +6613,16 @@ FILE: src/app\supervisor\statistics\page.tsx
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
-import { format, subMonths, subYears, startOfMonth } from "date-fns";
+import {
+  format,
+  subMonths,
+  subYears,
+  startOfMonth,
+  addDays,
+  isAfter,
+  isBefore,
+  startOfDay,
+} from "date-fns";
 import { BarChart3, Calendar, User, Info } from "lucide-react";
 import EditUserModal from "@/components/EditModals/EditUserModal";
 import LoadingScreen from "@/components/ui/LoadingScreen";
@@ -6672,12 +6637,12 @@ export default function StatisticsPage() {
 
   // פילטרים
   const [startDate, setStartDate] = useState(
-    format(startOfMonth(new Date()), "yyyy-MM-dd")
+    format(startOfMonth(new Date()), "yyyy-MM-dd"),
   );
   const [endDate, setEndDate] = useState(format(new Date(), "yyyy-MM-dd"));
   const [selectedUserId, setSelectedUserId] = useState("");
   const [activeShortcut, setActiveShortcut] = useState<"month" | "year" | null>(
-    "month"
+    "month",
   );
 
   const [isDetailsOpen, setIsDetailsOpen] = useState(false);
@@ -6715,12 +6680,12 @@ export default function StatisticsPage() {
   // זיהוי תפקיד המשתמשת הנבחרת
   const selectedUser = useMemo(
     () => users.find((u) => u.id === selectedUserId),
-    [selectedUserId, users]
+    [selectedUserId, users],
   );
 
   const isManager = selectedUser?.roles.includes("MANAGER");
   const isSubstitute = selectedUser?.roles.some((r: string) =>
-    ["SUBSTITUTE", "ROTATION"].includes(r)
+    ["SUBSTITUTE", "ROTATION"].includes(r),
   );
 
   // פונקציה להגדרת קיצור דרך
@@ -6733,11 +6698,38 @@ export default function StatisticsPage() {
     setActiveShortcut(type);
   };
 
-  // פונקציה לשינוי ידני של תאריך (מבטל את הדגשת הקיצור)
+  const normalize = (d: string) => startOfDay(new Date(d + "T00:00:00"));
+
   const handleDateChange = (type: "start" | "end", val: string) => {
-    if (type === "start") setStartDate(val);
-    else setEndDate(val);
     setActiveShortcut(null);
+
+    const selectedDate = normalize(val);
+    const currentStart = normalize(startDate);
+    const currentEnd = normalize(endDate);
+
+    if (type === "start") {
+      setStartDate(val);
+
+      if (selectedDate >= currentEnd) {
+        alert(
+          "שימי לב: תאריך ההתחלה חייב להיות לפני תאריך הסיום, לכן התאריכים שונו בהתאם.",
+        );
+
+        const nextDay = format(addDays(selectedDate, 1), "yyyy-MM-dd");
+        setEndDate(nextDay);
+      }
+    } else {
+      if (selectedDate <= currentStart) {
+        alert(
+          "שימי לב: תאריך הסיום חייב להיות לפחות יום אחד אחרי תאריך ההתחלה, לכן התאריכים שונו בהתאם.",
+        );
+
+        const forcedDate = format(addDays(currentStart, 1), "yyyy-MM-dd");
+        setEndDate(forcedDate);
+      } else {
+        setEndDate(val);
+      }
+    }
   };
 
   return (
@@ -6772,12 +6764,14 @@ export default function StatisticsPage() {
               label="תאריך התחלה"
               value={startDate}
               onChange={(val) => handleDateChange("start", val)}
+              allowAllDates={true}
             />
 
             <CustomDatePicker
               label="תאריך סיום"
               value={endDate}
               onChange={(val) => handleDateChange("end", val)}
+              allowAllDates={true}
             />
           </div>
         </div>
@@ -6886,13 +6880,6 @@ export default function StatisticsPage() {
               </h2>
             </div>
           </div>
-
-          {/* User Specific */}
-          {stats.userSpecific && (
-            <div className="border-sky-600 p-10 rounded-[3rem] text-gray-800 relative overflow-hidden shadow-xl shadow-indigo-100">
-              {/* ... אותו קוד של הכרטיס האישי בדיוק כמו קודם ... */}
-            </div>
-          )}
         </>
       )}
       {isDetailsOpen && selectedUser && (
@@ -9420,8 +9407,12 @@ export default function EditUserModal({
         onUpdateSuccess();
         onClose(); // סוגרים את הכל
       }
+       else {
+      const err = await res.json();
+      alert(err.message || "שגיאה בביטול ההשבתה");
+    }
     } catch (err) {
-      alert("שגיאה בביטול ההשבתה");
+      alert("שגיאת תקשורת");
     } finally {
       setLoading(false);
     }
@@ -9825,7 +9816,7 @@ export default function EditUserModal({
             isOpen={showReassignModal}
             teachers={orphanedTeachers}
             instructors={instructors}
-            excludedId={lastDisabledId} // <-- שליחת ה-ID להחרגה
+            excludedId={user.id} 
             isForced={true}
             onCancelDisabling={handleCancelDisabling}
             onComplete={(remaining?: any) => {
@@ -11530,15 +11521,8 @@ FILE: src/components\ReassignTeachersModal.tsx
 ==============================
 "use client";
 import { useState } from "react";
-import {
-  X,
-  Users,
-  GraduationCap,
-  CheckCircle,
-  AlertTriangle,
-  Loader2,
-} from "lucide-react";
-import LoadingScreen from "./ui/LoadingScreen";
+import { X, CheckCircle, AlertTriangle, Loader2 } from "lucide-react";
+import CustomDropdown from "./ui/CustomDropdown"; // ייבוא הקומפוננטה
 
 export default function ReassignTeachersModal({
   isOpen,
@@ -11547,7 +11531,7 @@ export default function ReassignTeachersModal({
   onComplete,
   isForced = false,
   onClose,
-  excludedId,
+  excludedId, // זה ה-ID של המדריכה שאנחנו משביתים
   onCancelDisabling,
 }: any) {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -11575,12 +11559,9 @@ export default function ReassignTeachersModal({
         body: JSON.stringify({ managerIds: selectedIds, newInstructorId }),
       });
       if (res.ok) {
-        const remaining = teachers.filter(
-          (t: any) => !selectedIds.includes(t.id)
-        );
+        const remaining = teachers.filter((t: any) => !selectedIds.includes(t.id));
         if (remaining.length === 0) onComplete();
         else {
-          // אם נשארו עוד, נעדכן את הרשימה (שיבוץ חלקי)
           onComplete(remaining);
           setSelectedIds([]);
           setNewInstructorId("");
@@ -11595,19 +11576,18 @@ export default function ReassignTeachersModal({
 
   if (!isOpen) return null;
 
+  // סינון המדריכה המושבתת מרשימת האפשרויות
+  const availableInstructors = instructors
+    .filter((i: any) => i.isWorking === true && i.id !== excludedId)
+    .map((i: any) => ({
+      id: i.id,
+      label: `${i.firstName} ${i.lastName}`,
+    }));
+
   return (
     <div className="fixed inset-0 z-[200] bg-slate-900/80 backdrop-blur-md flex items-center justify-center p-4">
       <div className="bg-white w-full max-w-2xl rounded-[2.5rem] shadow-2xl overflow-hidden flex flex-col max-h-[90vh] relative">
-        {/* כפתור סגירה - מופיע רק אם זה לא מצב כפוי */}
-        {!isForced && (
-          <button
-            onClick={onClose}
-            className="absolute top-5 left-5 text-white/80 hover:text-white bg-black/20 hover:bg-black/30 rounded-full p-2 transition z-10"
-          >
-            <X size={24} />
-          </button>
-        )}
-
+        
         {/* Header */}
         <div className="p-8 bg-gray-800 text-white shrink-0">
           <h2 className="text-2xl font-black flex items-center gap-3">
@@ -11617,15 +11597,11 @@ export default function ReassignTeachersModal({
             המדריכה הקודמת אינה פעילה. חובה להעביר את הגננות למדריכה חדשה.
           </p>
         </div>
-        <div className="p-6 flex-1 overflow-y-auto space-y-6">
+
+        <div className="p-6 flex-1 overflow-y-auto space-y-6 custom-scrollbar">
           <div className="flex justify-between items-center bg-slate-50 p-4 rounded-2xl">
-            <button
-              onClick={toggleSelectAll}
-              className="text-sm font-black text-indigo-600 hover:underline"
-            >
-              {selectedIds.length === teachers.length
-                ? "ביטול בחירת הכל"
-                : "בחר הכל"}
+            <button onClick={toggleSelectAll} className="text-sm font-black text-indigo-600 hover:underline">
+              {selectedIds.length === teachers.length ? "ביטול בחירת הכל" : "בחר הכל"}
             </button>
             <span className="text-xs font-bold text-slate-500">
               נבחרו {selectedIds.length} מתוך {teachers.length} גננות
@@ -11638,71 +11614,53 @@ export default function ReassignTeachersModal({
                 key={t.id}
                 onClick={() => toggleSelect(t.id)}
                 className={`p-4 rounded-2xl border-2 cursor-pointer transition-all flex items-center gap-3 ${
-                  selectedIds.includes(t.id)
-                    ? "border-indigo-600 bg-indigo-50"
-                    : "border-slate-100 bg-white"
+                  selectedIds.includes(t.id) ? "border-indigo-600 bg-indigo-50" : "border-slate-100 bg-white"
                 }`}
               >
-                <div
-                  className={`w-5 h-5 rounded-md border-2 flex items-center justify-center ${
-                    selectedIds.includes(t.id)
-                      ? "bg-indigo-600 border-indigo-600"
-                      : "border-slate-300"
-                  }`}
-                >
-                  {selectedIds.includes(t.id) && (
-                    <CheckCircle size={14} className="text-white" />
-                  )}
+                <div className={`w-5 h-5 rounded-md border-2 flex items-center justify-center ${
+                    selectedIds.includes(t.id) ? "bg-indigo-600 border-indigo-600" : "border-slate-300"
+                }`}>
+                  {selectedIds.includes(t.id) && <CheckCircle size={14} className="text-white" />}
                 </div>
-                <span className="font-bold text-slate-700">
-                  {t.firstName} {t.lastName}
-                </span>
+                <span className="font-bold text-slate-700">{t.firstName} {t.lastName}</span>
               </div>
             ))}
           </div>
 
+          {/* שימוש ב-CustomDropdown החדש */}
           <div className="space-y-3 pt-4 border-t">
-            <label className="text-sm font-black text-slate-700 block">
-              עבור הנבחרות, בחרי מדריכה חדשה:
-            </label>
-            <select
-              className="input-standard bg-slate-50"
+            <CustomDropdown
+              label="עבור הנבחרות, בחרי מדריכה חדשה:"
+              placeholder="בחרי מדריכה פעילה..."
               value={newInstructorId}
-              onChange={(e) => setNewInstructorId(e.target.value)}
-            >
-              <option value="">-- בחרי מדריכה פעילה --</option>
-              {instructors
-                .filter((i: any) => i.isWorking === true && i.id !== excludedId) // סינון כפול
-                .map((i: any) => (
-                  <option key={i.id} value={i.id}>
-                    {i.firstName} {i.lastName}
-                  </option>
-                ))}
-            </select>
+              options={availableInstructors}
+              onChange={(val) => setNewInstructorId(val)}
+            />
           </div>
         </div>
+
         <div className="p-6 bg-slate-50 flex gap-4">
           <button
             onClick={handleReassign}
             disabled={loading || selectedIds.length === 0 || !newInstructorId}
-            className="flex-1 py-4 bg-indigo-600 text-white rounded-2xl font-black shadow-lg disabled:bg-slate-300"
+            className="flex-[2] py-4 bg-indigo-600 text-white rounded-2xl font-black shadow-lg disabled:bg-slate-300"
           >
-            {loading ? "שומר..." : "בצע שיבוץ מחדש"}
+            {loading ? <Loader2 className="animate-spin mx-auto" /> : "בצע שיבוץ מחדש"}
           </button>
-          {isForced && (
-            <button
-              onClick={onCancelDisabling}
-              className="flex-1 py-4 bg-white border-2 border-slate-200 text-slate-600 rounded-2xl font-black hover:bg-slate-50 transition-all"
-            >
-              בטל השבתה
-            </button>
-          )}
+          
+          {/* כפתור בטל השבתה */}
+          <button
+            onClick={onCancelDisabling}
+            type="button"
+            className="flex-1 py-4 bg-white border-2 border-slate-200 text-slate-600 rounded-2xl font-black hover:bg-slate-50 transition-all"
+          >
+            בטל השבתה
+          </button>
         </div>
       </div>
     </div>
   );
 }
-
 ==============================
 FILE: src/components\RecentActivityModal.tsx
 ==============================
@@ -11906,6 +11864,7 @@ interface Props {
   value: string | null;
   onChange: (val: string) => void;
   allowFutureDates?: boolean;
+  allowAllDates?: boolean;
 }
 
 export default function CustomDatePicker({
@@ -11913,13 +11872,14 @@ export default function CustomDatePicker({
   value,
   onChange,
   allowFutureDates = false,
+  allowAllDates = false,
 }: Props) {
   const [isOpen, setIsOpen] = useState(false);
   const [viewDate, setViewDate] = useState(
-    value ? new Date(value) : new Date()
+    value ? new Date(value) : new Date(),
   );
   const [inputValue, setInputValue] = useState(
-    value ? format(new Date(value), "dd/MM/yyyy") : ""
+    value ? format(new Date(value), "dd/MM/yyyy") : "",
   );
   const [error, setError] = useState("");
 
@@ -11941,6 +11901,17 @@ export default function CustomDatePicker({
     };
   }, [isOpen]);
 
+  useEffect(() => {
+    if (value) {
+      const date = new Date(value);
+      if (!isNaN(date.getTime())) {
+        setViewDate(date);
+        setInputValue(format(date, "dd/MM/yyyy"));
+      }
+    } else {
+      setInputValue("");
+    }
+  }, [value]);
   const days = eachDayOfInterval({
     start: startOfMonth(viewDate),
     end: endOfMonth(viewDate),
@@ -11948,11 +11919,14 @@ export default function CustomDatePicker({
   const today = startOfDay(new Date());
 
   const isDateDisabled = (date: Date) => {
+    // אם הכל מותר - שום דבר לא מושבת
+    if (allowAllDates) return false;
+
     if (allowFutureDates) {
-      // אסור עבר
+      // מצב שבו מותר רק עתיד (למשל דיווח היעדרות) - אסור עבר
       return isAfter(today, date);
     } else {
-      // אסור עתיד
+      // ברירת מחדל: מותר רק עבר (למשל תאריך לידה) - אסור עתיד
       return isAfter(date, today);
     }
   };
@@ -11975,21 +11949,18 @@ export default function CustomDatePicker({
   const validateAndCorrectDate = (
     dayStr: string,
     monthStr: string,
-    yearStr: string
+    yearStr: string,
   ) => {
-    // המרה למספרים
     let day = parseInt(dayStr, 10);
     let month = parseInt(monthStr, 10);
     let year = parseInt(yearStr, 10);
 
-    // בדיקות בסיסיות
     if (isNaN(day) || isNaN(month) || isNaN(year)) {
       return null;
     }
 
     let errorMessage = "";
 
-    // תיקון חודש (1-12)
     if (month < 1) {
       month = 1;
       errorMessage = "החודש תוקן ל-1 (ינואר)";
@@ -11999,12 +11970,7 @@ export default function CustomDatePicker({
       errorMessage = "החודש תוקן ל-12 (דצמבר)";
     }
 
-    // תיקון שנה (אם הוקלדו 2 ספרות)
-    if (year < 100) {
-      year = 2000 + year;
-    }
-
-    // בדיקת תקינות שנה (1900-2099)
+    if (year < 100) year = 2000 + year;
     if (year < 1900) {
       year = 1900;
       errorMessage = "השנה תוקנה ל-1900";
@@ -12014,7 +11980,6 @@ export default function CustomDatePicker({
       errorMessage = "השנה תוקנה ל-2099";
     }
 
-    // תיקון יום לפי מספר הימים המקסימלי בחודש
     const maxDay = getDaysInMonth(month, year);
     if (day < 1) {
       day = 1;
@@ -12022,37 +11987,16 @@ export default function CustomDatePicker({
     }
     if (day > maxDay) {
       day = maxDay;
-      const monthNames = [
-        "ינואר",
-        "פברואר",
-        "מרץ",
-        "אפריל",
-        "מאי",
-        "יוני",
-        "יולי",
-        "אוגוסט",
-        "ספטמבר",
-        "אוקטובר",
-        "נובמבר",
-        "דצמבר",
-      ];
-      if (month === 2 && !isLeapYear(year)) {
-        errorMessage = `${
-          monthNames[month - 1]
-        } ${year} אינו שנה מעוברת - היום תוקן ל-${maxDay}`;
-      } else {
-        errorMessage = `ל${
-          monthNames[month - 1]
-        } יש רק ${maxDay} ימים - היום תוקן ל-${maxDay}`;
-      }
+      errorMessage = `היום תוקן ל-${maxDay}`;
     }
 
-    // יצירת אובייקט תאריך
     const date = new Date(year, month - 1, day);
-
-    // בדיקה שהתאריך לא אחרי היום או לפני היום בהתאם ל allowFutureDates
-
     const today = startOfDay(new Date());
+
+    // אם הכל מותר - אין צורך בתיקוני מגבלות
+    if (allowAllDates) {
+      return { date, error: errorMessage };
+    }
 
     if (allowFutureDates && isAfter(today, date)) {
       errorMessage = "לא ניתן לבחור תאריך עבר - התאריך תוקן להיום";
@@ -12067,73 +12011,55 @@ export default function CustomDatePicker({
     return { date, error: errorMessage };
   };
 
-  // טיפול בשינוי קלט
+
   const handleInputChange = (raw: string) => {
-    // הסרת כל התווים מלבד ספרות
-    let digitsOnly = raw.replace(/\D/g, "");
+  let digitsOnly = raw.replace(/\D/g, "");
+  if (digitsOnly.length > 8) digitsOnly = digitsOnly.slice(0, 8);
 
-    // הגבלה ל-8 ספרות (ddmmyyyy)
-    if (digitsOnly.length > 8) {
-      digitsOnly = digitsOnly.slice(0, 8);
-    }
-
-    // בניית הפורמט עם סלאשים
-    let formatted = "";
-    if (digitsOnly.length > 0) {
-      formatted = digitsOnly.slice(0, 2); // יום
-      if (digitsOnly.length > 2) {
-        formatted += "/" + digitsOnly.slice(2, 4); // חודש
-        if (digitsOnly.length > 4) {
-          formatted += "/" + digitsOnly.slice(4, 8); // שנה
-        }
+  let formatted = "";
+  if (digitsOnly.length > 0) {
+    formatted = digitsOnly.slice(0, 2);
+    if (digitsOnly.length > 2) {
+      formatted += "/" + digitsOnly.slice(2, 4);
+      if (digitsOnly.length > 4) {
+        formatted += "/" + digitsOnly.slice(4, 8);
       }
     }
+  }
 
-    setInputValue(formatted);
+  // 👈 עדכון זמני בלבד בזמן הקלדה
+  setInputValue(formatted);
 
-    // ניסיון לפרסר את התאריך רק אם יש תאריך מלא
-    if (digitsOnly.length === 8) {
-      const dayStr = digitsOnly.slice(0, 2);
-      const monthStr = digitsOnly.slice(2, 4);
-      const yearStr = digitsOnly.slice(4, 8);
+  if (digitsOnly.length === 8) {
+    const dayStr = digitsOnly.slice(0, 2);
+    const monthStr = digitsOnly.slice(2, 4);
+    const yearStr = digitsOnly.slice(4, 8);
 
-      const result = validateAndCorrectDate(dayStr, monthStr, yearStr);
+    const result = validateAndCorrectDate(dayStr, monthStr, yearStr);
 
-      if (result) {
-        const correctedFormatted = format(result.date, "dd/MM/yyyy");
-        setInputValue(correctedFormatted);
-        onChange(format(result.date, "yyyy-MM-dd"));
-        setViewDate(result.date);
-        setError(result.error);
-      } else {
-        setError("תאריך לא תקין");
-      }
+    if (result) {
+      onChange(format(result.date, "yyyy-MM-dd"));
+      setError(result.error);
     } else {
-      setError("");
+      setError("תאריך לא תקין");
     }
-  };
+  } else {
+    setError("");
+  }
+};
 
-  // טיפול בבחירה מהלוח שנה
+  
+
   const handleSelect = (date: Date) => {
-    const today = startOfDay(new Date());
-
-    // אם התאריך בעתיד, השתמש בתאריך של היום
-    const selectedDate = isAfter(date, today) ? today : date;
-
     if (isDateDisabled(date)) return;
 
-    setInputValue(format(date, "dd/MM/yyyy"));
     onChange(format(date, "yyyy-MM-dd"));
-    setViewDate(date);
     setIsOpen(false);
     setError("");
   };
 
-  // הוספת אוטומטית של סלאשים תוך כדי הקלדה
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     const key = e.key;
-
-    // מניעת הוספת תווים לא חוקיים
     if (
       !/[\d/]/.test(key) &&
       !["Backspace", "Delete", "ArrowLeft", "ArrowRight", "Tab"].includes(key)
@@ -12143,14 +12069,12 @@ export default function CustomDatePicker({
     }
   };
 
-  // Rendering
   return (
     <div className="space-y-2 relative">
       <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mr-1">
         {label}
       </label>
 
-      {/* Input */}
       <div className="relative">
         <input
           type="text"
@@ -12164,8 +12088,6 @@ export default function CustomDatePicker({
             error ? "border-amber-400 focus:ring-amber-500" : "border-slate-100"
           }`}
         />
-
-        {/* Calendar button */}
         <button
           type="button"
           onClick={() => setIsOpen(!isOpen)}
@@ -12175,19 +12097,15 @@ export default function CustomDatePicker({
         </button>
       </div>
 
-      {/* Error message */}
       {error && (
         <p className="text-amber-600 text-[10px] font-bold mt-1 animate-in slide-in-from-top-1 duration-200 bg-amber-50 px-3 py-2 rounded-lg border border-amber-200">
           ⚠️ {error}
         </p>
       )}
 
-      {/* Modal */}
       {isOpen && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/50 animate-in fade-in duration-200">
-          {/* Modal Content */}
           <div className="relative bg-white rounded-[2rem] shadow-2xl w-full max-w-md animate-in zoom-in-95 duration-200">
-            {/* Close button */}
             <button
               type="button"
               onClick={() => setIsOpen(false)}
@@ -12196,14 +12114,12 @@ export default function CustomDatePicker({
               <X size={20} className="text-slate-600" />
             </button>
 
-            {/* Header */}
             <div className="p-6 border-b border-slate-100">
               <h3 className="text-lg font-black text-slate-800 text-center">
                 {label}
               </h3>
             </div>
 
-            {/* Input inside modal */}
             <div className="p-6 border-b border-slate-100">
               <input
                 type="text"
@@ -12219,41 +12135,29 @@ export default function CustomDatePicker({
                     : "border-slate-100"
                 }`}
               />
-
-              {/* Error message in modal */}
-              {error && (
-                <p className="text-amber-600 text-[10px] font-bold mt-3 animate-in slide-in-from-top-1 duration-200 bg-amber-50 px-3 py-2 rounded-lg border border-amber-200 text-center">
-                  ⚠️ {error}
-                </p>
-              )}
             </div>
 
-            {/* Calendar */}
             <div className="p-6">
-              {/* Header עם ניווט חודשים */}
               <div className="flex justify-between items-center mb-6">
                 <button
                   type="button"
                   onClick={() => setViewDate(subMonths(viewDate, 1))}
-                  className="p-2 hover:bg-slate-100 rounded-full transition-colors"
+                  className="p-2 hover:bg-slate-100 rounded-full"
                 >
                   <ChevronRight size={18} className="text-slate-600" />
                 </button>
-
                 <span className="font-black text-slate-800 text-base">
                   {format(viewDate, "MMMM yyyy", { locale: he })}
                 </span>
-
                 <button
                   type="button"
                   onClick={() => setViewDate(addMonths(viewDate, 1))}
-                  className="p-2 hover:bg-slate-100 rounded-full transition-colors"
+                  className="p-2 hover:bg-slate-100 rounded-full"
                 >
                   <ChevronLeft size={18} className="text-slate-600" />
                 </button>
               </div>
 
-              {/* Weekdays */}
               <div className="grid grid-cols-7 gap-1 text-center mb-3">
                 {["א", "ב", "ג", "ד", "ה", "ו", "ש"].map((d) => (
                   <span
@@ -12265,17 +12169,15 @@ export default function CustomDatePicker({
                 ))}
               </div>
 
-              {/* Days */}
               <div className="grid grid-cols-7 gap-1 min-h-[240px]">
                 {Array.from({ length: startOfMonth(viewDate).getDay() }).map(
                   (_, i) => (
                     <div key={`empty-${i}`} />
-                  )
+                  ),
                 )}
 
                 {days.map((day) => {
-                  const today = startOfDay(new Date());
-                  const isToday = isSameDay(day, today);
+                  const isDayToday = isSameDay(day, today);
                   const isDisabled = isDateDisabled(day);
                   const isSelected =
                     inputValue &&
@@ -12291,10 +12193,10 @@ export default function CustomDatePicker({
                         isSelected
                           ? "bg-indigo-600 text-white shadow-lg shadow-indigo-200"
                           : isDisabled
-                          ? "text-slate-300 cursor-not-allowed"
-                          : isToday
-                          ? "bg-indigo-100 text-indigo-700 hover:bg-indigo-200"
-                          : "hover:bg-indigo-50 text-slate-600"
+                            ? "text-slate-300 cursor-not-allowed"
+                            : isDayToday
+                              ? "bg-indigo-100 text-indigo-700 hover:bg-indigo-200"
+                              : "hover:bg-indigo-50 text-slate-600"
                       }`}
                     >
                       {format(day, "d")}
@@ -12303,7 +12205,6 @@ export default function CustomDatePicker({
                 })}
               </div>
 
-              {/* Select button */}
               <button
                 type="button"
                 onClick={() => {
@@ -12314,7 +12215,6 @@ export default function CustomDatePicker({
                     }
                   }
                 }}
-                disabled={!inputValue || error !== ""}
                 className="w-full mt-6 py-3 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl transition-colors shadow-lg shadow-indigo-200 disabled:bg-slate-300 disabled:cursor-not-allowed disabled:shadow-none"
               >
                 בחר
@@ -13329,7 +13229,17 @@ const getDayEnum = (date: Date): Day => {
 
 export async function db_createPlacement(data: any) {
   const targetDate = startOfDay(new Date(data.date));
+ const existingPlacementForTeacher = await prisma.placement.findFirst({
+    where: {
+      mainTeacherId: data.mainTeacherId,
+      date: targetDate,
+      status: { not: "CANCELLED" } // אם הדיווח הקודם בוטל, מותר לדווח שוב
+    }
+  });
 
+  if (existingPlacementForTeacher) {
+    throw new Error("כבר קיים דיווח במערכת על שם גננת זו בתאריך שנבחר.");
+  }
   // 1. יצירת הרשומה
   const newPlacement = await prisma.placement.create({
     data: {
@@ -13342,7 +13252,7 @@ export async function db_createPlacement(data: any) {
     },
     include: {
       institution: true,
-      mainTeacher: { select: { firstName: true, lastName: true } },
+      mainTeacher: { select: { firstName: true, lastName: true, phoneNumber: true } },
       substitute: { select: { firstName: true, lastName: true } },
     },
   });

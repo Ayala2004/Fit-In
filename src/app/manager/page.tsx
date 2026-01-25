@@ -240,7 +240,7 @@ export default function ManagerDashboard() {
             <Clock size={20} className="text-slate-400" />
             דיווחים עתידיים
           </h2>
-          <div className="space-y-3 max-h-[50vh] overflow-y-auto">
+          <div className="space-y-3 max-h-[50vh] overflow-y-auto custom-scrollbar">
             {upcomingPlacements.map((p: any) => (
               <div
                 key={p.id}

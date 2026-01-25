@@ -228,8 +228,8 @@ body {
 .group:hover .tooltip-add-models {
   @apply opacity-100 scale-100;
 }
-/* 
-.custom-scrollbar {
+/* custom-scrollbar 
+.{
   scrollbar-width: thin; 
   scrollbar-color: rgba(0,0,0,0.2) transparent; 
 }
