@@ -5,7 +5,7 @@ import { encrypt } from "@/utils/crypto";
 
 export async function PATCH(
   req: Request,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: Promise<{ id: string }> },
 ) {
   const session = await getSession();
 
@@ -20,7 +20,7 @@ export async function PATCH(
     // 1. שליפת המשתמש הנוכחי מה-DB כבסיס להשוואה ומניעת קריסות
     const currentUser = await prisma.user.findUnique({
       where: { id },
-      include: { subordinatesIns: true }, 
+      include: { subordinatesIns: true },
     });
 
     if (!currentUser) {
@@ -29,7 +29,8 @@ export async function PATCH(
 
     // קביעת התפקידים שיהיו למשתמש לאחר העדכון (חדשים מהבקשה או הקיימים ב-DB)
     const effectiveRoles = body.roles || currentUser.roles;
-    const isNowWorking = body.isWorking !== undefined ? body.isWorking : currentUser.isWorking;
+    const isNowWorking =
+      body.isWorking !== undefined ? body.isWorking : currentUser.isWorking;
 
     // בדיקת "המדריכה האחרונה"
     if (
@@ -57,7 +58,7 @@ export async function PATCH(
                 message:
                   "לא ניתן להשבית את המדריכה האחרונה במחוז כל עוד ישנן גננות אם. עלייך להגדיר מדריכה פעילה אחרת תחילה.",
               },
-              { status: 400 }
+              { status: 400 },
             );
           }
         }
@@ -66,17 +67,21 @@ export async function PATCH(
 
     // 2. הכנת אובייקט הנתונים לעדכון (רק שדות שנשלחו ב-body)
     const updateData: any = {};
-    
+
     if (body.firstName !== undefined) updateData.firstName = body.firstName;
     if (body.lastName !== undefined) updateData.lastName = body.lastName;
     if (body.email !== undefined) updateData.email = body.email;
-    if (body.phoneNumber !== undefined) updateData.phoneNumber = body.phoneNumber;
+    if (body.phoneNumber !== undefined)
+      updateData.phoneNumber = body.phoneNumber;
     if (body.roles !== undefined) updateData.roles = body.roles;
     if (body.workDays !== undefined) updateData.workDays = body.workDays;
     if (body.isWorking !== undefined) updateData.isWorking = body.isWorking;
 
     if (body.instructorId !== undefined) {
-      updateData.instructorId = (body.instructorId === "" || body.instructorId === "REMOVE") ? null : body.instructorId;
+      updateData.instructorId =
+        body.instructorId === "" || body.instructorId === "REMOVE"
+          ? null
+          : body.instructorId;
     }
 
     if (body.dateOfBirth) {
@@ -94,15 +99,53 @@ export async function PATCH(
     });
 
     // 4. טיפול ברוטציות במידה והגננת הושבתה
-    if (updatedUser.isWorking === false && updatedUser.roles.includes("MANAGER")) {
+    if (
+      updatedUser.isWorking === false &&
+      updatedUser.roles.includes("MANAGER")
+    ) {
       await prisma.fixedRotation.deleteMany({
         where: { managerId: id },
       });
-    }
-    // אם היא נשארה פעילה אבל נשלחו נתוני רוטציה חדשים
-    else if (updatedUser.roles.includes("MANAGER") && body.rotationData) {
+    } else if (updatedUser.roles.includes("MANAGER")) {
+      // מחיקת כל הרוטציה בימים שבהם גננת האם עובדת כרגע (כי היא לא צריכה מחליפה בימים אלו)
+      await prisma.fixedRotation.deleteMany({
+        where: {
+          managerId: id,
+          day: { in: updatedUser.workDays }, // ימי העבודה החדשים שלה
+        },
+      });
+
+      // אם נשלחו נתוני רוטציה חדשים מה-UI, מעדכנים אותם
+      if (body.rotationData) {
+        const rotationsToCreate = [];
+        for (const [day, teacherId] of Object.entries(body.rotationData)) {
+          if (!teacherId || teacherId === "REMOVE" || teacherId === "")
+            continue;
+
+          // וודאי שהיום הזה הוא אכן יום חופש (לא נמצא ב-workDays)
+          if (updatedUser.workDays.includes(day as any)) continue;
+
+          rotationsToCreate.push({
+            managerId: id,
+            day: day as any,
+            rotationTeacherId: teacherId as string,
+          });
+        }
+
+        // מוחקים את מה שנשאר (ימי החופש הישנים) ויוצרים מחדש רק את מה שרלוונטי
+        await prisma.fixedRotation.deleteMany({
+          where: {
+            managerId: id,
+            day: { notIn: updatedUser.workDays },
+          },
+        });
+
+        if (rotationsToCreate.length > 0) {
+          await prisma.fixedRotation.createMany({ data: rotationsToCreate });
+        }
+      }
       const teacherIds = Object.values(body.rotationData).filter(
-        (tid) => tid && tid !== "REMOVE" && tid !== ""
+        (tid) => tid && tid !== "REMOVE" && tid !== "",
       ) as string[];
 
       const rotationTeachers = await prisma.user.findMany({
@@ -130,9 +173,11 @@ export async function PATCH(
     }
 
     // 5. בדיקה אם נוצרו "גננות יתומות" (אם המדריכה הפכה ללא פעילה)
-    const wasActiveInstructor = currentUser.isWorking && currentUser.roles.includes("INSTRUCTOR");
-    const isNowActiveInstructor = updatedUser.isWorking && updatedUser.roles.includes("INSTRUCTOR");
-    
+    const wasActiveInstructor =
+      currentUser.isWorking && currentUser.roles.includes("INSTRUCTOR");
+    const isNowActiveInstructor =
+      updatedUser.isWorking && updatedUser.roles.includes("INSTRUCTOR");
+
     let orphanedManagers: any[] = [];
     if (wasActiveInstructor && !isNowActiveInstructor) {
       orphanedManagers = await prisma.user.findMany({
@@ -177,12 +222,11 @@ export async function PATCH(
       needsRotationMigration: brokenRotations.length > 0,
       brokenRotations: brokenRotations,
     });
-
   } catch (error: any) {
     console.error("Prisma Update Error Details:", error);
     return NextResponse.json(
       { message: "שגיאת שרת פנימית בעדכון", details: error.message },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

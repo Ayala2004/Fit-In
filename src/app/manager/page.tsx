@@ -23,26 +23,28 @@ export default function ManagerDashboard() {
   const { data: user } = useSWR("/api/auth/me", fetcher);
 
   // 2. טעינת דאשבורד גננת אם בזמן אמת (5 שניות)
-  const { 
-    data, 
-    error, 
-    isLoading, 
-    mutate 
-  } = useSWR("/api/manager/dashboard", fetcher, {
-    refreshInterval: 5000,
-  });
+  const { data, error, isLoading, mutate } = useSWR(
+    "/api/manager/dashboard",
+    fetcher,
+    {
+      refreshInterval: 5000,
+    },
+  );
 
   // חישובים מבוססי נתונים (שימוש ב-useMemo לביצועים)
   const todaysPlacement = useMemo(() => {
     return data?.placements?.find(
-      (p: any) => new Date(p.date).toDateString() === new Date().toDateString()
+      (p: any) => new Date(p.date).toDateString() === new Date().toDateString(),
     );
   }, [data]);
 
   const upcomingPlacements = useMemo(() => {
-    return data?.placements?.filter(
-      (p: any) => new Date(p.date).toDateString() !== new Date().toDateString()
-    ) || [];
+    return (
+      data?.placements?.filter(
+        (p: any) =>
+          new Date(p.date).toDateString() !== new Date().toDateString(),
+      ) || []
+    );
   }, [data]);
 
   const dayMap: any = {
@@ -55,10 +57,16 @@ export default function ManagerDashboard() {
   };
 
   // מצב טעינה ראשוני
-  if (isLoading && !data) return <LoadingScreen message="טוען את נתוני הגן שלך..." />;
-  
+  if (isLoading && !data)
+    return <LoadingScreen message="טוען את נתוני הגן שלך..." />;
+
   // טיפול בשגיאה
-  if (error || (!data && !isLoading)) return <div className="p-10 text-center text-red-500 font-bold">שגיאה בטעינת הנתונים.</div>;
+  if (error || (!data && !isLoading))
+    return (
+      <div className="p-10 text-center text-red-500 font-bold">
+        שגיאה בטעינת הנתונים.
+      </div>
+    );
   return (
     <div className="min-h-screen space-y-8 animate-in fade-in duration-500">
       {/* Header */}
@@ -68,7 +76,7 @@ export default function ManagerDashboard() {
             שלום, {user?.name?.split(" ")[0]} 👋
           </h1>
           <p className="text-slate-500 font-medium">
-           לנוחיותך ממשק המציג את נתוני הגן שלך, באפשרותך לדווח על היעדרותך
+            לנוחיותך ממשק המציג את נתוני הגן שלך, באפשרותך לדווח על היעדרותך
           </p>
         </div>
         <div className="bg-white px-6 py-3 rounded-2xl shadow-sm border border-slate-200 flex items-center gap-3">
@@ -205,7 +213,7 @@ export default function ManagerDashboard() {
                   </div>
                   <div>
                     <p className="text-[10px] font-black text-indigo-400 uppercase">
-                        גננת רוטציה - יום {dayMap[rot.day]}
+                      גננת רוטציה - יום {dayMap[rot.day]}
                     </p>
                     <p className="font-bold text-slate-800">
                       {rot.rotationTeacher.firstName}{" "}
@@ -257,10 +265,16 @@ export default function ManagerDashboard() {
                     className={`text-xs font-black ${
                       p.status === "OPEN"
                         ? "text-amber-500"
-                        : "text-emerald-500"
+                        : p.status === "CANCELLED"
+                          ? "text-red-500"
+                          : "text-emerald-500"
                     }`}
                   >
-                    {p.status === "OPEN" ? "ממתין למחליפה" : "משובץ"}
+                    {p.status === "OPEN"
+                      ? "ממתין למחליפה"
+                      : p.status === "CANCELLED"
+                        ? "הגן נסגר"
+                        : "משובץ"}
                   </p>
                 </div>
               </div>
@@ -279,7 +293,7 @@ export default function ManagerDashboard() {
       <ManagerReportModal
         isOpen={isReportModalOpen}
         onClose={() => setIsReportModalOpen(false)}
-         onSuccess={() => mutate()}
+        onSuccess={() => mutate()}
         user={user}
         existingPlacements={data?.placements || []} // <-- הוספת הפרופס הזה
       />

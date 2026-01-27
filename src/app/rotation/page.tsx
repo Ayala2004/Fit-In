@@ -142,7 +142,7 @@ export default function RotationDashboard() {
             שלום, {user?.name?.split(" ")[0]} 👋
           </h1>
           <p className="text-slate-500 font-medium">
-            מרכז ניהול אישי לגננת רוטציה (סנכרון חי)
+            מרכז ניהול אישי לגננת רוטציה
           </p>
         </div>
         <button

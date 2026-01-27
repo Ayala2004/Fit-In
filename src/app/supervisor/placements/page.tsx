@@ -1,25 +1,21 @@
-// src/app/supervisor/placements/page.tsx
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
+import useSWR from "swr";
+import { fetcher } from "@/utils/fetcher";
 import { highlightText } from "@/lib/utils/formatters";
 import InstructorPlacementsModal from "@/components/InstructorCardModal";
-import PlacementModal from "@/components/PlacementModal";
 import {
   Search,
   UserPlus,
   Building2,
   Users,
   ChevronLeft,
-  SparklesIcon,
   Plus,
   MapPin,
   Edit3,
   Settings2,
-  Loader2,
-  User2Icon,
   PlusCircle,
-  Power,
 } from "lucide-react";
 import EditUserModal from "@/components/EditModals/EditUserModal";
 import EditInstitutionModal from "@/components/EditModals/EditInstitutionModal";
@@ -33,19 +29,30 @@ export default function DistrictManagementPage() {
   const [activeTab, setActiveTab] = useState<
     "STAFF" | "INSTITUTIONS" | "ALL_USERS"
   >("ALL_USERS");
-  const [allUsers, setAllUsers] = useState<any[]>([]);
-  const [staffData, setStaffData] = useState<any[]>([]);
-  const [institutions, setInstitutions] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true); //טעינת הדף
-  const [loadingTable, setLoadingTable] = useState(true); //טעינת הטבלה
-  const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedRoleFilter, setSelectedRoleFilter] = useState<string>("ALL");
-  const [selectedInstitutionForEdit, setSelectedInstitutionForEdit] =
-    useState<any>(null);
+
+  // --- הגדרת SWR לסנכרון נתונים בזמן אמת ---
+  const {
+    data: allUsers = [],
+    mutate: mutateUsers,
+    isLoading: loadingUsers,
+  } = useSWR("/api/supervisor/users-stats", fetcher, { refreshInterval: 5000 });
+  const { data: staffData = [], mutate: mutateStaff } = useSWR(
+    "/api/supervisor/placements",
+    fetcher,
+    { refreshInterval: 5000 },
+  );
+  const { data: institutions = [], mutate: mutateInst } = useSWR(
+    "/api/supervisor/institutions",
+    fetcher,
+    { refreshInterval: 5000 },
+  );
 
   // Modals States
   const [selectedUserForEdit, setSelectedUserForEdit] = useState<any>(null);
+  const [selectedInstitutionForEdit, setSelectedInstitutionForEdit] =
+    useState<any>(null);
   const [isAddTeacherOpen, setIsAddTeacherOpen] = useState(false);
   const [isAddSubstituteOpen, setIsAddSubstituteOpen] = useState(false);
   const [isAddInstitutionOpen, setIsAddInstitutionOpen] = useState(false);
@@ -53,8 +60,7 @@ export default function DistrictManagementPage() {
   const [selectedPlacement, setSelectedPlacement] = useState<any>(null);
   const [showReassignModal, setShowReassignModal] = useState(false);
   const [orphanedTeachers, setOrphanedTeachers] = useState<any[]>([]);
-  const [instructorsList, setInstructorsList] = useState<any[]>([]); // לצורך בחירה במודאל
-  const [isTabLoading, setIsTabLoading] = useState(false);
+  const [instructorsList, setInstructorsList] = useState<any[]>([]);
 
   const dayTranslations: Record<string, string> = {
     SUNDAY: "א'",
@@ -72,144 +78,103 @@ export default function DistrictManagementPage() {
     "THURSDAY",
     "FRIDAY",
   ];
-  // 2. פונקציות טעינה
-  const loadData = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const [staffRes, instRes] = await Promise.all([
-        fetch("/api/supervisor/placements"),
-        fetch("/api/supervisor/institutions"),
-      ]);
-      setLoadingTable(true);
 
-      if (!staffRes.ok || !instRes.ok) {
-        throw new Error("שגיאה במשיכת נתונים מהשרת");
-      }
-
-      const staffJson = await staffRes.json();
-      const instJson = await instRes.json();
-
-      setStaffData(Array.isArray(staffJson) ? staffJson : []);
-      setInstitutions(Array.isArray(instJson) ? instJson : []);
-    } catch (err: any) {
-      console.error("Load Error:", err);
-      setError(err.message);
-    } finally {
-      setLoading(false);
-      setLoadingTable(false);
-    }
+  // פונקציה שקוראת לכל ה-mutates (לשימוש אחרי הוספה/עריכה)
+  const refreshAllData = () => {
+    mutateUsers();
+    mutateStaff();
+    mutateInst();
   };
 
-  // בתוך DistrictManagementPage
-
-  const loadAllUsers = async () => {
-    setLoadingTable(true); // מתחילים טעינה של הטבלה
-    try {
-      const res = await fetch("/api/supervisor/users-stats");
-      const data = await res.json();
-      setAllUsers(Array.isArray(data) ? data : []);
-    } catch (error) {
-      console.error("Error loading users:", error);
-      setAllUsers([]);
-    } finally {
-      setLoadingTable(false); // סיום טעינה
-    }
-  };
-
-  const switchTab = async (tab: "STAFF" | "ALL_USERS" | "INSTITUTIONS") => {
-    setActiveTab(tab);
-    setSearchTerm("");
-
-    if (tab === "ALL_USERS") {
-      // קריאה לטעינה (היא כבר כוללת setLoadingTable בתוכה)
-      await loadAllUsers();
-    }
-  };
-
-  // טעינה ראשונית
+  // בדיקת יתומות וטעינת רשימת מדריכות למודאלים (קורה פעם אחת)
   useEffect(() => {
-    const initFetch = async () => {
-      await loadData(); // טוען מוסדות ומדריכות
-
-      // אם הטאב הנוכחי הוא ALL_USERS, נטען גם את כל המשתמשים
-      if (activeTab === "ALL_USERS") {
-        await loadAllUsers();
-      }
-    };
-
-    initFetch();
-  }, []);
-
-  useEffect(() => {
-    const checkOrphans = async () => {
-      try {
-        const res = await fetch("/api/supervisor/dashboard");
-        const data = await res.json();
+    fetch("/api/supervisor/dashboard")
+      .then((res) => res.json())
+      .then((data) => {
         if (data.orphanedManagers?.length > 0) {
           setOrphanedTeachers(data.orphanedManagers);
           setShowReassignModal(true);
         }
-      } catch (err) {
-        console.error("Failed to check for orphaned managers", err);
-      }
-    };
-    checkOrphans();
-  }, []);
-  // טעינת מדריכות בטעינה ראשונית כדי שיהיו זמינות למודאל
-  useEffect(() => {
+      });
     fetch("/api/supervisor/instructors")
       .then((res) => res.json())
       .then((data) => setInstructorsList(data));
   }, []);
 
-  const filteredAndSortedUsers = allUsers
-    .filter((u) => {
-      // הגנה: וודאי שהשדות קיימים לפני ביצוע toLowerCase
-      const firstName = u.firstName || "";
-      const lastName = u.lastName || "";
-      const idNumber = u.idNumber || "";
-      const roles = u.roles || [];
+  const ROLE_PRIORITY: Record<string, number> = {
+    INSTRUCTOR: 1,
+    MANAGER: 2,
+    ROTATION: 3,
+    SUBSTITUTE: 4,
+  };
 
-      const fullName = `${firstName} ${lastName}`.toLowerCase();
-      const matchesSearch =
-        fullName.includes(searchTerm.toLowerCase()) ||
-        idNumber.includes(searchTerm);
+  // --- לוגיקת סינון ומיון משתמשים ---
+  const filteredAndSortedUsers = useMemo(() => {
+    return allUsers
+      .filter((u: any) => {
+        const roles = u.roles ?? [];
+        const fullName =
+          `${u.firstName || ""} ${u.lastName || ""}`.toLowerCase();
 
-      let matchesRole = false;
+        const matchesSearch =
+          fullName.includes(searchTerm.toLowerCase()) ||
+          (u.idNumber || "").includes(searchTerm);
 
-      if (selectedRoleFilter === "ALL") {
-        matchesRole = true;
-      } else if (selectedRoleFilter === "NO_ROTATION") {
-        // גננת אם שאין לה אף רוטציה רשומה
-        matchesRole =
-          u.roles.includes("MANAGER") &&
-          (!u.fixedRotationsAsManager ||
-            u.fixedRotationsAsManager.length === 0);
-      } else {
-        matchesRole = u.roles.includes(selectedRoleFilter);
-      }
+        const matchesRole =
+          selectedRoleFilter === "ALL"
+            ? true
+            : selectedRoleFilter === "NO_ROTATION"
+              ? roles.includes("MANAGER") &&
+                (!u.fixedRotationsAsManager ||
+                  u.fixedRotationsAsManager.length === 0)
+              : roles.includes(selectedRoleFilter);
 
-      return matchesSearch && matchesRole;
-    })
-    .sort((a, b) => {
-      // אם נבחר "הכל", נקבץ לפי תפקיד לפי סדר חשיבות
-      if (selectedRoleFilter === "ALL") {
-        const rolePriority: any = {
-          INSTRUCTOR: 1,
-          MANAGER: 2,
-          ROTATION: 3,
-          SUBSTITUTE: 4,
-        };
-        // לוקחים את התפקיד הראשון של כל משתמשת לצורך המיון
-        const priorityA = rolePriority[a.roles[0]] || 5;
-        const priorityB = rolePriority[b.roles[0]] || 5;
+        return matchesSearch && matchesRole;
+      })
+      .sort((a: any, b: any) => {
+        if (a.isWorking !== b.isWorking) {
+          return a.isWorking ? -1 : 1;
+        }
+        const aRoles = a.roles ?? [];
+        const bRoles = b.roles ?? [];
 
-        if (priorityA !== priorityB) return priorityA - priorityB;
-      }
-      // בתוך אותו תפקיד (או אם מסונן), מיין לפי שם פרטי
-      return a.firstName.localeCompare(b.firstName, "he");
-    });
+        // עדיפות לפי תפקיד
+        const aPriority = Math.min(
+          ...aRoles.map((r: string) => ROLE_PRIORITY[r] ?? 99),
+        );
+        const bPriority = Math.min(
+          ...bRoles.map((r: string) => ROLE_PRIORITY[r] ?? 99),
+        );
+
+        if (aPriority !== bPriority) {
+          return aPriority - bPriority;
+        }
+
+        // אם אותו תפקיד – מיון אלפביתי
+        return (a.firstName || "").localeCompare(b.firstName || "", "he");
+      });
+  }, [allUsers, searchTerm, selectedRoleFilter]);
+
+  // --- לוגיקת סינון מוסדות ---
+  const filteredInstitutions = useMemo(() => {
+    return institutions.filter(
+      (inst: any) =>
+        inst.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        inst.institutionNumber?.includes(searchTerm),
+    );
+  }, [institutions, searchTerm]);
+
+  // --- לוגיקת סינון ומיון מדריכות ---
+  const sortedInstructors = useMemo(() => {
+    const filtered = staffData.filter((inst: any) =>
+      `${inst.firstName} ${inst.lastName}`
+        .toLowerCase()
+        .includes(searchTerm.toLowerCase()),
+    );
+    return [...filtered].sort((a: any, b: any) =>
+      a.isWorking === b.isWorking ? 0 : a.isWorking ? -1 : 1,
+    );
+  }, [staffData, searchTerm]);
 
   const roleFilters = [
     { id: "ALL", label: "כל הצוות", color: "bg-slate-100 text-slate-600" },
@@ -236,55 +201,15 @@ export default function DistrictManagementPage() {
     },
   ];
 
-  // 3. משתנים מחושבים (סינון) - מחוץ לפונקציות
-  const filteredStaff = (Array.isArray(staffData) ? staffData : []).filter(
-    (inst) =>
-      `${inst.firstName} ${inst.lastName}`
-        .toLowerCase()
-        .includes(searchTerm.toLowerCase()) ||
-      inst.subordinatesIns?.some((g: any) =>
-        `${g.firstName} ${g.lastName}`
-          .toLowerCase()
-          .includes(searchTerm.toLowerCase())
-      )
-  );
+  // פונקציה להחלפת טאב (תואם למבנה המקורי)
+  const switchTab = (tab: any) => {
+    setActiveTab(tab);
+    setSearchTerm("");
+  };
 
-  const sortedInstructors = [...filteredStaff].sort((a, b) => {
-    if (a.isWorking === b.isWorking) return 0;
-    return a.isWorking ? -1 : 1;
-  });
+  if (loadingUsers && allUsers.length === 0)
+    return <LoadingScreen message="טוען נתוני מחוז..." />;
 
-  const filteredInstitutions = (
-    Array.isArray(institutions) ? institutions : []
-  ).filter(
-    (inst) =>
-      inst.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      inst.institutionNumber?.includes(searchTerm)
-  );
-
-  // 4. טיפול במצבי טעינה ושגיאה (UI)
-  if (loading) {
-    return <LoadingScreen message="טוען נתוני מחוז" />;
-  }
-
-  if (error) {
-    return (
-      <div className="min-h-screen flex flex-col items-center justify-center text-red-600 font-bold gap-4">
-        <p>אופס! קרתה שגיאה:</p>
-        <code className="bg-red-50 p-4 rounded border border-red-200">
-          {error}
-        </code>
-        <button
-          onClick={loadData}
-          className="px-4 py-2 bg-indigo-600 text-white rounded-lg"
-        >
-          נסה שוב
-        </button>
-      </div>
-    );
-  }
-
-  // 5. הרינדור הראשי
   return (
     <div
       className="max-w-6xl mx-auto space-y-8 pb-12 animate-in fade-in duration-700"
@@ -315,7 +240,9 @@ export default function DistrictManagementPage() {
             >
               <UserPlus size={22} />
             </button>
-            <span className="tooltip-add-models text-indigo-600">הוספת צוות ניהול</span>
+            <span className="tooltip-add-models text-indigo-600">
+              הוספת צוות ניהול
+            </span>
           </span>
 
           {/* הוספת צוות מחליף */}
@@ -326,7 +253,9 @@ export default function DistrictManagementPage() {
             >
               <PlusCircle size={22} />
             </button>
-            <span className="tooltip-add-models text-emerald-600">הוספת צוות מחליף</span>
+            <span className="tooltip-add-models text-emerald-600">
+              הוספת צוות מחליף
+            </span>
           </span>
 
           {/* הקמת גן חדש */}
@@ -337,7 +266,9 @@ export default function DistrictManagementPage() {
             >
               <Plus size={22} />
             </button>
-            <span className="tooltip-add-models text-pink-600">הקמת גן חדש</span>
+            <span className="tooltip-add-models text-pink-600">
+              הקמת גן חדש
+            </span>
           </span>
         </div>
       </div>
@@ -477,10 +408,10 @@ export default function DistrictManagementPage() {
               const count =
                 filter.id === "NO_ROTATION"
                   ? allUsers.filter(
-                      (u) =>
+                      (u: any) =>
                         u.roles.includes("MANAGER") &&
                         (!u.fixedRotationsAsManager ||
-                          u.fixedRotationsAsManager.length === 0)
+                          u.fixedRotationsAsManager.length === 0),
                     ).length
                   : null;
 
@@ -519,27 +450,12 @@ export default function DistrictManagementPage() {
                     <th className="p-5 hidden md:table-cell">מדריכה</th>
                     <th className="p-5 hidden md:table-cell">גננת רוטציה</th>
                     <th className="p-5">סטטוס</th>
-                    <th className="p-5 text-center">פעולות</th>
+                    <th className="p-5 text-center">עריכה</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50">
-                  {loadingTable ? (
-                    // מצב 1: הטבלה בטעינה
-                    <tr>
-                      <td colSpan={9} className="p-20 text-center">
-                        <div className="flex flex-col items-center justify-center gap-4">
-                          <Loader2
-                            className="animate-spin text-indigo-600"
-                            size={32}
-                          />
-                          <p className="text-slate-500 font-bold  ">
-                            מרענן רשימת משתמשות...
-                          </p>
-                        </div>
-                      </td>
-                    </tr>
-                  ) : filteredAndSortedUsers.length > 0 ? (
-                    filteredAndSortedUsers.map((u) => {
+                  {filteredAndSortedUsers.length > 0 ? (
+                    filteredAndSortedUsers.map((u: any) => {
                       const userWorkDays = u.workDays || [];
                       const freeDays = allWeekDays
                         .filter((d) => !userWorkDays.includes(d))
@@ -552,7 +468,7 @@ export default function DistrictManagementPage() {
                           <td className="p-5 font-bold text-slate-700">
                             {highlightText(
                               `${u.firstName} ${u.lastName}`,
-                              searchTerm
+                              searchTerm,
                             )}
                           </td>
                           <td className="p-5">
@@ -564,19 +480,19 @@ export default function DistrictManagementPage() {
                                     r === "MANAGER"
                                       ? "bg-pink-50 text-pink-400"
                                       : r === "INSTRUCTOR"
-                                      ? "bg-purple-100 text-purple-600"
-                                      : r === "ROTATION"
-                                      ? "bg-emerald-50 text-emerald-600"
-                                      : "bg-sky-100 text-sky-600"
+                                        ? "bg-purple-100 text-purple-600"
+                                        : r === "ROTATION"
+                                          ? "bg-emerald-50 text-emerald-600"
+                                          : "bg-sky-100 text-sky-600"
                                   }`}
                                 >
                                   {r === "MANAGER"
                                     ? "גננת אם"
                                     : r === "SUBSTITUTE"
-                                    ? "מחליפה"
-                                    : r === "INSTRUCTOR"
-                                    ? "מדריכה"
-                                    : "רוטציה"}
+                                      ? "מחליפה"
+                                      : r === "INSTRUCTOR"
+                                        ? "מדריכה"
+                                        : "רוטציה"}
                                 </span>
                               ))}
                             </div>
@@ -641,10 +557,10 @@ export default function DistrictManagementPage() {
                                             r.rotationTeacher?.firstName ?? ""
                                           } ${
                                             r.rotationTeacher?.lastName ?? ""
-                                          }`.trim()
+                                          }`.trim(),
                                         )
-                                        .filter(Boolean)
-                                    )
+                                        .filter(Boolean),
+                                    ),
                                   ).map((name, idx) => (
                                     <span
                                       key={idx}
@@ -710,7 +626,7 @@ export default function DistrictManagementPage() {
       {/* INSTITUTIONS TAB */}
       {activeTab === "INSTITUTIONS" && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {filteredInstitutions.map((inst) => (
+          {filteredInstitutions.map((inst: any) => (
             <div
               key={inst.id}
               className="bg-white rounded-4xl border border-slate-100 shadow-sm p-8 flex flex-col hover:shadow-lg transition-all relative group"
@@ -769,7 +685,7 @@ export default function DistrictManagementPage() {
                               {rot.rotationTeacher?.lastName}
                             </span>
                           </div>
-                        )
+                        ),
                       )
                     ) : (
                       <p className="text-[11px] text-slate-400  ">
@@ -785,6 +701,7 @@ export default function DistrictManagementPage() {
       )}
 
       {/* Modals */}
+
       {activeInstructor && (
         <InstructorPlacementsModal
           isOpen={!!activeInstructor}
@@ -799,33 +716,30 @@ export default function DistrictManagementPage() {
           isOpen={!!selectedUserForEdit}
           user={selectedUserForEdit}
           onClose={() => setSelectedUserForEdit(null)}
-          onUpdateSuccess={() => {
-            loadAllUsers();
-            loadData();
-          }}
+          onUpdateSuccess={refreshAllData}
         />
       )}
       <AddUserModal
         isOpen={isAddTeacherOpen}
         onClose={() => setIsAddTeacherOpen(false)}
-        onSuccess={loadData}
+        onSuccess={refreshAllData}
       />
       <AddSubstituteModal
         isOpen={isAddSubstituteOpen}
         onClose={() => setIsAddSubstituteOpen(false)}
-        onSuccess={loadData}
+        onSuccess={refreshAllData}
       />
       <AddInstitutionModal
         isOpen={isAddInstitutionOpen}
         onClose={() => setIsAddInstitutionOpen(false)}
-        onSuccess={loadData}
+        onSuccess={refreshAllData}
       />
       {selectedInstitutionForEdit && (
         <EditInstitutionModal
           isOpen={!!selectedInstitutionForEdit}
           institution={selectedInstitutionForEdit}
           onClose={() => setSelectedInstitutionForEdit(null)}
-          onSuccess={loadData}
+          onSuccess={refreshAllData}
         />
       )}
       {showReassignModal && (
@@ -833,15 +747,11 @@ export default function DistrictManagementPage() {
           isOpen={showReassignModal}
           teachers={orphanedTeachers}
           instructors={instructorsList}
-          isForced={true} // גורם להשתלטות על המסך
+          isForced={true}
           onClose={() => setShowReassignModal(false)}
-          onComplete={(remaining?: any) => {
-            if (remaining && remaining.length > 0) {
-              setOrphanedTeachers(remaining);
-            } else {
-              setShowReassignModal(false);
-              loadData(); // רענון הנתונים הכללי בדף
-            }
+          onComplete={() => {
+            setShowReassignModal(false);
+            refreshAllData();
           }}
         />
       )}

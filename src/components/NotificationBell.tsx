@@ -9,32 +9,36 @@ import { fetcher } from "@/utils/fetcher";
 export default function NotificationBell() {
   const pathname = usePathname();
 
-  // 1. טעינת נתוני המשתמש (בשביל הקישור הנכון)
+  // 1. טעינת נתוני המשתמש (כדי לדעת לאיזה דף התראות לשלוח אותו)
   const { data: user } = useSWR("/api/auth/me", fetcher);
 
   // 2. טעינת ההתראות בזמן אמת (כל 10 שניות)
   const { data: notifications, mutate } = useSWR("/api/notifications", fetcher, {
-    refreshInterval: 10000, // עדכון כל 10 שניות
+    refreshInterval: 10000,
   });
 
-  // חישוב כמות ההודעות שלא נקראו
+  // 3. חישוב כמות ההודעות שלא נקראו (במקום fetchCount הישן)
   const unreadCount = useMemo(() => {
     if (!notifications || !Array.isArray(notifications)) return 0;
     return notifications.filter((n: any) => !n.isRead).length;
   }, [notifications]);
 
-  // קביעת הקישור לפי תפקיד המשתמש
+  // 4. קביעת הקישור לפי תפקיד - חישוב אוטומטי (במקום setTargetUrl)
   const targetUrl = useMemo(() => {
     if (!user || !user.roles) return "/notifications";
+    
     if (user.roles.includes("SUPERVISOR")) return "/supervisor/notifications";
     if (user.roles.includes("INSTRUCTOR")) return "/instructor/notifications";
     if (user.roles.includes("MANAGER")) return "/manager/notifications";
+    if (user.roles.includes("SUBSTITUTE")) return "/substitute/notifications";
+    if (user.roles.includes("ROTATION")) return "/rotation/notifications";
+    
     return "/notifications";
   }, [user]);
 
-  // האזנה לאירוע ניקוי התראות (כדי לאפס את המספר מיד כשנכנסים לדף)
+  // האזנה לאירוע ניקוי התראות מהדף
   useEffect(() => {
-    const handleRead = () => mutate(); // גורם ל-SWR למשוך נתונים מעודכנים (שהם כבר isRead: true)
+    const handleRead = () => mutate();
     window.addEventListener("notificationsRead", handleRead);
     return () => window.removeEventListener("notificationsRead", handleRead);
   }, [mutate]);
