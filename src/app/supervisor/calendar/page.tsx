@@ -68,7 +68,7 @@ export default function SupervisorCalendar() {
 
   // 3. טעינת מחליפות פנויות (SWR - מתרחש רק כש-editingPlacement פתוח)
   const subsKey = editingPlacement?.date
-    ? `/api/supervisor/substitutes?date=${encodeURIComponent(new Date(editingPlacement.date).toISOString())}`
+    ? `/api/supervisor/substitutes?date=${encodeURIComponent(new Date(editingPlacement.date).toISOString())}&absentTeacherId=${editingPlacement.mainTeacherId}`
     : null;
 
   const { data: availableSubs = [], isLoading: loadingSubs } = useSWR(

@@ -34,12 +34,12 @@ export default function PlacementModal({
     isLoading,
     mutate,
   } = useSWR(
-    isOpen && dateParam
-      ? `/api/supervisor/substitutes?date=${dateParam}`
+    isOpen && dateParam && placement?.mainTeacherId
+      ? `/api/supervisor/substitutes?date=${dateParam}&absentTeacherId=${placement.mainTeacherId}`
       : null,
     fetcher,
     {
-      refreshInterval: 5000, // רענון רשימת הזמינות כל 5 שניות
+      refreshInterval: 5000,
       revalidateOnFocus: true,
     },
   );
