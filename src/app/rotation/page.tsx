@@ -255,7 +255,7 @@ export default function RotationDashboard() {
                     <p className="text-[13.5px] font-bold text-slate-700 leading-relaxed">
                       {p.mainTeacherId === user?.id
                         ? `היעדרות מדווחת ב-${new Date(p.date).toLocaleDateString("he-IL")}`
-                        : `החלפת את ${p.mainTeacher.firstName} ב-${new Date(p.date).toLocaleDateString("he-IL")}`}
+                        : `מילוי מקום של: ${p.mainTeacher.firstName} ${p.mainTeacher.lastName} ב-${new Date(p.date).toLocaleDateString("he-IL")}`}
                     </p>
                     <p className="text-[11px] text-slate-400 font-bold mt-0.5 uppercase tracking-tighter">
                       גן: {p.institution.name}

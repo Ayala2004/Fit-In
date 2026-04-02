@@ -59,7 +59,7 @@ export default function AddPlacementModal({
   useEffect(() => {
     if (isOpen && date && selectedAbsentId) {
       fetch(
-        `/api/supervisor/substitutes?date=${date.toISOString()}&absentTeacherId=${selectedAbsentId}`
+        `/api/supervisor/substitutes?date=${date.toISOString()}&absentTeacherId=${selectedAbsentId}`,
       )
         .then((res) => res.json())
         .then((fetchedSubs) => {
@@ -76,18 +76,39 @@ export default function AddPlacementModal({
           m.mainManagedInstitutions?.[0]?.name || "ללא גן"
         })`,
       }));
-    } else {
-      return data.rotations.map((r: any) => {
-        const fixedGarden =
-          r.fixedRotationsAsRotation?.[0]?.manager?.mainManagedInstitutions?.[0]
-            ?.name;
-        return {
-          id: r.id,
-          label: `${r.firstName} ${r.lastName} ${
-            fixedGarden ? `(קבועה ב${fixedGarden})` : "(ללא גן קבוע היום)"
-          }`,
-        };
-      });
+    }
+
+    // else {
+    //   return data.rotations.map((r: any) => {
+    //     const fixedGarden =
+    //       r.fixedRotationsAsRotation?.[0]?.manager?.mainManagedInstitutions?.[0]
+    //         ?.name;
+    //     return {
+    //       id: r.id,
+    //       label: `${r.firstName} ${r.lastName} ${
+    //         fixedGarden ? `(קבועה ב${fixedGarden})` : "(ללא גן קבוע היום)"
+    //       }`,
+    //     };
+    //   });
+    // }
+    else {
+      return data.rotations
+        .filter((r: any) => {
+          const fixedGarden =
+            r.fixedRotationsAsRotation?.[0]?.manager
+              ?.mainManagedInstitutions?.[0]?.name;
+          return !!fixedGarden; // רק מי שיש לו גן
+        })
+        .map((r: any) => {
+          const fixedGarden =
+            r.fixedRotationsAsRotation?.[0]?.manager
+              ?.mainManagedInstitutions?.[0]?.name;
+
+          return {
+            id: r.id,
+            label: `${r.firstName} ${r.lastName} (קבועה ב${fixedGarden})`,
+          };
+        });
     }
   };
 
@@ -131,8 +152,8 @@ export default function AddPlacementModal({
             mode === "closed"
               ? "CANCELLED"
               : mode === "assign"
-              ? "ASSIGNED"
-              : "OPEN",
+                ? "ASSIGNED"
+                : "OPEN",
           creatorRoles: user.roles,
         }),
       });

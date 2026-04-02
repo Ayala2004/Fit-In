@@ -1869,7 +1869,7 @@ import { encrypt } from "@/utils/crypto";
 
 export async function PATCH(
   req: Request,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: Promise<{ id: string }> },
 ) {
   const session = await getSession();
 
@@ -1884,7 +1884,7 @@ export async function PATCH(
     // 1. שליפת המשתמש הנוכחי מה-DB כבסיס להשוואה ומניעת קריסות
     const currentUser = await prisma.user.findUnique({
       where: { id },
-      include: { subordinatesIns: true }, 
+      include: { subordinatesIns: true },
     });
 
     if (!currentUser) {
@@ -1893,7 +1893,8 @@ export async function PATCH(
 
     // קביעת התפקידים שיהיו למשתמש לאחר העדכון (חדשים מהבקשה או הקיימים ב-DB)
     const effectiveRoles = body.roles || currentUser.roles;
-    const isNowWorking = body.isWorking !== undefined ? body.isWorking : currentUser.isWorking;
+    const isNowWorking =
+      body.isWorking !== undefined ? body.isWorking : currentUser.isWorking;
 
     // בדיקת "המדריכה האחרונה"
     if (
@@ -1921,7 +1922,7 @@ export async function PATCH(
                 message:
                   "לא ניתן להשבית את המדריכה האחרונה במחוז כל עוד ישנן גננות אם. עלייך להגדיר מדריכה פעילה אחרת תחילה.",
               },
-              { status: 400 }
+              { status: 400 },
             );
           }
         }
@@ -1930,17 +1931,21 @@ export async function PATCH(
 
     // 2. הכנת אובייקט הנתונים לעדכון (רק שדות שנשלחו ב-body)
     const updateData: any = {};
-    
+
     if (body.firstName !== undefined) updateData.firstName = body.firstName;
     if (body.lastName !== undefined) updateData.lastName = body.lastName;
     if (body.email !== undefined) updateData.email = body.email;
-    if (body.phoneNumber !== undefined) updateData.phoneNumber = body.phoneNumber;
+    if (body.phoneNumber !== undefined)
+      updateData.phoneNumber = body.phoneNumber;
     if (body.roles !== undefined) updateData.roles = body.roles;
     if (body.workDays !== undefined) updateData.workDays = body.workDays;
     if (body.isWorking !== undefined) updateData.isWorking = body.isWorking;
 
     if (body.instructorId !== undefined) {
-      updateData.instructorId = (body.instructorId === "" || body.instructorId === "REMOVE") ? null : body.instructorId;
+      updateData.instructorId =
+        body.instructorId === "" || body.instructorId === "REMOVE"
+          ? null
+          : body.instructorId;
     }
 
     if (body.dateOfBirth) {
@@ -1958,15 +1963,53 @@ export async function PATCH(
     });
 
     // 4. טיפול ברוטציות במידה והגננת הושבתה
-    if (updatedUser.isWorking === false && updatedUser.roles.includes("MANAGER")) {
+    if (
+      updatedUser.isWorking === false &&
+      updatedUser.roles.includes("MANAGER")
+    ) {
       await prisma.fixedRotation.deleteMany({
         where: { managerId: id },
       });
-    }
-    // אם היא נשארה פעילה אבל נשלחו נתוני רוטציה חדשים
-    else if (updatedUser.roles.includes("MANAGER") && body.rotationData) {
+    } else if (updatedUser.roles.includes("MANAGER")) {
+      // מחיקת כל הרוטציה בימים שבהם גננת האם עובדת כרגע (כי היא לא צריכה מחליפה בימים אלו)
+      await prisma.fixedRotation.deleteMany({
+        where: {
+          managerId: id,
+          day: { in: updatedUser.workDays }, // ימי העבודה החדשים שלה
+        },
+      });
+
+      // אם נשלחו נתוני רוטציה חדשים מה-UI, מעדכנים אותם
+      if (body.rotationData) {
+        const rotationsToCreate = [];
+        for (const [day, teacherId] of Object.entries(body.rotationData)) {
+          if (!teacherId || teacherId === "REMOVE" || teacherId === "")
+            continue;
+
+          // וודאי שהיום הזה הוא אכן יום חופש (לא נמצא ב-workDays)
+          if (updatedUser.workDays.includes(day as any)) continue;
+
+          rotationsToCreate.push({
+            managerId: id,
+            day: day as any,
+            rotationTeacherId: teacherId as string,
+          });
+        }
+
+        // מוחקים את מה שנשאר (ימי החופש הישנים) ויוצרים מחדש רק את מה שרלוונטי
+        await prisma.fixedRotation.deleteMany({
+          where: {
+            managerId: id,
+            day: { notIn: updatedUser.workDays },
+          },
+        });
+
+        if (rotationsToCreate.length > 0) {
+          await prisma.fixedRotation.createMany({ data: rotationsToCreate });
+        }
+      }
       const teacherIds = Object.values(body.rotationData).filter(
-        (tid) => tid && tid !== "REMOVE" && tid !== ""
+        (tid) => tid && tid !== "REMOVE" && tid !== "",
       ) as string[];
 
       const rotationTeachers = await prisma.user.findMany({
@@ -1994,9 +2037,11 @@ export async function PATCH(
     }
 
     // 5. בדיקה אם נוצרו "גננות יתומות" (אם המדריכה הפכה ללא פעילה)
-    const wasActiveInstructor = currentUser.isWorking && currentUser.roles.includes("INSTRUCTOR");
-    const isNowActiveInstructor = updatedUser.isWorking && updatedUser.roles.includes("INSTRUCTOR");
-    
+    const wasActiveInstructor =
+      currentUser.isWorking && currentUser.roles.includes("INSTRUCTOR");
+    const isNowActiveInstructor =
+      updatedUser.isWorking && updatedUser.roles.includes("INSTRUCTOR");
+
     let orphanedManagers: any[] = [];
     if (wasActiveInstructor && !isNowActiveInstructor) {
       orphanedManagers = await prisma.user.findMany({
@@ -2041,15 +2086,15 @@ export async function PATCH(
       needsRotationMigration: brokenRotations.length > 0,
       brokenRotations: brokenRotations,
     });
-
   } catch (error: any) {
     console.error("Prisma Update Error Details:", error);
     return NextResponse.json(
       { message: "שגיאת שרת פנימית בעדכון", details: error.message },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
+
 ==============================
 FILE: src/app\api\supervisor\users-stats\route.ts
 ==============================
@@ -2510,7 +2555,9 @@ body {
 FILE: src/app\instructor\calendar\page.tsx
 ==============================
 "use client";
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useMemo } from "react";
+import useSWR from "swr"; // הווספת SWR
+import { fetcher } from "@/utils/fetcher";
 import {
   format,
   startOfMonth,
@@ -2537,47 +2584,38 @@ import AddPlacementModal from "@/components/AddModals/AddPlacementModal";
 
 export default function InstructorCalendar() {
   const [currentDate, setCurrentDate] = useState(new Date());
-  const [placements, setPlacements] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [user, setUser] = useState<any>(null);
-
-  const [editingPlacement, setEditingPlacement] = useState<any>(null);
-  const [availableSubs, setAvailableSubs] = useState([]);
-  const [loadingSubs, setLoadingSubs] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
-
+  const [editingPlacement, setEditingPlacement] = useState<any>(null);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
 
-  const fetchAvailableSubstitutes = async (
-    date: Date,
-    absentTeacherId?: string,
-  ) => {
-    setLoadingSubs(true);
-    try {
-      const dateParam = encodeURIComponent(date.toISOString());
-      const url = `/api/supervisor/substitutes?date=${dateParam}${absentTeacherId ? `&absentTeacherId=${absentTeacherId}` : ""}`;
-      const res = await fetch(url);
-      if (res.ok) {
-        const data = await res.json();
-        setAvailableSubs(data);
-      }
-    } catch (err) {
-      console.error("Error fetching subs:", err);
-    } finally {
-      setLoadingSubs(false);
-    }
-  };
+  // 1. טעינת פרטי המדריכה המחוברת
+  const { data: user } = useSWR("/api/auth/me", fetcher);
 
-  useEffect(() => {
-    if (editingPlacement) {
-      fetchAvailableSubstitutes(
-        new Date(editingPlacement.date),
-        editingPlacement.mainTeacherId,
-      );
-      setSearchQuery("");
-    }
-  }, [editingPlacement]);
+  // 2. טעינת נתוני לוח השנה בזמן אמת (כל 5 שניות)
+  const calendarUrl = `/api/calendar?month=${currentDate.getMonth() + 1}&year=${currentDate.getFullYear()}`;
+  const {
+    data: placements = [],
+    mutate: mutateCalendar,
+    isLoading: loadingCalendar,
+  } = useSWR(
+    calendarUrl,
+    fetcher,
+    { refreshInterval: 5000 }, // כאן קורה הסנכרון מול המפקחת!
+  );
+
+  // 3. טעינת מחליפות פנויות (מופעל רק כשפותחים עריכה)
+  const subsKey = editingPlacement
+    ? `/api/supervisor/substitutes?date=${encodeURIComponent(new Date(editingPlacement.date).toISOString())}&absentTeacherId=${editingPlacement.mainTeacherId}`
+    : null;
+
+  const { data: availableSubs = [], isLoading: loadingSubs } = useSWR(
+    subsKey,
+    fetcher,
+    {
+      refreshInterval: 5000,
+    },
+  );
 
   const filteredAvailableSubs = useMemo(() => {
     return availableSubs.filter((sub: any) => {
@@ -2589,43 +2627,6 @@ export default function InstructorCalendar() {
     });
   }, [availableSubs, searchQuery]);
 
-  useEffect(() => {
-    const initPage = async () => {
-      try {
-        const userRes = await fetch("/api/auth/me");
-        if (userRes.ok) {
-          const userData = await userRes.json();
-          setUser(userData);
-        }
-      } catch (err) {
-        console.error("Initialization error:", err);
-      }
-    };
-    initPage();
-  }, []);
-
-  const fetchData = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await fetch(
-        `/api/calendar?month=${
-          currentDate.getMonth() + 1
-        }&year=${currentDate.getFullYear()}`,
-      );
-      const data = await res.json();
-      setPlacements(data);
-    } catch (err) {
-      console.error("Fetch error:", err);
-      setPlacements([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [currentDate]);
-
-  useEffect(() => {
-    fetchData();
-  }, [fetchData]);
-
   const handleDelete = async (id: string) => {
     if (!confirm("למחוק את הדיווח לצמיתות?")) return;
     try {
@@ -2634,7 +2635,7 @@ export default function InstructorCalendar() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id }),
       });
-      if (res.ok) setPlacements((prev) => prev.filter((p: any) => p.id !== id));
+      if (res.ok) mutateCalendar();
       else alert("אין לך הרשאה למחוק דיווח זה");
     } catch (err) {
       alert("שגיאה במחיקה");
@@ -2663,7 +2664,7 @@ export default function InstructorCalendar() {
 
       if (res.ok) {
         setEditingPlacement(null);
-        fetchData();
+        mutateCalendar();
       }
     } catch (err) {
       alert("שגיאה בעדכון");
@@ -2696,8 +2697,6 @@ export default function InstructorCalendar() {
     return "bg-white border-slate-100 text-slate-700";
   };
 
-  const isMyPlacement = (p: any) => p.mainTeacher?.instructorId === user?.id;
-
   const firstDayOfMonth = startOfMonth(currentDate);
   const startWeekDay = firstDayOfMonth.getDay();
   const realDays = eachDayOfInterval({
@@ -2707,7 +2706,7 @@ export default function InstructorCalendar() {
   const paddingDays = Array.from({ length: startWeekDay }, () => null);
   const days = [...paddingDays, ...realDays];
 
-  if (!user && loading) {
+  if (!user && loadingCalendar) {
     return (
       <div className="flex h-screen items-center justify-center bg-slate-50">
         <Loader2 className="animate-spin text-indigo-600" size={48} />
@@ -3026,7 +3025,7 @@ export default function InstructorCalendar() {
           isOpen={isAddModalOpen}
           date={selectedDate}
           onClose={() => setIsAddModalOpen(false)}
-          refreshData={fetchData}
+          refreshData={mutateCalendar}
           user={user}
         />
       )}
@@ -3058,7 +3057,9 @@ export default function p() { return <NotificationsList />; }
 FILE: src/app\instructor\page.tsx
 ==============================
 "use client";
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import useSWR from "swr";
+import { fetcher } from "@/utils/fetcher";
 import { AlertCircle, Clock, Phone, ChevronLeft } from "lucide-react";
 import LoadingScreen from "@/components/ui/LoadingScreen";
 import PlacementModal from "@/components/PlacementModal";
@@ -3067,40 +3068,25 @@ import RecentActivityModal from "@/components/RecentActivityModal";
 import { useRecentActivityHistory } from "@/hooks/useRecentActivityHistory";
 
 export default function InstructorDashboard() {
-  const [data, setData] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
-  const [user, setUser] = useState<any>(null);
-
-  const history = useRecentActivityHistory("/api/instructor/history");
-
-  // Modals
   const [selectedPlacement, setSelectedPlacement] = useState<any>(null);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
 
-  const loadDashboard = async () => {
-    try {
-      const [dbRes, userRes] = await Promise.all([
-        fetch("/api/instructor/dashboard"),
-        fetch("/api/auth/me"),
-      ]);
-      const dbData = await dbRes.json();
-      const userData = await userRes.json();
+  // 1. טעינת נתוני משתמש (SWR)
+  const { data: user } = useSWR("/api/auth/me", fetcher);
 
-      setData(dbData);
-      setUser(userData);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
-    }
-  };
+  // 2. טעינת דאשבורד מדריכה בזמן אמת (5 שניות)
+  const {
+    data,
+    isLoading,
+    mutate: mutateDashboard,
+  } = useSWR("/api/instructor/dashboard", fetcher, {
+    refreshInterval: 5000,
+  });
 
-  useEffect(() => {
-    loadDashboard();
-  }, []);
+  const history = useRecentActivityHistory("/api/instructor/history");
 
-  if (loading) return <LoadingScreen message="טוען את הגנים שלך..." />;
-
+  if (isLoading && !data)
+    return <LoadingScreen message="טוען את הגנים שלך..." />;
   return (
     <div className="space-y-8">
       {/* Header */}
@@ -3193,8 +3179,8 @@ export default function InstructorDashboard() {
                     {act.status === "CANCELLED"
                       ? `הגן ${act.institution.name} נסגר `
                       : act.substitute
-                      ? `שובצה ${act.substitute.firstName} לגן ${act.institution.name}`
-                      : `דווחה היעדרות בגן ${act.institution.name}`}
+                        ? `שובצה ${act.substitute.firstName} לגן ${act.institution.name}`
+                        : `דווחה היעדרות בגן ${act.institution.name}`}
                   </p>
                 </div>
               ))}
@@ -3229,7 +3215,7 @@ export default function InstructorDashboard() {
           isOpen={!!selectedPlacement}
           placement={selectedPlacement}
           onClose={() => setSelectedPlacement(null)}
-          onSuccess={loadDashboard}
+          onSuccess={mutateDashboard} // רענון הדאשבורד לאחר פעולה במודאל
         />
       )}
 
@@ -3238,7 +3224,7 @@ export default function InstructorDashboard() {
           isOpen={isAddModalOpen}
           date={new Date()}
           onClose={() => setIsAddModalOpen(false)}
-          refreshData={loadDashboard}
+          refreshData={mutateDashboard} // רענון הדאשבורד לאחר הוספה
           user={user}
         />
       )}
@@ -3627,9 +3613,10 @@ export default function p() { return <NotificationsList />; }
 ==============================
 FILE: src/app\manager\page.tsx
 ==============================
-// src/app/manager/page.tsx
 "use client";
-import { useEffect, useState } from "react";
+import { useState, useMemo } from "react";
+import useSWR from "swr"; // ייבוא SWR
+import { fetcher } from "@/utils/fetcher";
 import {
   MapPin,
   CheckCircle2,
@@ -3638,56 +3625,42 @@ import {
   Phone,
   Calendar,
   Building2,
-  Sparkles,
   AlertCircle,
   User,
-  MessageCircle,
 } from "lucide-react";
 import LoadingScreen from "@/components/ui/LoadingScreen";
 import ManagerReportModal from "@/components/AddModals/ManagerReportModal";
 
 export default function ManagerDashboard() {
-  const [data, setData] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
-  const [user, setUser] = useState<any>(null);
   const [isReportModalOpen, setIsReportModalOpen] = useState(false);
 
-  const loadDashboard = async () => {
-    try {
-      setLoading(true);
-      const [dbRes, userRes] = await Promise.all([
-        fetch("/api/manager/dashboard"),
-        fetch("/api/auth/me"),
-      ]);
+  // 1. טעינת נתוני משתמש (SWR)
+  const { data: user } = useSWR("/api/auth/me", fetcher);
 
-      if (dbRes.ok && userRes.ok) {
-        const dbData = await dbRes.json();
-        const userData = await userRes.json();
-        setData(dbData);
-        setUser(userData);
-      }
-    } catch (e) {
-      console.error("Failed to load dashboard:", e);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    loadDashboard();
-  }, []);
-
-  if (loading) return <LoadingScreen message="טוען את נתוני הגן שלך..." />;
-  if (!data)
-    return <div className="p-10 text-center">שגיאה בטעינת הנתונים</div>;
-
-  const todaysPlacement = data.placements?.find(
-    (p: any) => new Date(p.date).toDateString() === new Date().toDateString()
+  // 2. טעינת דאשבורד גננת אם בזמן אמת (5 שניות)
+  const { data, error, isLoading, mutate } = useSWR(
+    "/api/manager/dashboard",
+    fetcher,
+    {
+      refreshInterval: 5000,
+    },
   );
 
-  const upcomingPlacements = data.placements.filter(
-    (p: any) => new Date(p.date).toDateString() !== new Date().toDateString()
-  );
+  // חישובים מבוססי נתונים (שימוש ב-useMemo לביצועים)
+  const todaysPlacement = useMemo(() => {
+    return data?.placements?.find(
+      (p: any) => new Date(p.date).toDateString() === new Date().toDateString(),
+    );
+  }, [data]);
+
+  const upcomingPlacements = useMemo(() => {
+    return (
+      data?.placements?.filter(
+        (p: any) =>
+          new Date(p.date).toDateString() !== new Date().toDateString(),
+      ) || []
+    );
+  }, [data]);
 
   const dayMap: any = {
     SUNDAY: "ראשון",
@@ -3698,6 +3671,17 @@ export default function ManagerDashboard() {
     FRIDAY: "שישי",
   };
 
+  // מצב טעינה ראשוני
+  if (isLoading && !data)
+    return <LoadingScreen message="טוען את נתוני הגן שלך..." />;
+
+  // טיפול בשגיאה
+  if (error || (!data && !isLoading))
+    return (
+      <div className="p-10 text-center text-red-500 font-bold">
+        שגיאה בטעינת הנתונים.
+      </div>
+    );
   return (
     <div className="min-h-screen space-y-8 animate-in fade-in duration-500">
       {/* Header */}
@@ -3707,7 +3691,7 @@ export default function ManagerDashboard() {
             שלום, {user?.name?.split(" ")[0]} 👋
           </h1>
           <p className="text-slate-500 font-medium">
-           לנוחיותך ממשק המציג את נתוני הגן שלך, באפשרותך לדווח על היעדרותך
+            לנוחיותך ממשק המציג את נתוני הגן שלך, באפשרותך לדווח על היעדרותך
           </p>
         </div>
         <div className="bg-white px-6 py-3 rounded-2xl shadow-sm border border-slate-200 flex items-center gap-3">
@@ -3844,7 +3828,7 @@ export default function ManagerDashboard() {
                   </div>
                   <div>
                     <p className="text-[10px] font-black text-indigo-400 uppercase">
-                        גננת רוטציה - יום {dayMap[rot.day]}
+                      גננת רוטציה - יום {dayMap[rot.day]}
                     </p>
                     <p className="font-bold text-slate-800">
                       {rot.rotationTeacher.firstName}{" "}
@@ -3896,10 +3880,16 @@ export default function ManagerDashboard() {
                     className={`text-xs font-black ${
                       p.status === "OPEN"
                         ? "text-amber-500"
-                        : "text-emerald-500"
+                        : p.status === "CANCELLED"
+                          ? "text-red-500"
+                          : "text-emerald-500"
                     }`}
                   >
-                    {p.status === "OPEN" ? "ממתין למחליפה" : "משובץ"}
+                    {p.status === "OPEN"
+                      ? "ממתין למחליפה"
+                      : p.status === "CANCELLED"
+                        ? "הגן נסגר"
+                        : "משובץ"}
                   </p>
                 </div>
               </div>
@@ -3918,7 +3908,7 @@ export default function ManagerDashboard() {
       <ManagerReportModal
         isOpen={isReportModalOpen}
         onClose={() => setIsReportModalOpen(false)}
-        onSuccess={loadDashboard}
+        onSuccess={() => mutate()}
         user={user}
         existingPlacements={data?.placements || []} // <-- הוספת הפרופס הזה
       />
@@ -4189,20 +4179,25 @@ export default function RotationLayout({
   );
 }
 ==============================
+FILE: src/app\rotation\notifications\page.tsx
+==============================
+import NotificationsList from "@/components/NotificationsList";
+export default function p() { return <NotificationsList />; }
+==============================
 FILE: src/app\rotation\page.tsx
 ==============================
 "use client";
-import { useEffect, useState } from "react";
+import { useState, useMemo } from "react";
+import useSWR from "swr"; // ייבוא SWR
+import { fetcher } from "@/utils/fetcher";
 import {
   Calendar,
   MapPin,
   Clock,
   User,
   AlertCircle,
-  CheckCircle2,
   ArrowLeftRight,
   Plus,
-  ChevronLeft,
   Building2,
   RefreshCcwDot,
 } from "lucide-react";
@@ -4220,33 +4215,22 @@ const dayMap: any = {
 };
 
 export default function RotationDashboard() {
-  const [data, setData] = useState<any>(null);
-  const [user, setUser] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [reportDate, setReportDate] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
-  const loadDashboard = async () => {
-    try {
-      const [dbRes, userRes] = await Promise.all([
-        fetch("/api/rotation/dashboard"),
-        fetch("/api/auth/me"),
-      ]);
-      if (dbRes.ok && userRes.ok) {
-        setData(await dbRes.json());
-        setUser(await userRes.json());
-      }
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
-    }
-  };
+  // 1. טעינת נתוני משתמש (SWR)
+  const { data: user } = useSWR("/api/auth/me", fetcher);
 
-  useEffect(() => {
-    loadDashboard();
-  }, []);
+  // 2. טעינת דאשבורד רוטציה בזמן אמת (5 שניות)
+  const { 
+    data, 
+    error, 
+    isLoading, 
+    mutate 
+  } = useSWR("/api/rotation/dashboard", fetcher, {
+    refreshInterval: 5000,
+  });
 
   const handleReportAbsence = async (e: any) => {
     e.preventDefault();
@@ -4261,7 +4245,7 @@ export default function RotationDashboard() {
       if (res.ok) {
         setIsModalOpen(false);
         setReportDate("");
-        loadDashboard();
+        mutate(); // רענון הנתונים ב-SWR
       } else {
         const err = await res.json();
         alert(err.message);
@@ -4273,38 +4257,25 @@ export default function RotationDashboard() {
     }
   };
 
-  if (loading) return <LoadingScreen message="טוען את סידור העבודה שלך..." />;
+  // לוגיקה לחישוב הסטטוס היומי - מחושבת מחדש בכל רענון של SWR
+  const status = useMemo(() => {
+    if (!data || !user) return null;
 
-  // מציאת הגן של היום לפי הלו"ז הקבוע
-  const todayName = new Date()
-    .toLocaleDateString("en-US", { weekday: "long" })
-    .toUpperCase();
-  const todayFixedAssignment = data?.fixedSchedule?.find(
-    (s: any) => s.day === todayName,
-  );
-
-  // בדיקה האם יש שיבוץ מיוחד להיום (החלפה פנימית או מחליפה שנכנסה במקומי)
-  const todayPlacement = data?.placements?.find(
-    (p: any) => new Date(p.date).toDateString() === new Date().toDateString(),
-  );
-
-  const getTodayStatus = () => {
     const today = new Date();
     const dayNameEn = today
       .toLocaleDateString("en-US", { weekday: "long" })
       .toUpperCase();
 
-    // 1. חיפוש שיבוץ בפועל בטבלת Placements (היעדרות שלי או החלפה שאני עושה)
-    const todayAct = data?.placements?.find(
-      (p: any) => new Date(p.date).toDateString() === today.toDateString(),
+    // 1. חיפוש שיבוץ בפועל (היעדרות או החלפה מיוחדת)
+    const todayAct = data.placements?.find(
+      (p: any) => new Date(p.date).toDateString() === today.toDateString()
     );
-    
 
     // 2. חיפוש גן קבוע בלו"ז
-    const fixed = data?.fixedSchedule?.find((s: any) => s.day === dayNameEn);
+    const fixed = data.fixedSchedule?.find((s: any) => s.day === dayNameEn);
 
-    // מקרה א': דיווחתי על היעדרות (אני ה-mainTeacher בשיבוץ)
-    if (todayAct && todayAct.mainTeacherId === user?.id) {
+    // מקרה א': דיווחתי על היעדרות
+    if (todayAct && todayAct.mainTeacherId === user.id) {
       return {
         title: "דיווחת על היעדרות",
         sub: todayAct.institution?.name || "בגן הקבוע שלך",
@@ -4313,9 +4284,9 @@ export default function RotationDashboard() {
         icon: <AlertCircle size={32} />,
       };
     }
-    console.log("todayAct:", todayAct);
-    // מקרה ב': אני רשומה כמחליפה (מישהו ביקש ממני להגיע, או החלפה פנימית)
-    if (todayAct && todayAct.substituteId === user?.id) {
+
+    // מקרה ב': אני רשומה כמחליפה (שיבוץ מיוחד או החלפה פנימית)
+    if (todayAct && todayAct.substituteId === user.id) {
       return {
         title: `מילוי מקום: ${todayAct.institution?.name}`,
         sub: todayAct.institution?.address,
@@ -4337,7 +4308,7 @@ export default function RotationDashboard() {
       };
     }
 
-    // מקרה ד': יום חופשי (אין גן קבוע ואין שיבוץ מיוחד)
+    // מקרה ד': יום חופשי
     return {
       title: "יום חופשי",
       sub: "לא מוגדר גן ליום זה",
@@ -4345,9 +4316,10 @@ export default function RotationDashboard() {
       color: "bg-slate-50 border-slate-200 text-slate-500",
       icon: <Clock size={32} />,
     };
-  };
+  }, [data, user]);
 
-  const status = getTodayStatus();
+  if (isLoading && !data) return <LoadingScreen message="טוען את סידור העבודה שלך..." />;
+  if (error) return <div className="p-10 text-center text-red-500 font-bold">שגיאה בטעינת הלו"ז.</div>;
 
   return (
     <div className="space-y-8 animate-in fade-in duration-500 pb-12">
@@ -4369,54 +4341,48 @@ export default function RotationDashboard() {
         </button>
       </header>
 
-      {/* Hero Section: איפה אני היום? */}
-      <section
-        className={`rounded-[2.5rem] p-8 border-2 shadow-xl shadow-indigo-100/20 relative overflow-hidden transition-all ${status.color}`}
-      >
-        <div className="flex flex-col md:flex-row justify-between items-center gap-6 relative z-10">
-          <div className="flex items-center gap-6 text-right w-full md:w-auto">
-            <div
-              className={`w-16 h-16 rounded-2xl flex items-center justify-center shadow-lg shrink-0 ${
-                status.type === "FIXED"
-                  ? "bg-indigo-600 text-white"
-                  : status.type === "ABSENT"
-                    ? "bg-red-500 text-white"
-                    : status.type === "SPECIAL"
-                      ? "bg-purple-600 text-white"
-                      : "bg-slate-300 text-white"
-              }`}
-            >
-              {status.icon}
-            </div>
-            <div>
-              <p className="font-black text-[10px] uppercase tracking-[0.15em] opacity-60 mb-1">
-                {status.type === "FIXED"
-                  ? "הגן הקבוע שלי להיום:"
-                  : status.type === "SPECIAL"
-                    ? "שיבוץ מיוחד להיום:"
+      {/* Hero Section */}
+      {status && (
+        <section
+          className={`rounded-[2.5rem] p-8 border-2 shadow-xl shadow-indigo-100/20 relative overflow-hidden transition-all ${status.color}`}
+        >
+          <div className="flex flex-col md:flex-row justify-between items-center gap-6 relative z-10">
+            <div className="flex items-center gap-6 text-right w-full md:w-auto">
+              <div
+                className={`w-16 h-16 rounded-2xl flex items-center justify-center shadow-lg shrink-0 ${
+                  status.type === "FIXED"
+                    ? "bg-indigo-600 text-white"
                     : status.type === "ABSENT"
-                      ? "סטטוס נוכחות:"
-                      : "היום שלך:"}
-              </p>
-              <h2 className="text-3xl font-black leading-tight">
-                {status.title}
-              </h2>
-              <div className="flex items-center gap-2 mt-1 opacity-80 font-bold text-sm">
-                {status.type !== "FREE" && <MapPin size={14} />}
-                <span>{status.sub}</span>
+                      ? "bg-red-500 text-white"
+                      : status.type === "SPECIAL"
+                        ? "bg-purple-600 text-white"
+                        : "bg-slate-300 text-white"
+                }`}
+              >
+                {status.icon}
+              </div>
+              <div>
+                <p className="font-black text-[10px] uppercase tracking-[0.15em] opacity-60 mb-1">
+                  {status.type === "FIXED" ? "הגן הקבוע שלי להיום:" : status.type === "SPECIAL" ? "שיבוץ מיוחד להיום:" : status.type === "ABSENT" ? "סטטוס נוכחות:" : "היום שלך:"}
+                </p>
+                <h2 className="text-3xl font-black leading-tight">
+                  {status.title}
+                </h2>
+                <div className="flex items-center gap-2 mt-1 opacity-80 font-bold text-sm">
+                  {status.type !== "FREE" && <MapPin size={14} />}
+                  <span>{status.sub}</span>
+                </div>
               </div>
             </div>
           </div>
-        </div>
-
-        {/* עיטור רקע עדין */}
-        <div className="absolute -bottom-6 -left-6 opacity-[0.03] pointer-events-none">
-          {status.icon}
-        </div>
-      </section>
+          <div className="absolute -bottom-6 -left-6 opacity-[0.03] pointer-events-none">
+            {status.icon}
+          </div>
+        </section>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* הלו"ז השבועי הקבוע שלי */}
+        {/* לו"ז שבועי קבוע */}
         <div className="lg:col-span-2 space-y-6">
           <h2 className="text-xl font-black text-slate-800 flex items-center gap-2">
             <div className="w-1.5 h-6 bg-indigo-600 rounded-full" />
@@ -4425,8 +4391,8 @@ export default function RotationDashboard() {
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {Object.keys(dayMap).map((dayKey) => {
-              const assignment = data.fixedSchedule.find(
-                (s: any) => s.day === dayKey,
+              const assignment = data?.fixedSchedule?.find(
+                (s: any) => s.day === dayKey
               );
               return (
                 <div
@@ -4437,19 +4403,15 @@ export default function RotationDashboard() {
                     <span className="font-black text-indigo-600 text-sm">
                       יום {dayMap[dayKey]}
                     </span>
-                    {assignment && (
-                      <Clock size={16} className="text-slate-300" />
-                    )}
+                    {assignment && <Clock size={16} className="text-slate-300" />}
                   </div>
                   {assignment ? (
                     <div>
                       <p className="font-black text-slate-800">
-                        {assignment.manager.mainManagedInstitutions[0]?.name}
+                        {assignment.manager?.mainManagedInstitutions?.[0]?.name || "גן ללא שם"}
                       </p>
                       <p className="text-xs text-slate-400 font-bold mt-1 flex items-center gap-1">
-                        <User size={12} /> גננת אם:{" "}
-                        {assignment.manager.firstName}{" "}
-                        {assignment.manager.lastName}
+                        <User size={12} /> גננת אם: {assignment.manager.firstName} {assignment.manager.lastName}
                       </p>
                     </div>
                   ) : (
@@ -4472,16 +4434,16 @@ export default function RotationDashboard() {
 
           <div className="bg-white rounded-[2rem] border border-slate-200 shadow-sm overflow-hidden flex flex-col min-h-[400px]">
             <div className="p-6 space-y-5 flex-1">
-              {data.placements.length > 0 ? (
-                data.placements.map((p: any, idx: number) => (
+              {data?.placements?.length > 0 ? (
+                data.placements.map((p: any) => (
                   <div key={p.id} className="relative pr-6 py-1 group">
                     <div
-                      className={`absolute right-[-4px] top-2 w-2.5 h-2.5 rounded-full border-2 border-white shadow-sm ring-4 ring-white ${p.mainTeacherId === user.id ? "bg-red-400" : "bg-indigo-400"}`}
+                      className={`absolute right-[-4px] top-2 w-2.5 h-2.5 rounded-full border-2 border-white shadow-sm ring-4 ring-white ${p.mainTeacherId === user?.id ? "bg-red-400" : "bg-indigo-400"}`}
                     ></div>
                     <p className="text-[13.5px] font-bold text-slate-700 leading-relaxed">
-                      {p.mainTeacherId === user.id
+                      {p.mainTeacherId === user?.id
                         ? `היעדרות מדווחת ב-${new Date(p.date).toLocaleDateString("he-IL")}`
-                        : `החלפת את ${p.mainTeacher.firstName} ב-${new Date(p.date).toLocaleDateString("he-IL")}`}
+                        : `מילוי מקום של: ${p.mainTeacher.firstName} ${p.mainTeacher.lastName} ב-${new Date(p.date).toLocaleDateString("he-IL")}`}
                     </p>
                     <p className="text-[11px] text-slate-400 font-bold mt-0.5 uppercase tracking-tighter">
                       גן: {p.institution.name}
@@ -4518,8 +4480,7 @@ export default function RotationDashboard() {
               <div className="bg-amber-50 p-4 rounded-2xl border border-amber-100 flex gap-3 items-start">
                 <AlertCircle className="text-amber-500 shrink-0" size={18} />
                 <p className="text-xs text-amber-800 font-bold leading-relaxed">
-                  שימי לב: המערכת תזהה אוטומטית באיזה גן את אמורה להיות ביום זה
-                  ותשלח התראה למנהלת הגן ולמפקחת.
+                  שימי לב: המערכת תזהה אוטומטית באיזה גן את אמורה להיות ביום זה ותעדכן את הצוות.
                 </p>
               </div>
               <button
@@ -4536,7 +4497,6 @@ export default function RotationDashboard() {
     </div>
   );
 }
-
 ==============================
 FILE: src/app\rotation\profile\page.tsx
 ==============================
@@ -4565,10 +4525,16 @@ export default function SubstituteLayout({
   );
 }
 ==============================
+FILE: src/app\substitute\notifications\page.tsx
+==============================
+import NotificationsList from "@/components/NotificationsList";
+export default function p() { return <NotificationsList />; }
+==============================
 FILE: src/app\substitute\page.tsx
 ==============================
 "use client";
-import { useEffect, useState } from "react";
+import useSWR from "swr"; // ייבוא SWR
+import { fetcher } from "@/utils/fetcher";
 import {
   MapPin,
   Calendar as CalendarIcon,
@@ -4578,35 +4544,29 @@ import {
 import LoadingScreen from "@/components/ui/LoadingScreen";
 
 export default function SubstituteDashboard() {
-  const [data, setData] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
-
-  const loadData = async () => {
-    try {
-      const res = await fetch("/api/substitute/dashboard");
-      if (res.ok) setData(await res.json());
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    loadData();
-  }, []);
+  // 1. טעינת נתוני המחליפה בזמן אמת (כל 5 שניות)
+  const { 
+    data, 
+    error, 
+    isLoading, 
+    mutate 
+  } = useSWR("/api/substitute/dashboard", fetcher, {
+    refreshInterval: 5000, // סנכרון חי כל 5 שניות
+  });
 
   const handleAssign = async (placementId: string) => {
     if (!confirm("האם את בטוחה שברצונך להשתבץ לגן זה?")) return;
+    
     try {
       const res = await fetch("/api/substitute/assign", {
         method: "POST",
         body: JSON.stringify({ placementId }),
         headers: { "Content-Type": "application/json" },
       });
+
       if (res.ok) {
         alert("השיבוץ בוצע בהצלחה! הודעה נשלחה לגננת האם ולמפקחת.");
-        loadData();
+        mutate(); // עדכון מיידי של הרשימות
       } else {
         const err = await res.json();
         alert(err.message);
@@ -4619,7 +4579,11 @@ export default function SubstituteDashboard() {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
-  if (loading) return <LoadingScreen message="מחפש עבורך הזדמנויות החלפה..." />;
+  // מצב טעינה ראשוני
+  if (isLoading && !data) return <LoadingScreen message="מחפש עבורך הזדמנויות החלפה..." />;
+
+  // טיפול בשגיאה
+  if (error) return <div className="p-10 text-center text-red-500 font-bold">שגיאה בטעינת מרכז השיבוצים.</div>;
 
   return (
 <div className="space-y-10 animate-in fade-in duration-500 pb-20 max-h-[80vh] overflow-y-hidden">
@@ -4774,7 +4738,9 @@ export default function ProfilePage() {
 FILE: src/app\supervisor\calendar\page.tsx
 ==============================
 "use client";
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useMemo } from "react";
+import useSWR from "swr"; // ייבוא SWR
+import { fetcher } from "@/utils/fetcher"; // fetcher מ-GET
 import {
   format,
   startOfMonth,
@@ -4798,106 +4764,70 @@ import {
 } from "lucide-react";
 import AddPlacementModal from "@/components/AddModals/AddPlacementModal";
 
+// Fetcher מיוחד לשיטת ה-POST שבה לוח השנה משתמש
+const postFetcher = async ([url, body]: [string, any]) => {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return res.json();
+};
+
 export default function SupervisorCalendar() {
   const [currentDate, setCurrentDate] = useState(new Date());
-  const [placements, setPlacements] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [user, setUser] = useState<any>(null);
-
-  // States למודאל עריכה ומחליפות
-  const [editingPlacement, setEditingPlacement] = useState<any>(null);
-  const [availableSubs, setAvailableSubs] = useState([]);
-  const [loadingSubs, setLoadingSubs] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
-
-  // States למודאל הוספה
+  const [editingPlacement, setEditingPlacement] = useState<any>(null);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
 
-  // פונקציה להבאת מחליפות פנויות לתאריך ספציפי
-  const fetchAvailableSubstitutes = async (date: Date) => {
-    setLoadingSubs(true);
-    try {
-      const dateParam = encodeURIComponent(date.toISOString());
-      const res = await fetch(`/api/supervisor/substitutes?date=${dateParam}`);
-      if (res.ok) {
-        const data = await res.json();
-        setAvailableSubs(data);
-      }
-    } catch (err) {
-      console.error("Error fetching subs:", err);
-    } finally {
-      setLoadingSubs(false);
-    }
-  };
+  // 1. טעינת פרטי המשתמש (SWR)
+  const { data: user } = useSWR("/api/auth/me", fetcher);
 
-  // סינון רשימת המחליפות לפי חיפוש
-  const filteredAvailableSubs = useMemo(() => {
-    return availableSubs.filter((sub: any) => {
-      const fullName = `${sub.firstName} ${sub.lastName}`.toLowerCase();
-      return (
-        fullName.includes(searchQuery.toLowerCase()) ||
-        sub.phoneNumber?.includes(searchQuery)
-      );
-    });
-  }, [availableSubs, searchQuery]);
-
-  // טעינת פרטי המשתמש המחובר בטעינה ראשונית
-  useEffect(() => {
-    const initPage = async () => {
-      try {
-        const userRes = await fetch("/api/auth/me");
-        if (userRes.ok) {
-          const userData = await userRes.json();
-          setUser(userData);
-        }
-      } catch (err) {
-        console.error("Initialization error:", err);
-      }
-    };
-    initPage();
-  }, []);
-
-  // טעינת נתוני לוח השנה
-  const fetchData = useCallback(async () => {
-    if (!user?.id) return;
-
-    setLoading(true);
-    try {
-      const res = await fetch("/api/test", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+  // 2. טעינת נתוני לוח השנה (SWR עם Polling כל 5 שניות)
+  const calendarKey = user?.id
+    ? [
+        "/api/test",
+        {
           type: "getCalendarData",
           data: {
             month: currentDate.getMonth() + 1,
             year: currentDate.getFullYear(),
             supervisorId: user.id,
           },
-        }),
-      });
+        },
+      ]
+    : null;
 
-      const data = await res.json();
-      setPlacements(data);
-    } catch (err) {
-      console.error("Fetch error:", err);
-      setPlacements([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [currentDate, user]);
+  const {
+    data: placements = [],
+    mutate: mutateCalendar,
+    isLoading: loadingCalendar,
+  } = useSWR(calendarKey, postFetcher, { refreshInterval: 5000 });
 
-  useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+  // 3. טעינת מחליפות פנויות (SWR - מתרחש רק כש-editingPlacement פתוח)
+  const subsKey = editingPlacement?.date
+    ? `/api/supervisor/substitutes?date=${encodeURIComponent(new Date(editingPlacement.date).toISOString())}`
+    : null;
 
-  // בכל פעם שנפתח מודאל עריכה - נטען מחליפות רלוונטיות לתאריך הדיווח
-  useEffect(() => {
-    if (editingPlacement) {
-      fetchAvailableSubstitutes(new Date(editingPlacement.date));
-      setSearchQuery("");
-    }
-  }, [editingPlacement]);
+  const { data: availableSubs = [], isLoading: loadingSubs } = useSWR(
+    subsKey,
+    fetcher,
+    {
+      refreshInterval: 5000,
+    },
+  );
+
+  // סינון רשימת המחליפות לפי חיפוש
+  const filteredAvailableSubs = useMemo(() => {
+    return availableSubs.filter((sub: any) => {
+      const label = sub.label?.toLowerCase() || "";
+      const phone = sub.phoneNumber || "";
+      return (
+        label.includes(searchQuery.toLowerCase()) || phone.includes(searchQuery)
+      );
+    });
+  }, [availableSubs, searchQuery]);
 
   const handleDelete = async (id: string) => {
     if (!confirm("למחוק את הדיווח לצמיתות?")) return;
@@ -4907,7 +4837,7 @@ export default function SupervisorCalendar() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id }),
       });
-      if (res.ok) setPlacements((prev) => prev.filter((p: any) => p.id !== id));
+      if (res.ok) mutateCalendar();
     } catch (err) {
       alert("שגיאה במחיקה");
     }
@@ -4936,13 +4866,14 @@ export default function SupervisorCalendar() {
 
       if (res.ok) {
         setEditingPlacement(null);
-        fetchData();
+        mutateCalendar(); // עדכון מיידי של הלוח
       }
     } catch (err) {
       alert("שגיאה בעדכון");
     }
   };
 
+  // לוגיקת בניית ימי החודש
   const firstDayOfMonth = startOfMonth(currentDate);
   const startWeekDay = firstDayOfMonth.getDay();
   const realDays = eachDayOfInterval({
@@ -4953,7 +4884,6 @@ export default function SupervisorCalendar() {
   const days = [...paddingDays, ...realDays];
 
   const getPlacementColor = (p: any) => {
-    // 1. צבעי סטטוס (ממתין / סגור)
     if (p.status === "OPEN")
       return "bg-amber-50 border-amber-200 text-amber-700";
     if (p.status === "CANCELLED")
@@ -4962,41 +4892,24 @@ export default function SupervisorCalendar() {
     const subId = p.substituteId ? String(p.substituteId) : null;
     const absentId = String(p.mainTeacherId);
     const gardenManagerId = String(p.institution?.mainManagerId);
-
-    // רשימת כל ה-IDs של גננות הרוטציה הקבועות של הגן הזה (מכל הימים)
     const gardenRotationIds = (
       p.institution?.mainManager?.fixedRotationsAsManager || []
     ).map((r: any) => String(r.rotationTeacherId));
 
-    // זיהוי מי חסרה
-    const isOfficialRotationAbsent = gardenRotationIds.includes(absentId);
-    const isGardenManagerAbsent = absentId === gardenManagerId;
-
-    // --- מקרה א': גננת רוטציה חסרה ---
-    if (isOfficialRotationAbsent) {
-      // אם מנהלת הגן (גננת האם) היא זו שהגיעה להחליף
-      if (subId === gardenManagerId) {
+    if (gardenRotationIds.includes(absentId)) {
+      if (subId === gardenManagerId)
         return "bg-indigo-200 border-indigo-400 text-indigo-900 shadow-sm";
-      }
-      // אם מחליפה אחרת (חיצונית) הגיעה
       return "bg-purple-200 border-purple-400 text-purple-900 shadow-sm";
     }
-
-    // --- מקרה ב': גננת אם חסרה ---
-    if (isGardenManagerAbsent) {
-      // אם אחת מגננות הרוטציה הקבועות של הגן הגיעה להחליף
-      if (subId && gardenRotationIds.includes(subId)) {
+    if (absentId === gardenManagerId) {
+      if (subId && gardenRotationIds.includes(subId))
         return "bg-slate-300 border-slate-400 text-slate-900 shadow-sm";
-      }
-      // אם גננת מחליפה חיצונית הגיעה (לבן)
       return "bg-white border-slate-200 text-slate-700";
     }
-
-    // ברירת מחדל לכל מקרה אחר
     return "bg-white border-slate-100 text-slate-700";
   };
 
-  if (!user && loading) {
+  if (!user && loadingCalendar) {
     return (
       <div className="flex h-screen items-center justify-center bg-slate-50">
         <Loader2 className="animate-spin text-indigo-600" size={48} />
@@ -5073,7 +4986,7 @@ export default function SupervisorCalendar() {
                 >
                   {d}
                 </div>
-              )
+              ),
             )}
           </div>
 
@@ -5092,7 +5005,7 @@ export default function SupervisorCalendar() {
               const isToday = isSameDay(day, new Date());
               const dayPlacements = Array.isArray(placements)
                 ? placements.filter((p: any) =>
-                    isSameDay(new Date(p.date), day)
+                    isSameDay(new Date(p.date), day),
                   )
                 : [];
 
@@ -5157,17 +5070,17 @@ export default function SupervisorCalendar() {
                                   p.status === "OPEN"
                                     ? "bg-amber-500 animate-pulse"
                                     : p.status === "CANCELLED"
-                                    ? "bg-red-500"
-                                    : "bg-emerald-500"
+                                      ? "bg-red-500"
+                                      : "bg-emerald-500"
                                 }`}
                               />
                               {p.status === "OPEN"
                                 ? "ממתין"
                                 : p.status === "CANCELLED"
-                                ? "סגור"
-                                : p.substitute
-                                ? `${p.substitute.firstName} ${p.substitute.lastName[0]}.`
-                                : "משובץ"}
+                                  ? "סגור"
+                                  : p.substitute
+                                    ? `${p.substitute.firstName} ${p.substitute.lastName[0]}.`
+                                    : "משובץ"}
                             </div>
 
                             <button
@@ -5315,7 +5228,7 @@ export default function SupervisorCalendar() {
           isOpen={isAddModalOpen}
           date={selectedDate}
           onClose={() => setIsAddModalOpen(false)}
-          refreshData={fetchData}
+          refreshData={mutateCalendar}
           user={user}
         />
       )}
@@ -5357,7 +5270,9 @@ FILE: src/app\supervisor\page.tsx
 ==============================
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import useSWR from "swr"; // ייבוא SWR
+import { fetcher } from "@/utils/fetcher"; // שימוש ב-fetcher הקיים שלך
 import { format, addDays, isSameDay } from "date-fns";
 import { he } from "date-fns/locale";
 import {
@@ -5375,29 +5290,22 @@ import LoadingScreen from "@/components/ui/LoadingScreen";
 import { useRecentActivityHistory } from "@/hooks/useRecentActivityHistory";
 
 export default function SupervisorDashboardPage() {
-  const [dashboardData, setDashboardData] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
+  // --- שימוש ב-SWR במקום useState/useEffect ---
+  const {
+    data: dashboardData,
+    error,
+    isLoading,
+    mutate, // פונקציה לרענון ידני לאחר פעולה
+  } = useSWR("/api/supervisor/dashboard", fetcher, {
+    refreshInterval: 5000, // רענון אוטומטי כל 5 שניות (זמן אמת)
+    revalidateOnFocus: true, // רענון כשחוזרים לטאב של הדפדפן
+  });
+
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedPlacement, setSelectedPlacement] = useState<any>(null);
 
+  // היסטוריה (נשאר כרגע עם ה-Hook הקיים, אך הוא יציג נתונים מעודכנים)
   const history = useRecentActivityHistory("/api/supervisor/history");
-
-  const loadData = async () => {
-    try {
-      const res = await fetch("/api/supervisor/dashboard");
-      const data = await res.json();
-      setDashboardData(data);
-      setLoading(false);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    loadData();
-  }, []);
 
   // הפונקציה לסגירת הגן
   const handleCloseGarden = async (placementId: string) => {
@@ -5411,7 +5319,8 @@ export default function SupervisorDashboardPage() {
       });
 
       if (res.ok) {
-        loadData(); // רענון הנתונים בלוח הבקרה
+        // רענון אופטימי - גורם ל-SWR למשוך נתונים חדשים מיד
+        mutate();
       } else {
         alert("שגיאה בסגירת הגן");
       }
@@ -5420,27 +5329,35 @@ export default function SupervisorDashboardPage() {
     }
   };
 
-  if (loading) return <LoadingScreen />;
-
+  // פונקציית עזר לחישוב ימים לתצוגה
   const buildSixDisplayDays = (start: Date) => {
     const days: Date[] = [];
     let d = new Date(start);
-
     while (days.length < 6) {
       if (d.getDay() !== 6) {
         days.push(new Date(d));
       }
       d = addDays(d, 1);
     }
-
     return days;
   };
 
   const displayDaysWithoutSaturday = buildSixDisplayDays(new Date());
 
+  // מצב טעינה ראשוני
+  if (isLoading && !dashboardData)
+    return <LoadingScreen message="טוען נתונים בזמן אמת..." />;
+
+  // טיפול בשגיאה
+  if (error)
+    return (
+      <div className="p-10 text-center text-red-500 font-bold">
+        שגיאה בטעינת הנתונים. וודאי שאת מחוברת למערכת.
+      </div>
+    );
+
   return (
     <div className="space-y-8 animate-in fade-in duration-700">
-
       {/* Header */}
       <header className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
         <div>
@@ -5713,8 +5630,8 @@ export default function SupervisorDashboardPage() {
                         {act.status === "CANCELLED"
                           ? `הגן ${act.institution.name} נסגר `
                           : act.substitute
-                          ? `שובצה ${act.substitute.firstName} לגן ${act.institution.name}`
-                          : `דווחה היעדרות בגן ${act.institution.name}`}
+                            ? `שובצה ${act.substitute.firstName} לגן ${act.institution.name}`
+                            : `דווחה היעדרות בגן ${act.institution.name}`}
                       </p>
                     </div>
                   ))}
@@ -5750,7 +5667,9 @@ export default function SupervisorDashboardPage() {
           isOpen={isModalOpen}
           placement={selectedPlacement}
           onClose={() => setIsModalOpen(false)}
-          onSuccess={loadData}
+          onSuccess={() => {
+            mutate(); 
+          }}
         />
       )}
 
@@ -5767,28 +5686,24 @@ export default function SupervisorDashboardPage() {
 ==============================
 FILE: src/app\supervisor\placements\page.tsx
 ==============================
-// src/app/supervisor/placements/page.tsx
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
+import useSWR from "swr";
+import { fetcher } from "@/utils/fetcher";
 import { highlightText } from "@/lib/utils/formatters";
 import InstructorPlacementsModal from "@/components/InstructorCardModal";
-import PlacementModal from "@/components/PlacementModal";
 import {
   Search,
   UserPlus,
   Building2,
   Users,
   ChevronLeft,
-  SparklesIcon,
   Plus,
   MapPin,
   Edit3,
   Settings2,
-  Loader2,
-  User2Icon,
   PlusCircle,
-  Power,
 } from "lucide-react";
 import EditUserModal from "@/components/EditModals/EditUserModal";
 import EditInstitutionModal from "@/components/EditModals/EditInstitutionModal";
@@ -5802,19 +5717,30 @@ export default function DistrictManagementPage() {
   const [activeTab, setActiveTab] = useState<
     "STAFF" | "INSTITUTIONS" | "ALL_USERS"
   >("ALL_USERS");
-  const [allUsers, setAllUsers] = useState<any[]>([]);
-  const [staffData, setStaffData] = useState<any[]>([]);
-  const [institutions, setInstitutions] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true); //טעינת הדף
-  const [loadingTable, setLoadingTable] = useState(true); //טעינת הטבלה
-  const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedRoleFilter, setSelectedRoleFilter] = useState<string>("ALL");
-  const [selectedInstitutionForEdit, setSelectedInstitutionForEdit] =
-    useState<any>(null);
+
+  // --- הגדרת SWR לסנכרון נתונים בזמן אמת ---
+  const {
+    data: allUsers = [],
+    mutate: mutateUsers,
+    isLoading: loadingUsers,
+  } = useSWR("/api/supervisor/users-stats", fetcher, { refreshInterval: 5000 });
+  const { data: staffData = [], mutate: mutateStaff } = useSWR(
+    "/api/supervisor/placements",
+    fetcher,
+    { refreshInterval: 5000 },
+  );
+  const { data: institutions = [], mutate: mutateInst } = useSWR(
+    "/api/supervisor/institutions",
+    fetcher,
+    { refreshInterval: 5000 },
+  );
 
   // Modals States
   const [selectedUserForEdit, setSelectedUserForEdit] = useState<any>(null);
+  const [selectedInstitutionForEdit, setSelectedInstitutionForEdit] =
+    useState<any>(null);
   const [isAddTeacherOpen, setIsAddTeacherOpen] = useState(false);
   const [isAddSubstituteOpen, setIsAddSubstituteOpen] = useState(false);
   const [isAddInstitutionOpen, setIsAddInstitutionOpen] = useState(false);
@@ -5822,8 +5748,7 @@ export default function DistrictManagementPage() {
   const [selectedPlacement, setSelectedPlacement] = useState<any>(null);
   const [showReassignModal, setShowReassignModal] = useState(false);
   const [orphanedTeachers, setOrphanedTeachers] = useState<any[]>([]);
-  const [instructorsList, setInstructorsList] = useState<any[]>([]); // לצורך בחירה במודאל
-  const [isTabLoading, setIsTabLoading] = useState(false);
+  const [instructorsList, setInstructorsList] = useState<any[]>([]);
 
   const dayTranslations: Record<string, string> = {
     SUNDAY: "א'",
@@ -5841,144 +5766,103 @@ export default function DistrictManagementPage() {
     "THURSDAY",
     "FRIDAY",
   ];
-  // 2. פונקציות טעינה
-  const loadData = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const [staffRes, instRes] = await Promise.all([
-        fetch("/api/supervisor/placements"),
-        fetch("/api/supervisor/institutions"),
-      ]);
-      setLoadingTable(true);
 
-      if (!staffRes.ok || !instRes.ok) {
-        throw new Error("שגיאה במשיכת נתונים מהשרת");
-      }
-
-      const staffJson = await staffRes.json();
-      const instJson = await instRes.json();
-
-      setStaffData(Array.isArray(staffJson) ? staffJson : []);
-      setInstitutions(Array.isArray(instJson) ? instJson : []);
-    } catch (err: any) {
-      console.error("Load Error:", err);
-      setError(err.message);
-    } finally {
-      setLoading(false);
-      setLoadingTable(false);
-    }
+  // פונקציה שקוראת לכל ה-mutates (לשימוש אחרי הוספה/עריכה)
+  const refreshAllData = () => {
+    mutateUsers();
+    mutateStaff();
+    mutateInst();
   };
 
-  // בתוך DistrictManagementPage
-
-  const loadAllUsers = async () => {
-    setLoadingTable(true); // מתחילים טעינה של הטבלה
-    try {
-      const res = await fetch("/api/supervisor/users-stats");
-      const data = await res.json();
-      setAllUsers(Array.isArray(data) ? data : []);
-    } catch (error) {
-      console.error("Error loading users:", error);
-      setAllUsers([]);
-    } finally {
-      setLoadingTable(false); // סיום טעינה
-    }
-  };
-
-  const switchTab = async (tab: "STAFF" | "ALL_USERS" | "INSTITUTIONS") => {
-    setActiveTab(tab);
-    setSearchTerm("");
-
-    if (tab === "ALL_USERS") {
-      // קריאה לטעינה (היא כבר כוללת setLoadingTable בתוכה)
-      await loadAllUsers();
-    }
-  };
-
-  // טעינה ראשונית
+  // בדיקת יתומות וטעינת רשימת מדריכות למודאלים (קורה פעם אחת)
   useEffect(() => {
-    const initFetch = async () => {
-      await loadData(); // טוען מוסדות ומדריכות
-
-      // אם הטאב הנוכחי הוא ALL_USERS, נטען גם את כל המשתמשים
-      if (activeTab === "ALL_USERS") {
-        await loadAllUsers();
-      }
-    };
-
-    initFetch();
-  }, []);
-
-  useEffect(() => {
-    const checkOrphans = async () => {
-      try {
-        const res = await fetch("/api/supervisor/dashboard");
-        const data = await res.json();
+    fetch("/api/supervisor/dashboard")
+      .then((res) => res.json())
+      .then((data) => {
         if (data.orphanedManagers?.length > 0) {
           setOrphanedTeachers(data.orphanedManagers);
           setShowReassignModal(true);
         }
-      } catch (err) {
-        console.error("Failed to check for orphaned managers", err);
-      }
-    };
-    checkOrphans();
-  }, []);
-  // טעינת מדריכות בטעינה ראשונית כדי שיהיו זמינות למודאל
-  useEffect(() => {
+      });
     fetch("/api/supervisor/instructors")
       .then((res) => res.json())
       .then((data) => setInstructorsList(data));
   }, []);
 
-  const filteredAndSortedUsers = allUsers
-    .filter((u) => {
-      // הגנה: וודאי שהשדות קיימים לפני ביצוע toLowerCase
-      const firstName = u.firstName || "";
-      const lastName = u.lastName || "";
-      const idNumber = u.idNumber || "";
-      const roles = u.roles || [];
+  const ROLE_PRIORITY: Record<string, number> = {
+    INSTRUCTOR: 1,
+    MANAGER: 2,
+    ROTATION: 3,
+    SUBSTITUTE: 4,
+  };
 
-      const fullName = `${firstName} ${lastName}`.toLowerCase();
-      const matchesSearch =
-        fullName.includes(searchTerm.toLowerCase()) ||
-        idNumber.includes(searchTerm);
+  // --- לוגיקת סינון ומיון משתמשים ---
+  const filteredAndSortedUsers = useMemo(() => {
+    return allUsers
+      .filter((u: any) => {
+        const roles = u.roles ?? [];
+        const fullName =
+          `${u.firstName || ""} ${u.lastName || ""}`.toLowerCase();
 
-      let matchesRole = false;
+        const matchesSearch =
+          fullName.includes(searchTerm.toLowerCase()) ||
+          (u.idNumber || "").includes(searchTerm);
 
-      if (selectedRoleFilter === "ALL") {
-        matchesRole = true;
-      } else if (selectedRoleFilter === "NO_ROTATION") {
-        // גננת אם שאין לה אף רוטציה רשומה
-        matchesRole =
-          u.roles.includes("MANAGER") &&
-          (!u.fixedRotationsAsManager ||
-            u.fixedRotationsAsManager.length === 0);
-      } else {
-        matchesRole = u.roles.includes(selectedRoleFilter);
-      }
+        const matchesRole =
+          selectedRoleFilter === "ALL"
+            ? true
+            : selectedRoleFilter === "NO_ROTATION"
+              ? roles.includes("MANAGER") &&
+                (!u.fixedRotationsAsManager ||
+                  u.fixedRotationsAsManager.length === 0)
+              : roles.includes(selectedRoleFilter);
 
-      return matchesSearch && matchesRole;
-    })
-    .sort((a, b) => {
-      // אם נבחר "הכל", נקבץ לפי תפקיד לפי סדר חשיבות
-      if (selectedRoleFilter === "ALL") {
-        const rolePriority: any = {
-          INSTRUCTOR: 1,
-          MANAGER: 2,
-          ROTATION: 3,
-          SUBSTITUTE: 4,
-        };
-        // לוקחים את התפקיד הראשון של כל משתמשת לצורך המיון
-        const priorityA = rolePriority[a.roles[0]] || 5;
-        const priorityB = rolePriority[b.roles[0]] || 5;
+        return matchesSearch && matchesRole;
+      })
+      .sort((a: any, b: any) => {
+        if (a.isWorking !== b.isWorking) {
+          return a.isWorking ? -1 : 1;
+        }
+        const aRoles = a.roles ?? [];
+        const bRoles = b.roles ?? [];
 
-        if (priorityA !== priorityB) return priorityA - priorityB;
-      }
-      // בתוך אותו תפקיד (או אם מסונן), מיין לפי שם פרטי
-      return a.firstName.localeCompare(b.firstName, "he");
-    });
+        // עדיפות לפי תפקיד
+        const aPriority = Math.min(
+          ...aRoles.map((r: string) => ROLE_PRIORITY[r] ?? 99),
+        );
+        const bPriority = Math.min(
+          ...bRoles.map((r: string) => ROLE_PRIORITY[r] ?? 99),
+        );
+
+        if (aPriority !== bPriority) {
+          return aPriority - bPriority;
+        }
+
+        // אם אותו תפקיד – מיון אלפביתי
+        return (a.firstName || "").localeCompare(b.firstName || "", "he");
+      });
+  }, [allUsers, searchTerm, selectedRoleFilter]);
+
+  // --- לוגיקת סינון מוסדות ---
+  const filteredInstitutions = useMemo(() => {
+    return institutions.filter(
+      (inst: any) =>
+        inst.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        inst.institutionNumber?.includes(searchTerm),
+    );
+  }, [institutions, searchTerm]);
+
+  // --- לוגיקת סינון ומיון מדריכות ---
+  const sortedInstructors = useMemo(() => {
+    const filtered = staffData.filter((inst: any) =>
+      `${inst.firstName} ${inst.lastName}`
+        .toLowerCase()
+        .includes(searchTerm.toLowerCase()),
+    );
+    return [...filtered].sort((a: any, b: any) =>
+      a.isWorking === b.isWorking ? 0 : a.isWorking ? -1 : 1,
+    );
+  }, [staffData, searchTerm]);
 
   const roleFilters = [
     { id: "ALL", label: "כל הצוות", color: "bg-slate-100 text-slate-600" },
@@ -6005,55 +5889,15 @@ export default function DistrictManagementPage() {
     },
   ];
 
-  // 3. משתנים מחושבים (סינון) - מחוץ לפונקציות
-  const filteredStaff = (Array.isArray(staffData) ? staffData : []).filter(
-    (inst) =>
-      `${inst.firstName} ${inst.lastName}`
-        .toLowerCase()
-        .includes(searchTerm.toLowerCase()) ||
-      inst.subordinatesIns?.some((g: any) =>
-        `${g.firstName} ${g.lastName}`
-          .toLowerCase()
-          .includes(searchTerm.toLowerCase())
-      )
-  );
+  // פונקציה להחלפת טאב (תואם למבנה המקורי)
+  const switchTab = (tab: any) => {
+    setActiveTab(tab);
+    setSearchTerm("");
+  };
 
-  const sortedInstructors = [...filteredStaff].sort((a, b) => {
-    if (a.isWorking === b.isWorking) return 0;
-    return a.isWorking ? -1 : 1;
-  });
+  if (loadingUsers && allUsers.length === 0)
+    return <LoadingScreen message="טוען נתוני מחוז..." />;
 
-  const filteredInstitutions = (
-    Array.isArray(institutions) ? institutions : []
-  ).filter(
-    (inst) =>
-      inst.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      inst.institutionNumber?.includes(searchTerm)
-  );
-
-  // 4. טיפול במצבי טעינה ושגיאה (UI)
-  if (loading) {
-    return <LoadingScreen message="טוען נתוני מחוז" />;
-  }
-
-  if (error) {
-    return (
-      <div className="min-h-screen flex flex-col items-center justify-center text-red-600 font-bold gap-4">
-        <p>אופס! קרתה שגיאה:</p>
-        <code className="bg-red-50 p-4 rounded border border-red-200">
-          {error}
-        </code>
-        <button
-          onClick={loadData}
-          className="px-4 py-2 bg-indigo-600 text-white rounded-lg"
-        >
-          נסה שוב
-        </button>
-      </div>
-    );
-  }
-
-  // 5. הרינדור הראשי
   return (
     <div
       className="max-w-6xl mx-auto space-y-8 pb-12 animate-in fade-in duration-700"
@@ -6084,7 +5928,9 @@ export default function DistrictManagementPage() {
             >
               <UserPlus size={22} />
             </button>
-            <span className="tooltip-add-models text-indigo-600">הוספת צוות ניהול</span>
+            <span className="tooltip-add-models text-indigo-600">
+              הוספת צוות ניהול
+            </span>
           </span>
 
           {/* הוספת צוות מחליף */}
@@ -6095,7 +5941,9 @@ export default function DistrictManagementPage() {
             >
               <PlusCircle size={22} />
             </button>
-            <span className="tooltip-add-models text-emerald-600">הוספת צוות מחליף</span>
+            <span className="tooltip-add-models text-emerald-600">
+              הוספת צוות מחליף
+            </span>
           </span>
 
           {/* הקמת גן חדש */}
@@ -6106,7 +5954,9 @@ export default function DistrictManagementPage() {
             >
               <Plus size={22} />
             </button>
-            <span className="tooltip-add-models text-pink-600">הקמת גן חדש</span>
+            <span className="tooltip-add-models text-pink-600">
+              הקמת גן חדש
+            </span>
           </span>
         </div>
       </div>
@@ -6246,10 +6096,10 @@ export default function DistrictManagementPage() {
               const count =
                 filter.id === "NO_ROTATION"
                   ? allUsers.filter(
-                      (u) =>
+                      (u: any) =>
                         u.roles.includes("MANAGER") &&
                         (!u.fixedRotationsAsManager ||
-                          u.fixedRotationsAsManager.length === 0)
+                          u.fixedRotationsAsManager.length === 0),
                     ).length
                   : null;
 
@@ -6288,27 +6138,12 @@ export default function DistrictManagementPage() {
                     <th className="p-5 hidden md:table-cell">מדריכה</th>
                     <th className="p-5 hidden md:table-cell">גננת רוטציה</th>
                     <th className="p-5">סטטוס</th>
-                    <th className="p-5 text-center">פעולות</th>
+                    <th className="p-5 text-center">עריכה</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50">
-                  {loadingTable ? (
-                    // מצב 1: הטבלה בטעינה
-                    <tr>
-                      <td colSpan={9} className="p-20 text-center">
-                        <div className="flex flex-col items-center justify-center gap-4">
-                          <Loader2
-                            className="animate-spin text-indigo-600"
-                            size={32}
-                          />
-                          <p className="text-slate-500 font-bold  ">
-                            מרענן רשימת משתמשות...
-                          </p>
-                        </div>
-                      </td>
-                    </tr>
-                  ) : filteredAndSortedUsers.length > 0 ? (
-                    filteredAndSortedUsers.map((u) => {
+                  {filteredAndSortedUsers.length > 0 ? (
+                    filteredAndSortedUsers.map((u: any) => {
                       const userWorkDays = u.workDays || [];
                       const freeDays = allWeekDays
                         .filter((d) => !userWorkDays.includes(d))
@@ -6321,7 +6156,7 @@ export default function DistrictManagementPage() {
                           <td className="p-5 font-bold text-slate-700">
                             {highlightText(
                               `${u.firstName} ${u.lastName}`,
-                              searchTerm
+                              searchTerm,
                             )}
                           </td>
                           <td className="p-5">
@@ -6333,19 +6168,19 @@ export default function DistrictManagementPage() {
                                     r === "MANAGER"
                                       ? "bg-pink-50 text-pink-400"
                                       : r === "INSTRUCTOR"
-                                      ? "bg-purple-100 text-purple-600"
-                                      : r === "ROTATION"
-                                      ? "bg-emerald-50 text-emerald-600"
-                                      : "bg-sky-100 text-sky-600"
+                                        ? "bg-purple-100 text-purple-600"
+                                        : r === "ROTATION"
+                                          ? "bg-emerald-50 text-emerald-600"
+                                          : "bg-sky-100 text-sky-600"
                                   }`}
                                 >
                                   {r === "MANAGER"
                                     ? "גננת אם"
                                     : r === "SUBSTITUTE"
-                                    ? "מחליפה"
-                                    : r === "INSTRUCTOR"
-                                    ? "מדריכה"
-                                    : "רוטציה"}
+                                      ? "מחליפה"
+                                      : r === "INSTRUCTOR"
+                                        ? "מדריכה"
+                                        : "רוטציה"}
                                 </span>
                               ))}
                             </div>
@@ -6410,10 +6245,10 @@ export default function DistrictManagementPage() {
                                             r.rotationTeacher?.firstName ?? ""
                                           } ${
                                             r.rotationTeacher?.lastName ?? ""
-                                          }`.trim()
+                                          }`.trim(),
                                         )
-                                        .filter(Boolean)
-                                    )
+                                        .filter(Boolean),
+                                    ),
                                   ).map((name, idx) => (
                                     <span
                                       key={idx}
@@ -6479,7 +6314,7 @@ export default function DistrictManagementPage() {
       {/* INSTITUTIONS TAB */}
       {activeTab === "INSTITUTIONS" && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {filteredInstitutions.map((inst) => (
+          {filteredInstitutions.map((inst: any) => (
             <div
               key={inst.id}
               className="bg-white rounded-4xl border border-slate-100 shadow-sm p-8 flex flex-col hover:shadow-lg transition-all relative group"
@@ -6538,7 +6373,7 @@ export default function DistrictManagementPage() {
                               {rot.rotationTeacher?.lastName}
                             </span>
                           </div>
-                        )
+                        ),
                       )
                     ) : (
                       <p className="text-[11px] text-slate-400  ">
@@ -6554,6 +6389,7 @@ export default function DistrictManagementPage() {
       )}
 
       {/* Modals */}
+
       {activeInstructor && (
         <InstructorPlacementsModal
           isOpen={!!activeInstructor}
@@ -6568,33 +6404,30 @@ export default function DistrictManagementPage() {
           isOpen={!!selectedUserForEdit}
           user={selectedUserForEdit}
           onClose={() => setSelectedUserForEdit(null)}
-          onUpdateSuccess={() => {
-            loadAllUsers();
-            loadData();
-          }}
+          onUpdateSuccess={refreshAllData}
         />
       )}
       <AddUserModal
         isOpen={isAddTeacherOpen}
         onClose={() => setIsAddTeacherOpen(false)}
-        onSuccess={loadData}
+        onSuccess={refreshAllData}
       />
       <AddSubstituteModal
         isOpen={isAddSubstituteOpen}
         onClose={() => setIsAddSubstituteOpen(false)}
-        onSuccess={loadData}
+        onSuccess={refreshAllData}
       />
       <AddInstitutionModal
         isOpen={isAddInstitutionOpen}
         onClose={() => setIsAddInstitutionOpen(false)}
-        onSuccess={loadData}
+        onSuccess={refreshAllData}
       />
       {selectedInstitutionForEdit && (
         <EditInstitutionModal
           isOpen={!!selectedInstitutionForEdit}
           institution={selectedInstitutionForEdit}
           onClose={() => setSelectedInstitutionForEdit(null)}
-          onSuccess={loadData}
+          onSuccess={refreshAllData}
         />
       )}
       {showReassignModal && (
@@ -6602,15 +6435,11 @@ export default function DistrictManagementPage() {
           isOpen={showReassignModal}
           teachers={orphanedTeachers}
           instructors={instructorsList}
-          isForced={true} // גורם להשתלטות על המסך
+          isForced={true}
           onClose={() => setShowReassignModal(false)}
-          onComplete={(remaining?: any) => {
-            if (remaining && remaining.length > 0) {
-              setOrphanedTeachers(remaining);
-            } else {
-              setShowReassignModal(false);
-              loadData(); // רענון הנתונים הכללי בדף
-            }
+          onComplete={() => {
+            setShowReassignModal(false);
+            refreshAllData();
           }}
         />
       )}
@@ -7519,7 +7348,7 @@ export default function AddPlacementModal({
   useEffect(() => {
     if (isOpen && date && selectedAbsentId) {
       fetch(
-        `/api/supervisor/substitutes?date=${date.toISOString()}&absentTeacherId=${selectedAbsentId}`
+        `/api/supervisor/substitutes?date=${date.toISOString()}&absentTeacherId=${selectedAbsentId}`,
       )
         .then((res) => res.json())
         .then((fetchedSubs) => {
@@ -7536,18 +7365,39 @@ export default function AddPlacementModal({
           m.mainManagedInstitutions?.[0]?.name || "ללא גן"
         })`,
       }));
-    } else {
-      return data.rotations.map((r: any) => {
-        const fixedGarden =
-          r.fixedRotationsAsRotation?.[0]?.manager?.mainManagedInstitutions?.[0]
-            ?.name;
-        return {
-          id: r.id,
-          label: `${r.firstName} ${r.lastName} ${
-            fixedGarden ? `(קבועה ב${fixedGarden})` : "(ללא גן קבוע היום)"
-          }`,
-        };
-      });
+    }
+
+    // else {
+    //   return data.rotations.map((r: any) => {
+    //     const fixedGarden =
+    //       r.fixedRotationsAsRotation?.[0]?.manager?.mainManagedInstitutions?.[0]
+    //         ?.name;
+    //     return {
+    //       id: r.id,
+    //       label: `${r.firstName} ${r.lastName} ${
+    //         fixedGarden ? `(קבועה ב${fixedGarden})` : "(ללא גן קבוע היום)"
+    //       }`,
+    //     };
+    //   });
+    // }
+    else {
+      return data.rotations
+        .filter((r: any) => {
+          const fixedGarden =
+            r.fixedRotationsAsRotation?.[0]?.manager
+              ?.mainManagedInstitutions?.[0]?.name;
+          return !!fixedGarden; // רק מי שיש לו גן
+        })
+        .map((r: any) => {
+          const fixedGarden =
+            r.fixedRotationsAsRotation?.[0]?.manager
+              ?.mainManagedInstitutions?.[0]?.name;
+
+          return {
+            id: r.id,
+            label: `${r.firstName} ${r.lastName} (קבועה ב${fixedGarden})`,
+          };
+        });
     }
   };
 
@@ -7591,8 +7441,8 @@ export default function AddPlacementModal({
             mode === "closed"
               ? "CANCELLED"
               : mode === "assign"
-              ? "ASSIGNED"
-              : "OPEN",
+                ? "ASSIGNED"
+                : "OPEN",
           creatorRoles: user.roles,
         }),
       });
@@ -10706,48 +10556,50 @@ export default function SupervisorNavbar() {
 FILE: src/components\NotificationBell.tsx
 ==============================
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation"; // ייבוא ה-Hook לזיהוי הנתיב הנוכחי
+import { usePathname } from "next/navigation";
 import { Bell } from "lucide-react";
+import useSWR from "swr";
+import { fetcher } from "@/utils/fetcher";
 
 export default function NotificationBell() {
-  const pathname = usePathname(); // מקבל את הכתובת הנוכחית (למשל: /supervisor/notifications)
-  const [unreadCount, setUnreadCount] = useState(0);
-  const [targetUrl, setTargetUrl] = useState("/notifications");
+  const pathname = usePathname();
 
-  const fetchCount = async () => {
-    try {
-      const notifyRes = await fetch("/api/notifications");
-      if (notifyRes.ok) {
-        const data = await notifyRes.json();
-        setUnreadCount(data.filter((n: any) => !n.isRead).length);
-      }
-    } catch (e) { console.error(e); }
-  };
+  // 1. טעינת נתוני המשתמש (כדי לדעת לאיזה דף התראות לשלוח אותו)
+  const { data: user } = useSWR("/api/auth/me", fetcher);
 
-  useEffect(() => {
-    fetchCount();
+  // 2. טעינת ההתראות בזמן אמת (כל 10 שניות)
+  const { data: notifications, mutate } = useSWR("/api/notifications", fetcher, {
+    refreshInterval: 10000,
+  });
 
-    // קביעת הקישור לפי תפקיד
-    fetch("/api/auth/me").then(res => res.json()).then(user => {
-        if (user.roles.includes("SUPERVISOR")) setTargetUrl("/supervisor/notifications");
-        else if (user.roles.includes("INSTRUCTOR")) setTargetUrl("/instructor/notifications");
-        else if (user.roles.includes("MANAGER")) setTargetUrl("/manager/notifications");
-    });
+  // 3. חישוב כמות ההודעות שלא נקראו (במקום fetchCount הישן)
+  const unreadCount = useMemo(() => {
+    if (!notifications || !Array.isArray(notifications)) return 0;
+    return notifications.filter((n: any) => !n.isRead).length;
+  }, [notifications]);
 
-    const handleRead = () => setUnreadCount(0);
-    window.addEventListener("notificationsRead", handleRead);
-
-    const interval = setInterval(fetchCount, 60000);
+  // 4. קביעת הקישור לפי תפקיד - חישוב אוטומטי (במקום setTargetUrl)
+  const targetUrl = useMemo(() => {
+    if (!user || !user.roles) return "/notifications";
     
-    return () => {
-      clearInterval(interval);
-      window.removeEventListener("notificationsRead", handleRead);
-    };
-  }, []);
+    if (user.roles.includes("SUPERVISOR")) return "/supervisor/notifications";
+    if (user.roles.includes("INSTRUCTOR")) return "/instructor/notifications";
+    if (user.roles.includes("MANAGER")) return "/manager/notifications";
+    if (user.roles.includes("SUBSTITUTE")) return "/substitute/notifications";
+    if (user.roles.includes("ROTATION")) return "/rotation/notifications";
+    
+    return "/notifications";
+  }, [user]);
 
-  // בדיקה האם המשתמשת נמצאת כרגע בדף ההתראות
+  // האזנה לאירוע ניקוי התראות מהדף
+  useEffect(() => {
+    const handleRead = () => mutate();
+    window.addEventListener("notificationsRead", handleRead);
+    return () => window.removeEventListener("notificationsRead", handleRead);
+  }, [mutate]);
+
   const isActive = pathname === targetUrl;
 
   return (
@@ -10755,17 +10607,17 @@ export default function NotificationBell() {
       href={targetUrl} 
       className={`relative p-2 rounded-xl transition-all duration-200 group ${
         isActive 
-          ? "bg-indigo-50 text-indigo-600 shadow-sm" // עיצוב למצב פעיל
-          : "text-slate-400 hover:text-indigo-600 hover:bg-slate-50" // עיצוב רגיל
+          ? "bg-indigo-50 text-indigo-600 shadow-sm" 
+          : "text-slate-400 hover:text-indigo-600 hover:bg-slate-50"
       }`}
     >
       <Bell 
         size={24} 
-        className={isActive ? "fill-indigo-600/10" : ""} // הוספת מילוי עדין כשהוא פעיל
+        className={isActive ? "fill-indigo-600/10" : ""} 
       />
       
       {unreadCount > 0 && (
-        <span className={`absolute top-1.5 left-1.5 w-5 h-5 bg-red-500 text-white text-[10px] font-black flex items-center justify-center rounded-full border-2 transition-all ${
+        <span className={`absolute top-1.5 left-1.5 min-w-[20px] h-5 px-1 bg-red-500 text-white text-[10px] font-black flex items-center justify-center rounded-full border-2 transition-all ${
           isActive ? "border-indigo-50" : "border-white"
         }`}>
           {unreadCount > 9 ? "9+" : unreadCount}
@@ -11234,7 +11086,9 @@ FILE: src/components\PlacementModal.tsx
 ==============================
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useMemo } from "react";
+import useSWR from "swr";
+import { fetcher } from "@/utils/fetcher";
 import { X, Search, UserCheck, Loader2, AlertCircle, Home } from "lucide-react";
 import { format } from "date-fns";
 import { he } from "date-fns/locale";
@@ -11253,30 +11107,28 @@ export default function PlacementModal({
   onClose,
   onSuccess,
 }: PlacementModalProps) {
-  const [substitutes, setSubstitutes] = useState<any[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
-  const [loading, setLoading] = useState(true);
   const [isProcessing, setIsProcessing] = useState(false);
 
-  useEffect(() => {
-    if (isOpen && placement?.date) {
-      setLoading(true);
-      const dateParam = encodeURIComponent(
-        new Date(placement.date).toISOString()
-      );
+  // --- שימוש ב-SWR לטעינת מחליפות בזמן אמת ---
+  const dateParam = placement?.date
+    ? encodeURIComponent(new Date(placement.date).toISOString())
+    : null;
 
-      fetch(`/api/supervisor/substitutes?date=${dateParam}`)
-        .then((res) => res.json())
-        .then((data) => {
-          setSubstitutes(Array.isArray(data) ? data : []);
-          setLoading(false);
-        })
-        .catch((err) => {
-          console.error("טעינת מחליפות נכשלה:", err);
-          setLoading(false);
-        });
-    }
-  }, [isOpen, placement]);
+  const {
+    data: substitutes = [],
+    isLoading,
+    mutate,
+  } = useSWR(
+    isOpen && dateParam
+      ? `/api/supervisor/substitutes?date=${dateParam}`
+      : null,
+    fetcher,
+    {
+      refreshInterval: 5000, // רענון רשימת הזמינות כל 5 שניות
+      revalidateOnFocus: true,
+    },
+  );
 
   // פונקציה לעדכון סטטוס (שיבוץ או סגירה)
   const updatePlacement = async (subId: string | null, status: string) => {
@@ -11293,6 +11145,8 @@ export default function PlacementModal({
       });
 
       if (response.ok) {
+        // רענון ה-Cache של המחליפות (אופציונלי כי המודאל נסגר, אבל טוב ליתר ביטחון)
+        mutate();
         onSuccess?.();
         onClose();
       } else {
@@ -11309,20 +11163,23 @@ export default function PlacementModal({
   const handleCloseGarden = () => {
     if (
       confirm(
-        `האם את בטוחה שברצונך לסגור את גן ${placement.institution?.name} לתאריך זה?`
+        `האם את בטוחה שברצונך לסגור את גן ${placement.institution?.name} לתאריך זה?`,
       )
     ) {
       updatePlacement(null, "CANCELLED");
     }
   };
 
-  if (!isOpen) return null;
+  // סינון רשימת המחליפות (מתבצע על הנתונים שחזרו מה-SWR)
+  const filteredSubstitutes = useMemo(() => {
+    return substitutes.filter(
+      (s: any) =>
+        s.label?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        s.phoneNumber?.includes(searchQuery),
+    );
+  }, [substitutes, searchQuery]);
 
-  const filteredSubstitutes = substitutes.filter(
-    (s) =>
-      `${s.firstName} ${s.lastName}`.includes(searchQuery) ||
-      s.phoneNumber?.includes(searchQuery)
-  );
+  if (!isOpen) return null;
 
   return (
     <div
@@ -11391,7 +11248,7 @@ export default function PlacementModal({
 
         {/* List */}
         <div className="flex-1 overflow-y-auto px-6 pb-8 space-y-2 mt-4 custom-calendar-scroll">
-          {loading ? (
+          {isLoading ? (
             <LoadingScreen message="בודק זמינות מחליפות..." />
           ) : filteredSubstitutes.length === 0 ? (
             <div className="text-center py-12 px-6 bg-slate-50 rounded-[2rem] border-2 border-dashed border-slate-200">
@@ -11404,7 +11261,7 @@ export default function PlacementModal({
               </p>
             </div>
           ) : (
-            filteredSubstitutes.map((sub) => (
+            filteredSubstitutes.map((sub: any) => (
               <div
                 key={sub.id}
                 className="flex items-center justify-between p-4 bg-white rounded-2xl border border-slate-100 hover:border-indigo-200 hover:bg-indigo-50/30 transition-all group shadow-sm"
@@ -11414,9 +11271,7 @@ export default function PlacementModal({
                     {sub?.label[0]}
                   </div>
                   <div>
-                    <p className="font-black text-slate-800">
-                      {sub.label}
-                    </p>
+                    <p className="font-black text-slate-800">{sub.label}</p>
                     <p className="text-xs text-slate-400 font-medium">
                       {sub.phoneNumber}
                     </p>
