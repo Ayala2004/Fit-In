@@ -143,7 +143,7 @@ export async function db_getSupervisorDashboard(supervisorId: string) {
 export async function db_getMonthlyHistory(
   supervisorId: string,
   month: number,
-  year: number
+  year: number,
 ) {
   const startDate = new Date(year, month - 1, 1);
   const endDate = new Date(year, month, 0, 23, 59, 59);
@@ -222,16 +222,55 @@ const getDayEnum = (date: Date): Day => {
 
 export async function db_createPlacement(data: any) {
   const targetDate = startOfDay(new Date(data.date));
- const existingPlacementForTeacher = await prisma.placement.findFirst({
+
+  // 1. בדיקה האם הגננת שרוצים לדווח עליה (mainTeacherId) תפוסה כבר בתפקיד כלשהו
+  const existingPlacementForTeacher = await prisma.placement.findFirst({
     where: {
-      mainTeacherId: data.mainTeacherId,
       date: targetDate,
-      status: { not: "CANCELLED" } // אם הדיווח הקודם בוטל, מותר לדווח שוב
-    }
+      status: { not: "CANCELLED" },
+      OR: [
+        { mainTeacherId: data.mainTeacherId }, // האם היא כבר דווחה כנעדרת?
+        { substituteId: data.mainTeacherId }, // האם היא כבר משובצת כמחליפה במקום אחר?
+      ],
+    },
+    include: {
+      institution: { select: { name: true } },
+    },
   });
 
   if (existingPlacementForTeacher) {
-    throw new Error("כבר קיים דיווח במערכת על שם גננת זו בתאריך שנבחר.");
+    const role =
+      existingPlacementForTeacher.mainTeacherId === data.mainTeacherId
+        ? "כנעדרת"
+        : "כמחליפה";
+    const garden = existingPlacementForTeacher.institution.name;
+    throw new Error(
+      `לא ניתן ליצור דיווח: הגננת כבר רשומה במערכת ${role} בגן "${garden}" בתאריך זה.`,
+    );
+  }
+
+  // 2. בדיקה נוספת: אם המפקחת יוצרת שיבוץ ומיד מוסיפה מחליפה (substituteId)
+  // צריך לוודא שגם המחליפה לא תפוסה כבר באותו יום
+  if (data.substituteId) {
+    const existingForSubstitute = await prisma.placement.findFirst({
+      where: {
+        date: targetDate,
+        status: { not: "CANCELLED" },
+        OR: [
+          { mainTeacherId: data.substituteId }, // האם המחליפה עצמה חולה/נעדרת באותו יום?
+          { substituteId: data.substituteId }, // האם היא כבר מחליפה בגן אחר?
+        ],
+      },
+      include: {
+        institution: { select: { name: true } },
+      },
+    });
+
+    if (existingForSubstitute) {
+      throw new Error(
+        `לא ניתן לשבץ מחליפה זו: היא כבר רשומה במערכת בתאריך זה בגן "${existingForSubstitute.institution.name}".`,
+      );
+    }
   }
   // 1. יצירת הרשומה
   const newPlacement = await prisma.placement.create({
@@ -245,7 +284,9 @@ export async function db_createPlacement(data: any) {
     },
     include: {
       institution: true,
-      mainTeacher: { select: { firstName: true, lastName: true, phoneNumber: true } },
+      mainTeacher: {
+        select: { firstName: true, lastName: true, phoneNumber: true },
+      },
       substitute: { select: { firstName: true, lastName: true } },
     },
   });
@@ -371,7 +412,7 @@ export async function db_createPlacement(data: any) {
           mainName,
           date: dateStr,
         }),
-        "URGENT_CALL"
+        "URGENT_CALL",
       );
     }
   }
@@ -385,7 +426,7 @@ export async function db_createPlacement(data: any) {
 export async function db_manualAssign(
   placementId: string,
   substituteId: string,
-  managerId: string
+  managerId: string,
 ) {
   const placement = await prisma.placement.findUnique({
     where: { id: placementId },
@@ -494,7 +535,7 @@ export async function db_updatePlacementStatus(params: any) {
           address: updated.institution.address,
           mainName,
           date: dateStr,
-        })
+        }),
       );
     }
   }
@@ -512,7 +553,7 @@ export async function db_updatePlacementStatus(params: any) {
 export async function db_getCalendarData(
   month: number,
   year: number,
-  supervisorId: string
+  supervisorId: string,
 ) {
   const startDate = new Date(year, month - 1, 1);
   const endDate = new Date(year, month, 0, 23, 59, 59);
@@ -552,7 +593,7 @@ export async function db_getCalendarData(
  */
 export async function db_quickUpdatePlacement(
   id: string,
-  data: { mainTeacherId?: string; substituteId?: string; status?: any }
+  data: { mainTeacherId?: string; substituteId?: string; status?: any },
 ) {
   return await prisma.placement.update({
     where: { id },
@@ -573,7 +614,7 @@ export async function db_quickUpdatePlacement(
 export async function db_assignSubstitute(
   placementId: string,
   substituteId: string,
-  actorRoles: string[] = []
+  actorRoles: string[] = [],
 ) {
   const updatedPlacement = await prisma.placement.update({
     where: { id: placementId },
@@ -612,7 +653,6 @@ export async function db_assignSubstitute(
 
   return updatedPlacement;
 }
-
 
 //פונקציות למדריכה
 
@@ -683,7 +723,7 @@ async function getAvailableForNotification(date: Date) {
     [
       ...busyInPlacements.map((p) => p.substituteId),
       ...busyInPlacements.map((p) => p.mainTeacherId),
-    ].filter(Boolean)
+    ].filter(Boolean),
   );
   const busyRotations = await prisma.fixedRotation.findMany({
     where: { day: dayOfWeek as any },
@@ -707,7 +747,7 @@ async function getAvailableForNotification(date: Date) {
 async function notifyHierarchy(
   placement: any,
   statusText: string,
-  actorRoles: string[] = []
+  actorRoles: string[] = [],
 ) {
   const dateStr = placement.date.toLocaleDateString("he-IL");
   const mainName = `${placement.mainTeacher.firstName} ${placement.mainTeacher.lastName}`;

@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { getSession } from '@/lib/auth';
 import { db_createPlacement } from '@/services/placementService';
+import { startOfDay } from 'date-fns';
+// src/app/api/rotation/report/route.ts
 
 export async function POST(req: Request) {
   const session = await getSession();
@@ -10,67 +12,70 @@ export async function POST(req: Request) {
   }
 
   try {
-    const { date } = await req.json(); // מקבל למשל "2024-05-19"
-    
-    // פתרון בעיית התאריך: פירוק המחרוזת ידנית כדי למנוע קפיצה ליום קודם בגלל שעות
+    const { date } = await req.json();
     const [year, month, day] = date.split('-').map(Number);
-    const selectedDate = new Date(year, month - 1, day, 12, 0, 0); // קובעים לשעה 12 בצהריים כדי להיות בטוחים
-    
+    const selectedDate = new Date(year, month - 1, day, 12, 0, 0);
+    const targetDate = startOfDay(selectedDate); // שימוש באחידות תאריכים
+
     const daysArray = ["SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"];
-    const dayIndex = selectedDate.getDay(); 
-    const dayOfWeek = daysArray[dayIndex];
+    const dayOfWeek = daysArray[selectedDate.getDay()];
 
-    // --- לוגים לדיבאג (יופיעו בטרמינל של ה-VS Code) ---
-    console.log("--- Absence Report Debug ---");
-    console.log("Input Date String:", date);
-    console.log("Calculated Day Name:", dayOfWeek);
-    console.log("User ID from Session:", session.id);
-    // -----------------------------------------------
+    // 1. חיפוש: האם היא משובצת היום כמחליפה (מילוי מקום חד פעמי)?
+    const substitutePlacement = await prisma.placement.findFirst({
+      where: {
+        substituteId: session.id,
+        date: targetDate,
+        status: "ASSIGNED"
+      }
+    });
 
-    // חיפוש בטבלה
-    const assignment = await prisma.fixedRotation.findFirst({
+    // 2. חיפוש: האם יש לו גן קבוע היום (FixedRotation)?
+    const fixedAssignment = await prisma.fixedRotation.findFirst({
       where: {
         rotationTeacherId: session.id,
         day: dayOfWeek as any
       },
       include: {
-        manager: {
-          include: { 
-            mainManagedInstitutions: true 
-          }
-        }
+        manager: { include: { mainManagedInstitutions: true } }
       }
     });
 
-    if (!assignment) {
-      console.log("RESULT: No assignment found in FixedRotation table for this user and day.");
+    // לוגיקה: אם היא גם מחליפה וגם ביום קבוע (מה שלא אמור לקרות, אבל נתגונן)
+    // אנחנו נבטל קודם את השיבוץ החד-פעמי ונפתח קריאה לגן הקבוע
+    
+    if (substitutePlacement) {
+       // אם היא חולה, צריך לבטל את השיבוץ שלה כמחליפה כדי שהגן יחזור להיות OPEN
+       await prisma.placement.update({
+         where: { id: substitutePlacement.id },
+         data: { substituteId: null, status: "OPEN" }
+       });
+       // אם אין לה גן קבוע היום, סיימנו את הדיווח כאן
+       if (!fixedAssignment) {
+         return NextResponse.json({ message: "דיווחך התקבל. השיבוץ שלקחת בוטל והגן חזר לרשימת ההמתנה." });
+       }
+    }
+
+    if (!fixedAssignment) {
+      if (substitutePlacement) return NextResponse.json({ success: true }); // כבר טופל למעלה
       return NextResponse.json({ 
-        message: `לא נמצא שיבוץ קבוע עבורך ליום ${dayOfWeek}. וודאי שאת רשומה כרוטציה אצל גננת אם ביום זה.` 
+        message: `לא נמצא שיבוץ קבוע או מילוי מקום עבורך ליום ${dayOfWeek}.` 
       }, { status: 400 });
     }
 
-    if (!assignment.manager.mainManagedInstitutions || assignment.manager.mainManagedInstitutions.length === 0) {
-      console.log("RESULT: Assignment found, but the Lead Teacher (Manager) has no institution assigned.");
-      return NextResponse.json({ 
-        message: `נמצא שאת משובצת אצל ${assignment.manager.firstName}, אך לא מוגדר עבורה גן במערכת.` 
-      }, { status: 400 });
-    }
-
-    const institutionId = assignment.manager.mainManagedInstitutions[0].id;
+    // יצירת דיווח היעדרות לגן הקבוע (הפונקציה db_createPlacement שעדכנו קודם תחסום כפילויות)
+    const institutionId = fixedAssignment.manager.mainManagedInstitutions[0].id;
 
     const newPlacement = await db_createPlacement({
-      date: selectedDate,
+      date: targetDate,
       institutionId: institutionId,
       mainTeacherId: session.id,
       creatorRoles: session.roles,
       status: "OPEN"
     });
 
-    console.log("RESULT: Success! Placement created.");
     return NextResponse.json(newPlacement);
 
   } catch (error: any) {
-    console.error("CRITICAL ERROR:", error);
-    return NextResponse.json({ message: "שגיאת שרת פנימית: " + error.message }, { status: 500 });
+    return NextResponse.json({ message: error.message }, { status: 500 });
   }
 }
