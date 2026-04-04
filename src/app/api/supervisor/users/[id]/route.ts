@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth";
 import { encrypt } from "@/utils/crypto";
+import { startOfDay } from "date-fns";
+import { db_createNotification } from "@/services/notificationService";
 
 export async function PATCH(
   req: Request,
@@ -17,7 +19,6 @@ export async function PATCH(
     const { id } = await params;
     const body = await req.json();
 
-    // 1. שליפת המשתמש הנוכחי מה-DB כבסיס להשוואה ומניעת קריסות
     const currentUser = await prisma.user.findUnique({
       where: { id },
       include: { subordinatesIns: true },
@@ -27,12 +28,10 @@ export async function PATCH(
       return NextResponse.json({ message: "משתמש לא נמצא" }, { status: 404 });
     }
 
-    // קביעת התפקידים שיהיו למשתמש לאחר העדכון (חדשים מהבקשה או הקיימים ב-DB)
-    const effectiveRoles = body.roles || currentUser.roles;
     const isNowWorking =
       body.isWorking !== undefined ? body.isWorking : currentUser.isWorking;
 
-    // בדיקת "המדריכה האחרונה"
+    // בדיקת המדריכה האחרונה
     if (
       isNowWorking === false ||
       (body.roles && !body.roles.includes("INSTRUCTOR"))
@@ -56,7 +55,7 @@ export async function PATCH(
             return NextResponse.json(
               {
                 message:
-                  "לא ניתן להשבית את המדריכה האחרונה במחוז כל עוד ישנן גננות אם. עלייך להגדיר מדריכה פעילה אחרת תחילה.",
+                  "לא ניתן להשבית את המדריכה האחרונה במחוז כל עוד ישנן גננות אם.",
               },
               { status: 400 },
             );
@@ -65,9 +64,7 @@ export async function PATCH(
       }
     }
 
-    // 2. הכנת אובייקט הנתונים לעדכון (רק שדות שנשלחו ב-body)
     const updateData: any = {};
-
     if (body.firstName !== undefined) updateData.firstName = body.firstName;
     if (body.lastName !== undefined) updateData.lastName = body.lastName;
     if (body.email !== undefined) updateData.email = body.email;
@@ -76,110 +73,165 @@ export async function PATCH(
     if (body.roles !== undefined) updateData.roles = body.roles;
     if (body.workDays !== undefined) updateData.workDays = body.workDays;
     if (body.isWorking !== undefined) updateData.isWorking = body.isWorking;
-
     if (body.instructorId !== undefined) {
       updateData.instructorId =
         body.instructorId === "" || body.instructorId === "REMOVE"
           ? null
           : body.instructorId;
     }
-
-    if (body.dateOfBirth) {
-      updateData.dateOfBirth = new Date(body.dateOfBirth);
-    }
-
-    if (body.idNumber && body.idNumber.length > 5) {
+    if (body.dateOfBirth) updateData.dateOfBirth = new Date(body.dateOfBirth);
+    if (body.idNumber && body.idNumber.length > 5)
       updateData.idNumber = encrypt(body.idNumber);
-    }
 
-    // 3. ביצוע העדכון בטבלת User
     const updatedUser = await prisma.user.update({
       where: { id: id },
       data: updateData,
     });
 
-    // 4. טיפול ברוטציות במידה והגננת הושבתה
-    if (
-      updatedUser.isWorking === false &&
-      updatedUser.roles.includes("MANAGER")
-    ) {
-      await prisma.fixedRotation.deleteMany({
-        where: { managerId: id },
+    const today = startOfDay(new Date());
+
+    if (updatedUser.isWorking === false) {
+      // א. שחרור שיבוצים שבהם היא מחליפה
+      const futureAssignments = await prisma.placement.findMany({
+        where: { substituteId: id, date: { gte: today }, status: "ASSIGNED" },
+        include: { institution: true },
       });
-    } else if (updatedUser.roles.includes("MANAGER")) {
-      // מחיקת כל הרוטציה בימים שבהם גננת האם עובדת כרגע (כי היא לא צריכה מחליפה בימים אלו)
-      await prisma.fixedRotation.deleteMany({
-        where: {
-          managerId: id,
-          day: { in: updatedUser.workDays }, // ימי העבודה החדשים שלה
+
+      for (const p of futureAssignments) {
+        await prisma.placement.update({
+          where: { id: p.id },
+          data: { substituteId: null, status: "OPEN" },
+        });
+        const msg = `הגן ${p.institution.name} ב-${p.date.toLocaleDateString("he-IL")} חזר למצב ממתין כי המחליפה (${updatedUser.firstName}) הושבתה.`;
+        await db_createNotification({
+          userId: p.institution.supervisorId,
+          title: "דרושה מחליפה (עדכון אוטומטי)",
+          message: msg,
+          type: "STATUS_UPDATE",
+        });
+      }
+
+      // ב. מחיקת דיווחי היעדרות עתידיים שלה (גננת אם/רוטציה שחולה)
+      // 2. טיפול בדיווחי היעדרות עתידיים שלה (Main Teacher) - מחיקת עתיד בלבד
+      const futureAbsences = await prisma.placement.findMany({
+        where: { 
+          mainTeacherId: id, 
+          date: { gte: today } // רק מהיום והלאה
         },
+        include: { institution: true }
       });
 
-      // אם נשלחו נתוני רוטציה חדשים מה-UI, מעדכנים אותם
-      if (body.rotationData) {
-        const rotationsToCreate = [];
-        for (const [day, teacherId] of Object.entries(body.rotationData)) {
-          if (!teacherId || teacherId === "REMOVE" || teacherId === "")
-            continue;
+      if (futureAbsences.length > 0) {
+        const datesStr = futureAbsences
+          .map(p => p.date.toLocaleDateString('he-IL'))
+          .join(', ');
+        
+        const gardenName = futureAbsences[0].institution.name;
 
-          // וודאי שהיום הזה הוא אכן יום חופש (לא נמצא ב-workDays)
-          if (updatedUser.workDays.includes(day as any)) continue;
-
-          rotationsToCreate.push({
-            managerId: id,
-            day: day as any,
-            rotationTeacherId: teacherId as string,
-          });
-        }
-
-        // מוחקים את מה שנשאר (ימי החופש הישנים) ויוצרים מחדש רק את מה שרלוונטי
-        await prisma.fixedRotation.deleteMany({
-          where: {
-            managerId: id,
-            day: { notIn: updatedUser.workDays },
-          },
+        // מחיקה פיזית של דיווחי העתיד
+        await prisma.placement.deleteMany({
+          where: { 
+            id: { in: futureAbsences.map(p => p.id) } 
+          }
         });
 
-        if (rotationsToCreate.length > 0) {
-          await prisma.fixedRotation.createMany({ data: rotationsToCreate });
-        }
+        const msg = `שימי לב: עקב השבתת הגננת ${updatedUser.firstName}, נמחקו דיווחי ההיעדרות העתידיים שלה בגן ${gardenName} בתאריכים: ${datesStr}. דיווחי עבר נשמרו במערכת.`;
+        
+        await db_createNotification({ 
+          userId: futureAbsences[0].institution.supervisorId, 
+          title: "ניקוי לו\"ז עקב השבתה", 
+          message: msg, 
+          type: "STATUS_UPDATE" 
+        });
       }
-      const teacherIds = Object.values(body.rotationData).filter(
-        (tid) => tid && tid !== "REMOVE" && tid !== "",
-      ) as string[];
-
-      const rotationTeachers = await prisma.user.findMany({
-        where: { id: { in: teacherIds } },
-        select: { id: true, workDays: true, firstName: true },
+      // ג. מחיקת שיוכים קבועים
+      await prisma.fixedRotation.deleteMany({
+        where: { OR: [{ managerId: id }, { rotationTeacherId: id }] },
       });
 
+      // ד. התראה על "מוסד יתום"
+      if (updatedUser.roles.includes("MANAGER")) {
+        const myInstitutions = await prisma.institution.findMany({
+          where: { mainManagerId: id },
+        });
+        for (const inst of myInstitutions) {
+          await db_createNotification({
+            userId: inst.supervisorId,
+            title: "נדרשת מנהלת לגן",
+            message: `גננת האם של גן ${inst.name} הושבתה. יש לשבץ מנהלת חדשה דרך הדאשבורד.`,
+            type: "URGENT_CALL",
+          });
+        }
+      }
+    } else if (body.workDays) {
+      // טיפול בשינוי ימי עבודה
+      const futureAssignments = await prisma.placement.findMany({
+        where: { substituteId: id, date: { gte: today }, status: "ASSIGNED" },
+        include: { institution: true },
+      });
+
+      for (const p of futureAssignments) {
+        const days = [
+          "SUNDAY",
+          "MONDAY",
+          "TUESDAY",
+          "WEDNESDAY",
+          "THURSDAY",
+          "FRIDAY",
+          "SATURDAY",
+        ];
+        const dayName = days[p.date.getDay()];
+        if (!updatedUser.workDays.includes(dayName as any)) {
+          await prisma.placement.update({
+            where: { id: p.id },
+            data: { substituteId: null, status: "OPEN" },
+          });
+          const msg = `שיבוץ בוטל ב${p.institution.name} (${p.date.toLocaleDateString("he-IL")}) - יום חופש חדש למחליפה.`;
+          await db_createNotification({
+            userId: p.institution.supervisorId,
+            title: 'שיבוץ בוטל - שינוי לו"ז',
+            message: msg,
+            type: "STATUS_UPDATE",
+          });
+        }
+      }
+    }
+
+    // עדכון רוטציות קבועות
+    if (updatedUser.roles.includes("MANAGER") && body.rotationData) {
+      await prisma.fixedRotation.deleteMany({
+        where: { managerId: id, day: { in: updatedUser.workDays } },
+      });
       const rotationsToCreate = [];
       for (const [day, teacherId] of Object.entries(body.rotationData)) {
-        if (!teacherId || teacherId === "REMOVE" || teacherId === "") continue;
-        const teacher = rotationTeachers.find((t) => t.id === teacherId);
-        if (teacher && !teacher.workDays.includes(day as any)) continue;
-
+        if (
+          !teacherId ||
+          teacherId === "REMOVE" ||
+          teacherId === "" ||
+          updatedUser.workDays.includes(day as any)
+        )
+          continue;
         rotationsToCreate.push({
           managerId: id,
           day: day as any,
           rotationTeacherId: teacherId as string,
         });
       }
-
-      await prisma.fixedRotation.deleteMany({ where: { managerId: id } });
       if (rotationsToCreate.length > 0) {
+        await prisma.fixedRotation.deleteMany({
+          where: { managerId: id, day: { notIn: updatedUser.workDays } },
+        });
         await prisma.fixedRotation.createMany({ data: rotationsToCreate });
       }
     }
 
-    // 5. בדיקה אם נוצרו "גננות יתומות" (אם המדריכה הפכה ללא פעילה)
-    const wasActiveInstructor =
-      currentUser.isWorking && currentUser.roles.includes("INSTRUCTOR");
-    const isNowActiveInstructor =
-      updatedUser.isWorking && updatedUser.roles.includes("INSTRUCTOR");
-
+    // בדיקת יתומות
     let orphanedManagers: any[] = [];
-    if (wasActiveInstructor && !isNowActiveInstructor) {
+    if (
+      currentUser.isWorking &&
+      currentUser.roles.includes("INSTRUCTOR") &&
+      !updatedUser.isWorking
+    ) {
       orphanedManagers = await prisma.user.findMany({
         where: {
           instructorId: id,
@@ -191,7 +243,7 @@ export async function PATCH(
       });
     }
 
-    // 6. בדיקת שבירת רוטציות (אם גננת רוטציה שינתה ימי עבודה)
+    // בדיקת שבירת רוטציות
     let brokenRotations: any[] = [];
     if (updatedUser.roles.includes("ROTATION")) {
       brokenRotations = await prisma.fixedRotation.findMany({
@@ -200,14 +252,12 @@ export async function PATCH(
           OR: [
             { manager: { isWorking: false } },
             { day: { notIn: updatedUser.workDays } },
-            { rotationTeacher: { isWorking: false } },
           ],
         },
         include: {
           manager: { select: { id: true, firstName: true, lastName: true } },
         },
       });
-
       if (brokenRotations.length > 0) {
         await prisma.fixedRotation.deleteMany({
           where: { id: { in: brokenRotations.map((br) => br.id) } },
@@ -223,9 +273,9 @@ export async function PATCH(
       brokenRotations: brokenRotations,
     });
   } catch (error: any) {
-    console.error("Prisma Update Error Details:", error);
+    console.error("Update Error:", error);
     return NextResponse.json(
-      { message: "שגיאת שרת פנימית בעדכון", details: error.message },
+      { message: "שגיאת שרת פנימית", details: error.message },
       { status: 500 },
     );
   }

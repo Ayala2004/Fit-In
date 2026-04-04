@@ -23,6 +23,7 @@ export async function db_createInstitution(data: {
       supervisor: { connect: { id: data.supervisorId } },
       instructor: { connect: { id: data.instructorId } },
       mainManager: { connect: { id: data.mainManagerId } },
+       isActive: true,
     }
   });
 }

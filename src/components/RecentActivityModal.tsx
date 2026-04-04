@@ -169,5 +169,5 @@ export default function RecentActivityModal({
         </div>
       </div>
     </div>
-  );
-}
+    );
+  }

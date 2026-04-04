@@ -13,11 +13,13 @@ import {
   Clock,
   History,
   User,
+  X,
 } from "lucide-react";
 import PlacementModal from "@/components/PlacementModal";
 import RecentActivityModal from "@/components/RecentActivityModal";
 import LoadingScreen from "@/components/ui/LoadingScreen";
 import { useRecentActivityHistory } from "@/hooks/useRecentActivityHistory";
+import AssignManagerModal from "@/components/EditModals/AssignManagerModal";
 
 export default function SupervisorDashboardPage() {
   // --- שימוש ב-SWR במקום useState/useEffect ---
@@ -33,6 +35,9 @@ export default function SupervisorDashboardPage() {
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedPlacement, setSelectedPlacement] = useState<any>(null);
+  const [isAssignManagerOpen, setIsAssignManagerOpen] = useState(false);
+  const [isDeleteInstOpen, setIsDeleteInstOpen] = useState(false);
+  const [targetInst, setTargetInst] = useState<any>(null);
 
   // היסטוריה (נשאר כרגע עם ה-Hook הקיים, אך הוא יציג נתונים מעודכנים)
   const history = useRecentActivityHistory("/api/supervisor/history");
@@ -59,6 +64,33 @@ export default function SupervisorDashboardPage() {
     }
   };
 
+  const handleFinalDelete = async () => {
+    if (!targetInst) return;
+
+    try {
+      const res = await fetch(`/api/supervisor/institutions/${targetInst.id}`, {
+        method: "DELETE",
+      });
+
+      if (res.ok) {
+        // 1. סגירת המודאל
+        setIsDeleteInstOpen(false);
+        // 2. איפוס המוסד שנבחר
+        setTargetInst(null);
+        // 3. רענון הנתונים בדאשבורד (SWR)
+        mutate();
+        // אופציונלי: התראה קטנה להצלחה
+        alert("המוסד וכל נתוניו העתידיים נמחקו בהצלחה");
+      } else {
+        const errorData = await res.json();
+        alert(errorData.message || "שגיאה במחיקת המוסד");
+      }
+    } catch (error) {
+      console.error("Delete error:", error);
+      alert("שגיאת תקשורת עם השרת");
+    }
+  };
+
   // פונקציית עזר לחישוב ימים לתצוגה
   const buildSixDisplayDays = (start: Date) => {
     const days: Date[] = [];
@@ -71,6 +103,7 @@ export default function SupervisorDashboardPage() {
     }
     return days;
   };
+  // בתוך src/app/supervisor/page.tsx
 
   const displayDaysWithoutSaturday = buildSixDisplayDays(new Date());
 
@@ -223,6 +256,49 @@ export default function SupervisorDashboardPage() {
             </div>
 
             <div className="grid gap-4">
+              {/* גנים ללא מנהלת פעילה */}
+              {dashboardData.orphanedInstitutions?.map((inst: any) => (
+                <div
+                  key={inst.id}
+                  className="group bg-stone-50 rounded-xl p-5 border border-amber-200 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-6"
+                >
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 bg-amber-100 rounded-xl flex items-center justify-center text-amber-600 border border-amber-200">
+                      <AlertTriangle size={22} />
+                    </div>
+                    <div>
+                      <h3 className="font-semibold text-base text-stone-800 leading-tight mb-0.5">
+                        {inst.name} — חסרה מנהלת
+                      </h3>
+                      <p className="text-sm text-stone-500">
+                        המנהלת הקודמת ({inst.mainManager.firstName}) הושבתה. הגן
+                        ללא השגחה במערכת.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex gap-2 shrink-0">
+                    <button
+                      onClick={() => {
+                        setTargetInst(inst);
+                        setIsAssignManagerOpen(true);
+                      }}
+                      className="px-5 py-2 bg-indigo-600 text-white font-medium rounded-lg hover:bg-indigo-700 transition-colors text-sm"
+                    >
+                      שיוך גננת אם
+                    </button>
+                    <button
+                      onClick={() => {
+                        setTargetInst(inst);
+                        setIsDeleteInstOpen(true);
+                      }}
+                      className="px-5 py-2 bg-white text-red-500 font-medium rounded-lg border border-red-200 hover:bg-red-50 transition-colors text-sm"
+                    >
+                      סגירת מוסד
+                    </button>
+                  </div>
+                </div>
+              ))}
               {dashboardData.urgentAlerts.map((alert: any) => (
                 <div
                   key={alert.id}
@@ -276,7 +352,7 @@ export default function SupervisorDashboardPage() {
               {dashboardData.urgentAlerts.length === 0 && (
                 <div className="bg-white rounded-3xl p-12 text-center border border-dashed border-slate-300">
                   <p className="text-slate-400 font-medium">
-                    אין קריאות דחופות כרגע. עבודה טובה! ✨
+                    אין צורך דחוף במילוי מקום כרגע. עבודה טובה! ✨
                   </p>
                 </div>
               )}
@@ -390,7 +466,93 @@ export default function SupervisorDashboardPage() {
           </div>
         </div>
       </main>
+      {/* מודאל מחיקת מוסד (Confirmation) */}
+      {isDeleteInstOpen && (
+        <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-sm rounded-[2.5rem] p-8 shadow-2xl border border-red-100 text-center animate-in zoom-in-95 duration-200">
+            <div className="w-20 h-20 bg-red-50 text-red-500 rounded-full flex items-center justify-center mx-auto mb-6">
+              <X size={40} strokeWidth={3} />
+            </div>
+            <h3 className="text-xl font-black text-slate-900 mb-2">
+              לסגור את המוסד?
+            </h3>
+            <p className="text-slate-500 font-medium mb-8 text-sm">
+              הפעולה תמחק את גן{" "}
+              <span className="font-bold text-red-600">
+                "{targetInst?.name}"
+              </span>{" "}
+              לא ניתן לבטל פעולה זו, כל השיבוצים העתידיים של גן זה ימחקו, אל
+              דאגה: היסטוריית השיבוצים תישמר בלוח השנה{" "}
+            </p>
+            <div className="flex flex-col gap-3">
+              <button
+                onClick={handleFinalDelete}
+                className="w-full py-4 bg-red-600 text-white rounded-2xl font-black shadow-lg shadow-red-100 hover:bg-red-700 active:scale-95 transition-all"
+              >
+                כן, מחק את המוסד
+              </button>
+              <button
+                onClick={() => setIsDeleteInstOpen(false)}
+                className="w-full py-4 bg-slate-100 text-slate-600 rounded-2xl font-bold hover:bg-slate-200 transition-all"
+              >
+                לא, חזור אחורה
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
+      {/* מודאל שיוך מנהלת אם חדשה */}
+      {isAssignManagerOpen && (
+        <AssignManagerModal
+          isOpen={isAssignManagerOpen}
+          onClose={() => {
+            setIsAssignManagerOpen(false);
+            setTargetInst(null);
+          }}
+          onSuccess={() => {
+            mutate(); // רענון הדאשבורד
+            setIsAssignManagerOpen(false);
+            setTargetInst(null);
+          }}
+          institution={targetInst}
+        />
+      )}
+
+      {/* מודאל אישור מחיקה (סגירת מוסד) */}
+      {isDeleteInstOpen && (
+        <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-sm rounded-[2.5rem] p-8 shadow-2xl border border-red-100 text-center animate-in zoom-in-95 duration-200">
+            <div className="w-20 h-20 bg-red-50 text-red-500 rounded-full flex items-center justify-center mx-auto mb-6">
+              <X size={40} strokeWidth={3} />
+            </div>
+            <h3 className="text-xl font-black text-slate-900 mb-2">
+              לסגור את המוסד?
+            </h3>
+            <p className="text-slate-500 font-medium mb-8 text-sm">
+              הפעולה תהפוך את גן{" "}
+              <span className="font-bold text-red-600">
+                "{targetInst?.name}"
+              </span>{" "}
+              ללא פעיל. כל דיווחי העתיד יימחקו אך ההיסטוריה תישמר.
+            </p>
+            <div className="flex flex-col gap-3">
+              <button
+                onClick={handleFinalDelete}
+                className="w-full py-4 bg-red-600 text-white rounded-2xl font-black shadow-lg hover:bg-red-700 transition-all"
+              >
+                כן, סגור את המוסד
+              </button>
+              <button
+                onClick={() => setIsDeleteInstOpen(false)}
+                className="w-full py-4 bg-slate-100 text-slate-600 rounded-2xl font-bold hover:bg-slate-200 transition-all"
+              >
+                לא, בטל פעולה
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* Modals */}
       {selectedPlacement && (
         <PlacementModal
@@ -398,7 +560,7 @@ export default function SupervisorDashboardPage() {
           placement={selectedPlacement}
           onClose={() => setIsModalOpen(false)}
           onSuccess={() => {
-            mutate(); 
+            mutate();
           }}
         />
       )}

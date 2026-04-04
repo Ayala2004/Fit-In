@@ -64,7 +64,7 @@ export async function db_getSupervisorDashboard(supervisorId: string) {
   // 2. קריאות דחופות (מהיום ועד הדדליין הדחוף)
   const urgentAlerts = await prisma.placement.findMany({
     where: {
-      institution: { supervisorId: supervisorId },
+      institution: { supervisorId: supervisorId, isActive: true },
       status: "OPEN",
       date: { gte: today, lte: urgentDeadline },
     },
@@ -75,10 +75,22 @@ export async function db_getSupervisorDashboard(supervisorId: string) {
     orderBy: { date: "asc" },
   });
 
+  // גנים שהמנהלת שלהם מושבתת (דורשים טיפול דחוף בשיבוץ מנהלת)
+  const orphanedInstitutions = await prisma.institution.findMany({
+    where: {
+      supervisorId: supervisorId,
+      isActive: true,
+      mainManager: { isWorking: false },
+    },
+    include: {
+      mainManager: { select: { firstName: true, lastName: true } },
+    },
+  });
+
   // 3. בקשות פתוחות לשאר החודש (החל מהיום שאחרי הדדליין הדחוף)
   const openMonthlyRequests = await prisma.placement.findMany({
     where: {
-      institution: { supervisorId: supervisorId },
+      institution: { supervisorId: supervisorId, isActive: true },
       status: "OPEN",
       date: {
         gt: urgentDeadline, // מעבר לטווח הדחוף
@@ -95,7 +107,7 @@ export async function db_getSupervisorDashboard(supervisorId: string) {
   // 4. חוסרים מהעבר (Pending Updates - כאלו שקרו ולא טופלו)
   const pendingUpdates = await prisma.placement.findMany({
     where: {
-      institution: { supervisorId: supervisorId },
+      institution: { supervisorId: supervisorId, isActive: true },
       status: "OPEN",
       date: { lt: today },
     },
@@ -134,6 +146,7 @@ export async function db_getSupervisorDashboard(supervisorId: string) {
     recentActivity,
     openMonthlyRequests,
     orphanedManagers,
+    orphanedInstitutions,
   };
 }
 
@@ -227,27 +240,31 @@ export async function db_createPlacement(data: any) {
   const existingPlacementForTeacher = await prisma.placement.findFirst({
     where: {
       date: targetDate,
-      status: { not: "CANCELLED" },
       OR: [
-        { mainTeacherId: data.mainTeacherId }, // האם היא כבר דווחה כנעדרת?
-        { substituteId: data.mainTeacherId }, // האם היא כבר משובצת כמחליפה במקום אחר?
+        { mainTeacherId: data.mainTeacherId },
+        { substituteId: data.mainTeacherId },
       ],
     },
     include: {
       institution: { select: { name: true } },
     },
   });
-
   if (existingPlacementForTeacher) {
-    const role =
-      existingPlacementForTeacher.mainTeacherId === data.mainTeacherId
-        ? "כנעדרת"
-        : "כמחליפה";
     const garden = existingPlacementForTeacher.institution.name;
     throw new Error(
-      `לא ניתן ליצור דיווח: הגננת כבר רשומה במערכת ${role} בגן "${garden}" בתאריך זה.`,
+      `כבר קיים דיווח במערכת עבור גננת זו בתאריך המבוקש (גן ${garden}). במידה והגן סגור וברצונך לפתוח אותו, יש לעדכן את הסטטוס בלוח השנה.`,
     );
   }
+  // if (existingPlacementForTeacher) {
+  //   const role =
+  //     existingPlacementForTeacher.mainTeacherId === data.mainTeacherId
+  //       ? "כנעדרת"
+  //       : "כמחליפה";
+  //   const garden = existingPlacementForTeacher.institution.name;
+  //   throw new Error(
+  //     `לא ניתן ליצור דיווח: הגננת כבר רשומה במערכת ${role} בגן "${garden}" בתאריך זה.`,
+  //   );
+  // }
 
   // 2. בדיקה נוספת: אם המפקחת יוצרת שיבוץ ומיד מוסיפה מחליפה (substituteId)
   // צריך לוודא שגם המחליפה לא תפוסה כבר באותו יום

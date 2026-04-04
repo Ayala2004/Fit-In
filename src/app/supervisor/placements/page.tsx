@@ -16,6 +16,9 @@ import {
   Edit3,
   Settings2,
   PlusCircle,
+  X,
+  BanIcon,
+  CheckCircle,
 } from "lucide-react";
 import EditUserModal from "@/components/EditModals/EditUserModal";
 import EditInstitutionModal from "@/components/EditModals/EditInstitutionModal";
@@ -24,6 +27,7 @@ import LoadingScreen from "@/components/ui/LoadingScreen";
 import AddUserModal from "@/components/AddModals/AddUserModal.tsx";
 import AddSubstituteModal from "@/components/AddModals/AddSubstituteModal";
 import AddInstitutionModal from "@/components/AddModals/AddInstitutionModal";
+import { Tuffy } from "next/font/google";
 
 export default function DistrictManagementPage() {
   const [activeTab, setActiveTab] = useState<
@@ -652,16 +656,34 @@ export default function DistrictManagementPage() {
 
               <div className="space-y-4">
                 <div className="space-y-2">
-                  <div className="flex items-center gap-3 text-slate-600 text-sm font-medium">
-                    <MapPin size={14} className="text-indigo-500" />{" "}
+                  <div className="flex items-start gap-3 text-slate-600 text-sm font-medium">
+                    <MapPin size={14} className="text-indigo-500" />כתובת:{" "}
+                    <span className="font-bold">
                     {inst.address}
+                    </span>
                   </div>
                   <div className="flex items-center gap-3 text-slate-600 text-sm font-medium">
-                    <Users size={14} className="text-indigo-500" /> גננת אם:{" "}
+                    <Users size={14} className="text-indigo-500" />
+                    <span>
+
+                    גננת אם:
+                    </span>
                     <span className="font-bold">
                       {inst.mainManager?.firstName} {inst.mainManager?.lastName}
                     </span>
                   </div>
+
+                  {inst.isActive ? (
+                    <div className="flex items-center gap-3 text-slate-600 text-sm font-medium">
+                      <CheckCircle size={14} className="text-indigo-500" /> סטטוס:{" "}
+                      <span className="font-bold">גן פעיל </span>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-3 text-slate-600 text-sm font-medium">
+                      <BanIcon  size={14} className="text-indigo-500" /> סטטוס:{" "}
+                      <span className="font-bold">גן מושבת </span>
+                    </div>
+                  )}
                 </div>
 
                 {/* --- הצגת גננות רוטציה קבועות --- */}

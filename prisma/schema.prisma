@@ -105,6 +105,7 @@ model Institution {
 
   users      User[]      @relation("InstitutionUsers")
   placements Placement[]
+  isActive Boolean @default(true)
 }
 
 model Placement {
