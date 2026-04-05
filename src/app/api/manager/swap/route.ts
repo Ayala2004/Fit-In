@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth";
 import { startOfDay } from "date-fns";
 import { db_createNotification } from "@/services/notificationService";
-import { db_createPlacement } from "@/services/placementService";
+import { db_createPlacement, normalizeToMidday } from "@/services/placementService";
 
 export async function POST(req: Request) {
   const session = await getSession();
@@ -19,13 +19,9 @@ export async function POST(req: Request) {
 
     if (!institution) throw new Error("לא נמצא מוסד משויך");
 
-    const parseDateStr = (str: string) => {
-        const [y, m, d] = str.split('-').map(Number);
-        return new Date(y, m - 1, d, 12, 0, 0);
-    };
 
-    const absentDate = startOfDay(parseDateStr(dateAbsent));
-    const workingDate = startOfDay(parseDateStr(dateWorking));
+    const absentDate = normalizeToMidday(dateAbsent);
+    const workingDate = normalizeToMidday(dateWorking);
 
     // --- שלב 1: יצירת הדיווח הראשון (גננת האם נעדרת, הרוטציה מחליפה) ---
     // הפונקציה db_createPlacement כבר תבצע את כל בדיקות הזמינות וההתראות

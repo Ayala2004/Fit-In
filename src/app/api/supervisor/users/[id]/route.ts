@@ -30,12 +30,12 @@ export async function PATCH(
 
     const isNowWorking =
       body.isWorking !== undefined ? body.isWorking : currentUser.isWorking;
-
+    const isInstructorRoleRemoved =
+      currentUser.roles.includes("INSTRUCTOR") &&
+      body.roles &&
+      !body.roles.includes("INSTRUCTOR");
     // בדיקת המדריכה האחרונה
-    if (
-      isNowWorking === false ||
-      (body.roles && !body.roles.includes("INSTRUCTOR"))
-    ) {
+    if (isNowWorking === false || isInstructorRoleRemoved) {
       if (currentUser.roles.includes("INSTRUCTOR")) {
         const activeInstructorsCount = await prisma.user.count({
           where: {
@@ -114,34 +114,34 @@ export async function PATCH(
       // ב. מחיקת דיווחי היעדרות עתידיים שלה (גננת אם/רוטציה שחולה)
       // 2. טיפול בדיווחי היעדרות עתידיים שלה (Main Teacher) - מחיקת עתיד בלבד
       const futureAbsences = await prisma.placement.findMany({
-        where: { 
-          mainTeacherId: id, 
-          date: { gte: today } // רק מהיום והלאה
+        where: {
+          mainTeacherId: id,
+          date: { gte: today }, // רק מהיום והלאה
         },
-        include: { institution: true }
+        include: { institution: true },
       });
 
       if (futureAbsences.length > 0) {
         const datesStr = futureAbsences
-          .map(p => p.date.toLocaleDateString('he-IL'))
-          .join(', ');
-        
+          .map((p) => p.date.toLocaleDateString("he-IL"))
+          .join(", ");
+
         const gardenName = futureAbsences[0].institution.name;
 
         // מחיקה פיזית של דיווחי העתיד
         await prisma.placement.deleteMany({
-          where: { 
-            id: { in: futureAbsences.map(p => p.id) } 
-          }
+          where: {
+            id: { in: futureAbsences.map((p) => p.id) },
+          },
         });
 
         const msg = `שימי לב: עקב השבתת הגננת ${updatedUser.firstName}, נמחקו דיווחי ההיעדרות העתידיים שלה בגן ${gardenName} בתאריכים: ${datesStr}. דיווחי עבר נשמרו במערכת.`;
-        
-        await db_createNotification({ 
-          userId: futureAbsences[0].institution.supervisorId, 
-          title: "ניקוי לו\"ז עקב השבתה", 
-          message: msg, 
-          type: "STATUS_UPDATE" 
+
+        await db_createNotification({
+          userId: futureAbsences[0].institution.supervisorId,
+          title: 'ניקוי לו"ז עקב השבתה',
+          message: msg,
+          type: "STATUS_UPDATE",
         });
       }
       // ג. מחיקת שיוכים קבועים

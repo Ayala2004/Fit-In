@@ -168,49 +168,49 @@ export default function CustomDatePicker({
     return { date, error: errorMessage };
   };
 
-
   const handleInputChange = (raw: string) => {
-  let digitsOnly = raw.replace(/\D/g, "");
-  if (digitsOnly.length > 8) digitsOnly = digitsOnly.slice(0, 8);
+    let digitsOnly = raw.replace(/\D/g, "");
+    if (digitsOnly.length > 8) digitsOnly = digitsOnly.slice(0, 8);
 
-  let formatted = "";
-  if (digitsOnly.length > 0) {
-    formatted = digitsOnly.slice(0, 2);
-    if (digitsOnly.length > 2) {
-      formatted += "/" + digitsOnly.slice(2, 4);
-      if (digitsOnly.length > 4) {
-        formatted += "/" + digitsOnly.slice(4, 8);
+    let formatted = "";
+    if (digitsOnly.length > 0) {
+      formatted = digitsOnly.slice(0, 2);
+      if (digitsOnly.length > 2) {
+        formatted += "/" + digitsOnly.slice(2, 4);
+        if (digitsOnly.length > 4) {
+          formatted += "/" + digitsOnly.slice(4, 8);
+        }
       }
     }
-  }
 
-  // 👈 עדכון זמני בלבד בזמן הקלדה
-  setInputValue(formatted);
+    // 👈 עדכון זמני בלבד בזמן הקלדה
+    setInputValue(formatted);
 
-  if (digitsOnly.length === 8) {
-    const dayStr = digitsOnly.slice(0, 2);
-    const monthStr = digitsOnly.slice(2, 4);
-    const yearStr = digitsOnly.slice(4, 8);
+    if (digitsOnly.length === 8) {
+      const dayStr = digitsOnly.slice(0, 2);
+      const monthStr = digitsOnly.slice(2, 4);
+      const yearStr = digitsOnly.slice(4, 8);
 
-    const result = validateAndCorrectDate(dayStr, monthStr, yearStr);
+      const result = validateAndCorrectDate(dayStr, monthStr, yearStr);
 
-    if (result) {
-      onChange(format(result.date, "yyyy-MM-dd"));
-      setError(result.error);
+      if (result) {
+        onChange(format(result.date, "yyyy-MM-dd"));
+        setError(result.error);
+      } else {
+        setError("תאריך לא תקין");
+      }
     } else {
-      setError("תאריך לא תקין");
+      setError("");
     }
-  } else {
-    setError("");
-  }
-};
-
-  
+  };
 
   const handleSelect = (date: Date) => {
     if (isDateDisabled(date)) return;
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
 
-    onChange(format(date, "yyyy-MM-dd"));
+    onChange(`${year}-${month}-${day}`);
     setIsOpen(false);
     setError("");
   };

@@ -6,14 +6,6 @@ import {
 import { Day } from "@prisma/client";
 import { addMonths, startOfDay, endOfDay, addDays } from "date-fns";
 
-const isSameDate = (date1: Date, date2: Date) => {
-  return (
-    date1.getFullYear() === date2.getFullYear() &&
-    date1.getMonth() === date2.getMonth() &&
-    date1.getDate() === date2.getDate()
-  );
-};
-
 // פונקציה פנימית לבדיקה האם גננת תפוסה ברוטציה קבועה בגן אחר
 async function isBusyInFixedRotation(
   userId: string,
@@ -49,11 +41,24 @@ async function isBusyInFixedRotation(
 
   return fixed;
 }
+
+// פונקציה שמנרמלת כל תאריך לשעה 12 בצהריים ב-UTC כדי למנוע קפיצות ימים
+export const normalizeToMidday = (dateInput: string | Date) => {
+  const d = new Date(dateInput);
+  // אם קיבלנו סטרינג כמו "2024-05-20", נפרק אותו ידנית
+  if (typeof dateInput === "string" && dateInput.includes("-")) {
+    const [y, m, d_num] = dateInput.split("-").map(Number);
+    return new Date(y, m - 1, d_num, 12, 0, 0);
+  }
+  d.setHours(12, 0, 0, 0);
+  return d;
+};
+
 /**
  * שליפת נתונים ללוח הבקרה של המפקחת
  */
 export async function db_getSupervisorDashboard(supervisorId: string) {
-  const today = startOfDay(new Date());
+  const today = normalizeToMidday(new Date());
   const oneMonthFromNow = endOfDay(addMonths(new Date(), 1));
 
   const endOfWeek = endOfDay(addDays(today, 5));
@@ -242,7 +247,7 @@ export async function validatePlacement(substituteId: string, date: Date) {
     throw new Error("הגננת כבר משובצת לגן אחר בתאריך זה");
   }
 
-  const today = startOfDay(new Date());
+  const today = normalizeToMidday(new Date());
   if (date < today) {
     throw new Error("לא ניתן לשבץ לתאריך שכבר עבר");
   }
@@ -250,245 +255,10 @@ export async function validatePlacement(substituteId: string, date: Date) {
   return true;
 }
 
-const getDayEnum = (date: Date): Day => {
-  const days = [
-    "SUNDAY",
-    "MONDAY",
-    "TUESDAY",
-    "WEDNESDAY",
-    "THURSDAY",
-    "FRIDAY",
-    "SATURDAY",
-  ];
-  return days[date.getDay()] as Day;
-};
-
 /**
  * יצירת דיווח היעדרות/שיבוץ חדש
  * תומך בדיווח של גננת אם, גננת רוטציה, או מפקחת (רטרואקטיבי)
  */
-
-// export async function db_createPlacement(data: any) {
-//    const targetDate = startOfDay(new Date(data.date));
-//   const institutionId = data.institutionId;
-
-//   // 1. בדיקה: האם המחליפה (אם נשלחה) תפוסה בלו"ז קבוע במקום אחר?
-//   if (data.substituteId) {
-//     const fixedConflict = await isBusyInFixedRotation(data.substituteId, targetDate, institutionId);
-//     if (fixedConflict) {
-//       const otherGarden = fixedConflict.manager.mainManagedInstitutions[0]?.name || "אחר";
-//       throw new Error(`לא ניתן לשבץ את המחליפה: בתאריך זה היא משובצת קבוע בגן "${otherGarden}".`);
-//     }
-//   }
-
-//   // 2. בדיקה: האם הנעדרת עצמה (mainTeacherId) בכלל אמורה להיות במקום אחר כמחליפה קבועה?
-//   // (זה המקרה של גננת רוטציה שמדווחת על מחלה ביום שהיא בכלל תפוסה בגן אחר)
-//   const mainTeacherFixedConflict = await isBusyInFixedRotation(data.mainTeacherId, targetDate, institutionId);
-//   if (mainTeacherFixedConflict) {
-//      const otherGarden = mainTeacherFixedConflict.manager.mainManagedInstitutions[0]?.name || "אחר";
-//      throw new Error(`דיווח שגוי: הגננת רשומה כרוטציה קבועה בגן "${otherGarden}" ביום זה.`);
-//   }
-
-//   // 1. בדיקה האם הגננת שרוצים לדווח עליה (mainTeacherId) תפוסה כבר בתפקיד כלשהו
-//   const existingPlacementForTeacher = await prisma.placement.findFirst({
-//     where: {
-//       date: targetDate,
-//       OR: [
-//         { mainTeacherId: data.mainTeacherId },
-//         { substituteId: data.mainTeacherId },
-//       ],
-//     },
-//     include: {
-//       institution: { select: { name: true } },
-//     },
-//   });
-//   if (existingPlacementForTeacher) {
-//     const garden = existingPlacementForTeacher.institution.name;
-//     throw new Error(
-//       `כבר קיים דיווח במערכת עבור גננת זו בתאריך המבוקש (גן ${garden}). במידה והגן סגור וברצונך לפתוח אותו, יש לעדכן את הסטטוס בלוח השנה.`,
-//     );
-//   }
-//   // if (existingPlacementForTeacher) {
-//   //   const role =
-//   //     existingPlacementForTeacher.mainTeacherId === data.mainTeacherId
-//   //       ? "כנעדרת"
-//   //       : "כמחליפה";
-//   //   const garden = existingPlacementForTeacher.institution.name;
-//   //   throw new Error(
-//   //     `לא ניתן ליצור דיווח: הגננת כבר רשומה במערכת ${role} בגן "${garden}" בתאריך זה.`,
-//   //   );
-//   // }
-
-//   // 2. בדיקה נוספת: אם המפקחת יוצרת שיבוץ ומיד מוסיפה מחליפה (substituteId)
-//   // צריך לוודא שגם המחליפה לא תפוסה כבר באותו יום
-//   if (data.substituteId) {
-//     const existingForSubstitute = await prisma.placement.findFirst({
-//       where: {
-//         date: targetDate,
-//         status: { not: "CANCELLED" },
-//         OR: [
-//           { mainTeacherId: data.substituteId }, // האם המחליפה עצמה חולה/נעדרת באותו יום?
-//           { substituteId: data.substituteId }, // האם היא כבר מחליפה בגן אחר?
-//         ],
-//       },
-//       include: {
-//         institution: { select: { name: true } },
-//       },
-//     });
-
-//     if (existingForSubstitute) {
-//       throw new Error(
-//         `לא ניתן לשבץ מחליפה זו: היא כבר רשומה במערכת בתאריך זה בגן "${existingForSubstitute.institution.name}".`,
-//       );
-//     }
-//   }
-//   // 1. יצירת הרשומה
-//   const newPlacement = await prisma.placement.create({
-//     data: {
-//       date: targetDate,
-//       institutionId: data.institutionId,
-//       mainTeacherId: data.mainTeacherId,
-//       substituteId: data.substituteId,
-//       notes: data.notes,
-//       status: data.status || "OPEN",
-//     },
-//     include: {
-//       institution: true,
-//       mainTeacher: {
-//         select: { firstName: true, lastName: true, phoneNumber: true },
-//       },
-//       substitute: { select: { firstName: true, lastName: true } },
-//     },
-//   });
-
-//   const { institution, mainTeacher, substitute, status } = newPlacement;
-//   const dateStr = targetDate.toLocaleDateString("he-IL");
-//   const mainName = `${mainTeacher.firstName} ${mainTeacher.lastName}`;
-//   const subName = substitute
-//     ? `${substitute.firstName} ${substitute.lastName}`
-//     : undefined;
-
-//   // --- שליחת התראות ---
-
-//   if (status === "ASSIGNED" && substitute) {
-//     // מפקחת
-//     if (!data.creatorRoles.includes("SUPERVISOR")) {
-//       await db_createNotification({
-//         userId: institution.supervisorId,
-//         title: "שיבוץ אוייש",
-//         message: formatMessage({
-//           prefix: "מפקחת יקרה",
-//           statusText: "שיבוץ נסגר",
-//           gardenName: institution.name,
-//           address: institution.address,
-//           mainName,
-//           subName,
-//           date: dateStr,
-//         }),
-//         type: "STATUS_UPDATE",
-//       });
-//     }
-//     // מדריכה
-//     if (institution.instructorId && !data.creatorRoles.includes("INSTRUCTOR")) {
-//       await db_createNotification({
-//         userId: institution.instructorId,
-//         title: "שיבוץ אוייש",
-//         message: formatMessage({
-//           prefix: "מדריכה יקרה",
-//           statusText: "שיבוץ נסגר",
-//           gardenName: institution.name,
-//           address: institution.address,
-//           mainName,
-//           subName,
-//           date: dateStr,
-//         }),
-//         type: "STATUS_UPDATE",
-//       });
-//     }
-//     // גננת אם
-//     await db_createNotification({
-//       userId: data.mainTeacherId,
-//       title: "נמצאה מחליפה",
-//       message: formatMessage({
-//         prefix: "גננת אם יקרה",
-//         statusText: "נמצאה עבורך מחליפה",
-//         gardenName: institution.name,
-//         address: institution.address,
-//         mainName,
-//         subName,
-//         date: dateStr,
-//       }),
-//       type: "STATUS_UPDATE",
-//     });
-//     // למחליפה
-//     await db_createNotification({
-//       userId: data.substituteId!,
-//       title: "שיבוץ חדש עבורך",
-//       message: formatMessage({
-//         prefix: "גננת יקרה",
-//         statusText: "שובצת להחלפה",
-//         gardenName: institution.name,
-//         address: institution.address,
-//         mainName,
-//         subName,
-//         date: dateStr,
-//       }),
-//       type: "STATUS_UPDATE",
-//     });
-//   } else if (status === "OPEN") {
-//     // 1. התראה למפקחת (אלא אם היא יצרה את הדיווח)
-//     if (!data.creatorRoles.includes("SUPERVISOR")) {
-//       await db_createNotification({
-//         userId: institution.supervisorId,
-//         title: "דרושה מחליפה",
-//         message: formatMessage({
-//           prefix: "מפקחת יקרה",
-//           statusText: "דווחה היעדרות (ממתין למחליפה)",
-//           gardenName: institution.name,
-//           address: institution.address,
-//           mainName,
-//           date: dateStr,
-//         }),
-//         type: "STATUS_UPDATE",
-//       });
-//     }
-//     if (institution.instructorId && !data.creatorRoles.includes("INSTRUCTOR")) {
-//       await db_createNotification({
-//         userId: institution.instructorId,
-//         title: "דרושה מחליפה",
-//         message: formatMessage({
-//           prefix: "מדריכה יקרה",
-//           statusText: "דווחה היעדרות (ממתין למחליפה)",
-//           gardenName: institution.name,
-//           address: institution.address,
-//           mainName,
-//           date: dateStr,
-//         }),
-//         type: "STATUS_UPDATE",
-//       });
-//     }
-
-//     // קריאה למחליפות
-//     const notifyIds = await getAvailableForNotification(targetDate);
-//     if (notifyIds.length > 0) {
-//       await db_notifyMultipleUsers(
-//         notifyIds,
-//         "הזדמנות להחלפה",
-//         formatMessage({
-//           prefix: "גננת  מחליפה יקרה",
-//           statusText: "יש לך הזדמנות להחליף",
-//           gardenName: institution.name,
-//           address: institution.address,
-//           mainName,
-//           date: dateStr,
-//         }),
-//         "URGENT_CALL",
-//       );
-//     }
-//   }
-
-//   return newPlacement;
-// }
 
 type CreatePlacementInput = {
   date: any;
@@ -501,10 +271,8 @@ type CreatePlacementInput = {
 };
 
 export async function db_createPlacement(data: CreatePlacementInput) {
-  const targetDate = startOfDay(new Date(data.date));
-
+  const targetDate = normalizeToMidday(data.date);
   return await prisma.$transaction(async (tx) => {
-    // ---------- helpers ----------
     async function isUserBusy(userId: string) {
       return tx.placement.findFirst({
         where: {
@@ -812,12 +580,7 @@ export async function db_updatePlacementStatus(params: any) {
   return updated;
 }
 
-/**
- * לוח שנה
- */
-/**
-
- * שליפת נתונים ללוח השנה הכוללת רוטציות קבועות ודיווחים ידניים
+/* שליפת נתונים ללוח השנה הכוללת רוטציות קבועות ודיווחים ידניים
  */
 export async function db_getCalendarData(
   month: number,
@@ -874,11 +637,8 @@ export async function db_quickUpdatePlacement(
     },
   });
 }
-/**
- * אישור שיבוץ
- */
-/**
- * עדכון שיבוץ קיים (איוש מחליפה)
+
+/* עדכון שיבוץ קיים (איוש מחליפה)
  */
 export async function db_assignSubstitute(
   placementId: string,
@@ -926,8 +686,7 @@ export async function db_assignSubstitute(
 //פונקציות למדריכה
 
 export async function db_getInstructorDashboard(instructorId: string) {
-  const today = startOfDay(new Date());
-
+  const today = normalizeToMidday(new Date());
   // 1. שליפת כל המוסדות שמשויכים למדריכה הזו
   const myInstitutions = await prisma.institution.findMany({
     where: { instructorId: instructorId },
@@ -1009,8 +768,6 @@ async function getAvailableForNotification(date: Date) {
   });
   return potentialUsers.map((u) => u.id);
 }
-
-// src/services/placementService.ts
 
 // --- פונקציית עזר פנימית לשליחת הודעה לדרגים הניהוליים ---
 async function notifyHierarchy(

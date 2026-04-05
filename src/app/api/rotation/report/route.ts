@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { getSession } from '@/lib/auth';
-import { db_createPlacement } from '@/services/placementService';
+import { db_createPlacement, normalizeToMidday } from '@/services/placementService';
 import { startOfDay } from 'date-fns';
 import { db_createNotification } from '@/services/notificationService';
 // src/app/api/rotation/report/route.ts
@@ -14,12 +14,10 @@ export async function POST(req: Request) {
 
   try {
     const { date } = await req.json();
-    const [year, month, day] = date.split('-').map(Number);
-    const selectedDate = new Date(year, month - 1, day, 12, 0, 0);
-    const targetDate = startOfDay(selectedDate); // שימוש באחידות תאריכים
+    const targetDate = normalizeToMidday(date);
 
     const daysArray = ["SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"];
-    const dayOfWeek = daysArray[selectedDate.getDay()];
+    const dayOfWeek = daysArray[targetDate.getDay()];
 
 
 

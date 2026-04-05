@@ -2,7 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth";
 import { db_createNotification } from "@/services/notificationService";
-import { db_createPlacement } from "@/services/placementService";
+import {
+  db_createPlacement,
+  normalizeToMidday,
+} from "@/services/placementService";
 // --- GET: מחזיר את המדריכות והשיבוצים (לצורך הטבלה והחיפוש) ---
 export async function GET() {
   try {
@@ -11,9 +14,7 @@ export async function GET() {
       return NextResponse.json({ message: "לא מורשה" }, { status: 401 });
     }
 
-    const today = new Date();
-    const startOfToday = new Date(today.setHours(0, 0, 0, 0));
-    const endOfToday = new Date(today.setHours(23, 59, 59, 999));
+    const todayMidday = normalizeToMidday(new Date());
     const instructors = await prisma.user.findMany({
       where: {
         supervisorId: session.id,
@@ -24,12 +25,7 @@ export async function GET() {
           include: {
             mainManagedInstitutions: true,
             placementsAsMain: {
-              where: {
-                date: {
-                  gte: startOfToday,
-                  lte: endOfToday,
-                },
-              },
+              where: { date: todayMidday },
               include: {
                 institution: true,
                 substitute: true,
@@ -60,12 +56,12 @@ export async function POST(req: NextRequest) {
     ) {
       return NextResponse.json(
         { message: "חסרים פרמטרים נדרשים" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
     const newPlacement = await db_createPlacement({
-      date: body.date,
+      date: normalizeToMidday(body.date),
       institutionId: body.institutionId,
       mainTeacherId: body.mainTeacherId,
       substituteId: body.substituteId,
@@ -79,7 +75,7 @@ export async function POST(req: NextRequest) {
     console.error(err);
     return NextResponse.json(
       { message: err.message || "שגיאה ביצירת דיווח" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
@@ -158,11 +154,9 @@ export async function PATCH(request: Request) {
       },
     });
 
-    
-
     if (updatedPlacement.substitute && updatedPlacement.mainTeacher) {
       const dateStr = new Date(updatedPlacement.date).toLocaleDateString(
-        "he-IL"
+        "he-IL",
       );
       const gardenName = updatedPlacement.institution.name;
       const subName = `${updatedPlacement.substitute.firstName} ${updatedPlacement.substitute.lastName}`;

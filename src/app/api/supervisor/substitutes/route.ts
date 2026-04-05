@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { Day } from "@prisma/client";
 import { getSession } from "@/lib/auth";
+import { normalizeToMidday } from "@/services/placementService";
 
 export async function GET(request: Request) {
   try {
@@ -20,7 +21,7 @@ export async function GET(request: Request) {
     const dateParam = searchParams.get("date");
     const absentTeacherId = searchParams.get("absentTeacherId"); // הוספנו פרמטר חדש
 
-    const searchDate = new Date(dateParam!);
+    const searchDate = normalizeToMidday(dateParam!);
     const dayOfWeek = [
       "SUNDAY",
       "MONDAY",
